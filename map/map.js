@@ -47,6 +47,7 @@
   const aircraft = new Map();
   let refreshTimer = null;
   let moveRefreshTimer = null;
+  let hintTimer = null;
   let activeRequest = null;
   let requestSerial = 0;
   const LOCAL_FLIGHT_API = "/main/api/flights.php";
