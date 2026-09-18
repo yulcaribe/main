@@ -38,11 +38,11 @@ if ($lon < -180 || $lon > 180) {
     respond(400, ['ok' => false, 'error' => 'Lon -180 ile 180 arasında olmalı.']);
 }
 
-// Airplanes.live point endpoint: radius is nautical miles, max 250 NM.
+// ADSB.lol point endpoint: radius is nautical miles, max 250 NM.
 $radius = max(1, min(250, $radius));
 
 $url = sprintf(
-    'https://api.airplanes.live/v2/point/%s/%s/%d',
+    'https://api.adsb.lol/v2/point/%s/%s/%d',
     rtrim(rtrim(sprintf('%.6F', $lat), '0'), '.'),
     rtrim(rtrim(sprintf('%.6F', $lon), '0'), '.'),
     $radius
@@ -88,7 +88,7 @@ curl_close($ch);
 if ($body === false || $curlErrno !== 0) {
     respond(502, [
         'ok' => false,
-        'error' => 'Airplanes.live bağlantısı kurulamadı.',
+        'error' => 'ADSB.lol bağlantısı kurulamadı.',
         'curlErrno' => $curlErrno,
         'curlError' => $curlError,
         'upstreamUrl' => $url,
@@ -100,7 +100,7 @@ if ($body === false || $curlErrno !== 0) {
 if ($httpStatus < 200 || $httpStatus >= 300) {
     respond(502, [
         'ok' => false,
-        'error' => 'Airplanes.live başarılı olmayan HTTP yanıtı döndürdü.',
+        'error' => 'ADSB.lol başarılı olmayan HTTP yanıtı döndürdü.',
         'upstreamStatus' => $httpStatus,
         'upstreamBody' => mb_substr((string)$body, 0, 1200),
         'upstreamContentType' => $contentType,
@@ -115,7 +115,7 @@ $data = json_decode((string)$body, true);
 if (!is_array($data)) {
     respond(502, [
         'ok' => false,
-        'error' => 'Airplanes.live geçerli JSON döndürmedi.',
+        'error' => 'ADSB.lol geçerli JSON döndürmedi.',
         'upstreamStatus' => $httpStatus,
         'upstreamBody' => mb_substr((string)$body, 0, 1200),
         'upstreamContentType' => $contentType,
@@ -124,7 +124,7 @@ if (!is_array($data)) {
 }
 
 $data['_proxy'] = [
-    'source' => 'Airplanes.live',
+    'source' => 'ADSB.lol',
     'requestedAt' => gmdate('c'),
     'radiusNm' => $radius,
     'upstreamStatus' => $httpStatus,
