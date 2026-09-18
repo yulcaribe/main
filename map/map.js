@@ -1,6 +1,17 @@
 (() => {
   "use strict";
 
+  if (!window.L) {
+    document.body.innerHTML = `
+      <div style="min-height:100vh;display:grid;place-items:center;background:#07131f;color:#eef6fb;font-family:system-ui,sans-serif;padding:24px;text-align:center">
+        <div>
+          <h2 style="margin:0 0 10px">Harita motoru yüklenemedi</h2>
+          <p style="margin:0;color:#94a9b9">Leaflet CDN bağlantısı engellenmiş olabilir.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
   const REFRESH_MS = 10000;
   const MAX_RADIUS_NM = 250;
   const MIN_RADIUS_NM = 10;
