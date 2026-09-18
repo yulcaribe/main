@@ -156,7 +156,11 @@
     return L.divIcon({
       className: "aircraft-div-icon",
       html: `<div class="aircraft-marker${emergencyClass}">
-        <span class="plane" style="transform:rotate(${track - 45}deg)">✈</span>
+        <span class="plane" style="transform:rotate(${track}deg)">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 1.5c-.7 0-1.2.55-1.3 1.25L9.9 8.2 3 12.1v2.15l6.55-1.85-.45 5.15-2.35 1.65v1.65L12 19.55l5.25 1.3V19.2l-2.35-1.65-.45-5.15L21 14.25V12.1l-6.9-3.9-.8-5.45C13.2 2.05 12.7 1.5 12 1.5Z"/>
+          </svg>
+        </span>
         <span class="aircraft-label">${flight}</span>
       </div>`,
       iconSize: [aircraftPixelSize(), aircraftPixelSize()],
