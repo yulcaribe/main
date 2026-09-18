@@ -1,0 +1,120 @@
+<header class="site-header">
+  <div class="shell header-inner">
+    <a class="brand" href="/" aria-label="Yulcaribe Aviation ana sayfa">
+      <span class="brand-mark">YA</span>
+      <span class="brand-copy"><strong>Yulcaribe Aviation</strong><small>Aviation Notes & Data</small></span>
+    </a>
+
+    <nav class="top-nav" aria-label="Ana menü">
+      <a href="#guncel">Güncel</a>
+      <a href="#operasyon">Operasyon</a>
+      <a href="#hakkinda">Hakkında</a>
+      <a class="map-nav" href="/main/map/">Harita <span>↗</span></a>
+    </nav>
+
+    <span class="live-chip"><i></i><span id="today-label">Güncel</span></span>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero shell">
+    <div class="hero-copy">
+      <div class="eyebrow">Aviation Briefing</div>
+      <h1>Gökyüzünden<br>kısa notlar.</h1>
+      <p>Hava trafiği, uçuş operasyonları ve havacılık terminolojisine ilişkin kısa bilgiler ile canlı ADS-B uçuş haritası.</p>
+
+      <div class="hero-actions">
+        <a class="primary-button" href="/main/map/">Canlı haritayı aç <span>→</span></a>
+        <a class="secondary-button" href="#guncel">Notlara göz at</a>
+      </div>
+
+      <div class="hero-meta">
+        <span>Flight Operations</span>
+        <span>Air Traffic</span>
+        <span>ADS-B Live</span>
+      </div>
+    </div>
+
+    <div class="radar-wrap" aria-hidden="true">
+      <div class="radar">
+        <span class="radar-dot d1"></span>
+        <span class="radar-dot d2"></span>
+        <span class="radar-dot d3"></span>
+        <span class="radar-plane">✈</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-section" id="guncel">
+    <div class="shell">
+      <div class="section-heading">
+        <div><small>Aviation Notes</small><h2>Havacılık gündemi</h2></div>
+        <p>Şimdilik sade ve statik bir bilgi alanı. Sonraki aşamada burada dinamik havacılık verileri ve haber akışları gösterebiliriz.</p>
+      </div>
+
+      <div class="card-grid">
+        <article class="info-card">
+          <div class="card-top"><span class="tag">LIVE</span><span>ADS-B</span></div>
+          <strong class="card-symbol">✈</strong>
+          <h3>Canlı uçuş takibi</h3>
+          <p>Harita ekranında çevredeki uçakların konum, irtifa, hız, heading ve çağrı kodlarını takip et.</p>
+          <a href="/main/map/">Haritayı aç →</a>
+        </article>
+
+        <article class="info-card">
+          <div class="card-top"><span class="tag">MAP</span><span>OSM</span></div>
+          <strong class="card-symbol">2</strong>
+          <h3>Gece / gündüz harita</h3>
+          <p>OpenStreetMap tabanı üzerinde açık ve koyu görünüm arasında tek tuşla geçiş yap.</p>
+          <span class="card-foot">Leaflet + OpenStreetMap</span>
+        </article>
+
+        <article class="info-card">
+          <div class="card-top"><span class="tag">OPS</span><span>Reference</span></div>
+          <strong class="card-symbol small-symbol">QNH</strong>
+          <h3>Altimetre ayarı</h3>
+          <p>QNH, altimetrenin deniz seviyesine göre irtifa göstermesi için kullanılan atmosferik basınç ayarıdır.</p>
+          <span class="card-foot">Operational note</span>
+        </article>
+
+        <article class="info-card">
+          <div class="card-top"><span class="tag">ATM</span><span>Reference</span></div>
+          <strong class="card-symbol small-symbol">CTOT</strong>
+          <h3>Calculated Take-Off Time</h3>
+          <p>ATFM düzenlemeleri kapsamında bir uçuş için hesaplanan kalkış zamanını ifade eder.</p>
+          <span class="card-foot">Operational note</span>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-section bordered" id="operasyon">
+    <div class="shell">
+      <div class="section-heading">
+        <div><small>Quick Reference</small><h2>Operasyonel kısa bilgiler</h2></div>
+        <p>Uçuş operasyonlarında sık karşılaşılan bazı temel terimler.</p>
+      </div>
+
+      <div class="ops-grid">
+        <article><b>NOTAM</b><h3>Notice to Air Missions</h3><p>Havaalanı, hava sahası veya operasyonları etkileyebilecek geçici bilgileri yayımlar.</p></article>
+        <article><b>ATFM</b><h3>Air Traffic Flow Management</h3><p>Hava trafik talebi ile mevcut ATC ve hava sahası kapasitesinin dengelenmesini amaçlar.</p></article>
+        <article><b>CTOT</b><h3>Calculated Take-Off Time</h3><p>ATFM düzenlemesine tabi uçuş için hesaplanan kalkış zamanıdır.</p></article>
+        <article><b>QNH</b><h3>Altimeter Setting</h3><p>Altimetrenin deniz seviyesine göre irtifa göstermesi için kullanılan basınç ayarıdır.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-section bordered" id="hakkinda">
+    <div class="shell">
+      <div class="section-heading">
+        <div><small>About</small><h2>Yulcaribe Aviation</h2></div>
+      </div>
+      <p class="about-copy">Havacılık operasyonları, hava trafik yönetimi, canlı ADS-B verileri ve sektörel notlar için hazırlanmış kişisel bir bilgi alanı.</p>
+      <div class="notice"><strong>INFO</strong><p>Bu site genel bilgilendirme amaçlıdır. Operasyonel kararlar için resmi havacılık yayınları ve şirket dokümanları kullanılmalıdır.</p></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="shell footer-inner"><strong>Yulcaribe Aviation</strong><span>Aviation Notes & Data · <span id="year-label"></span></span></div>
+</footer>
