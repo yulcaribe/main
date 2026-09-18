@@ -46,7 +46,6 @@
              aria-label="Uçuş ara">
     </div>
 
-    <button id="theme-toggle" class="round-button" type="button" aria-label="Gece gündüz modunu değiştir">☀</button>
   </header>
 
   <aside class="status-panel">
@@ -63,6 +62,37 @@
       <div><small>GÜNCELLEME</small><strong id="update-label">—</strong></div>
     </div>
   </aside>
+
+  <button id="options-toggle" class="options-toggle" type="button" aria-expanded="false" aria-controls="options-panel">
+    ⚙ <span>Options</span>
+  </button>
+
+  <section id="options-panel" class="options-panel" aria-hidden="true">
+    <div class="options-head">
+      <div>
+        <strong>Harita Ayarları</strong>
+        <small>Görünümü sana göre ayarla</small>
+      </div>
+      <button id="options-close" type="button" aria-label="Ayarları kapat">×</button>
+    </div>
+
+    <div class="option-group">
+      <span class="option-label">Harita modu</span>
+      <div class="segmented">
+        <button type="button" data-theme-value="day">☀ Gündüz</button>
+        <button type="button" data-theme-value="night">☾ Gece</button>
+      </div>
+    </div>
+
+    <div class="option-group">
+      <span class="option-label">Uçak boyutu</span>
+      <div class="segmented three">
+        <button type="button" data-size-value="small">Küçük</button>
+        <button type="button" data-size-value="medium">Orta</button>
+        <button type="button" data-size-value="large">Büyük</button>
+      </div>
+    </div>
+  </section>
 
   <div class="map-hint" id="map-hint">Haritayı taşıdığında o bölgedeki uçaklar yüklenir.</div>
 
