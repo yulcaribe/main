@@ -53,6 +53,8 @@
   }).addTo(map);
 
   const aircraft = new Map();
+  const routeCache = new Map();
+  const routeRequests = new Map();
   let refreshTimer = null;
   let moveRefreshTimer = null;
   let hintTimer = null;
@@ -162,6 +164,107 @@
     });
   }
 
+  function routeCallsign(ac) {
+    const callsign = String(ac.flight || "").trim().toUpperCase();
+    return callsign && callsign !== "UNKNOWN" ? callsign : "";
+  }
+
+  function routeHtml(ac) {
+    const callsign = routeCallsign(ac);
+    if (!callsign) {
+      return '<div class="popup-route"><span>Rota</span><strong>—</strong></div>';
+    }
+
+    const cached = routeCache.get(callsign);
+    if (!cached) {
+      return '<div class="popup-route"><span>Rota</span><strong>Uçağa tıklayınca yüklenir</strong></div>';
+    }
+
+    if (cached.status === "loading") {
+      return '<div class="popup-route"><span>Rota</span><strong>Yükleniyor…</strong></div>';
+    }
+
+    if (cached.status !== "ok") {
+      return '<div class="popup-route"><span>Rota</span><strong>Rota bulunamadı</strong></div>';
+    }
+
+    const route = cached.data || {};
+    const codes = String(route._airport_codes_iata || route.airport_codes || "")
+      .replaceAll("-", " → ");
+
+    const airports = Array.isArray(route._airports) ? route._airports : [];
+    const first = airports[0] || null;
+    const last = airports.length > 1 ? airports[airports.length - 1] : null;
+
+    const firstName = first?.name || first?.icao || first?.iata || "";
+    const lastName = last?.name || last?.icao || last?.iata || "";
+    const names = firstName && lastName
+      ? `<small>${esc(firstName)} → ${esc(lastName)}</small>`
+      : "";
+
+    return `<div class="popup-route">
+      <span>Rota</span>
+      <strong>${esc(codes || "—")}</strong>
+      ${names}
+    </div>`;
+  }
+
+  async function ensureRoute(state) {
+    const ac = state?.data;
+    const callsign = routeCallsign(ac);
+    if (!ac || !callsign) return;
+
+    if (routeCache.has(callsign) && routeCache.get(callsign)?.status !== "loading") {
+      state.marker.setPopupContent(popupFor(ac));
+      return;
+    }
+
+    if (routeRequests.has(callsign)) {
+      await routeRequests.get(callsign);
+      state.marker.setPopupContent(popupFor(state.data));
+      return;
+    }
+
+    routeCache.set(callsign, { status: "loading" });
+    state.marker.setPopupContent(popupFor(ac));
+
+    const lat = num(ac.lat);
+    const lon = num(ac.lon);
+    if (lat === null || lon === null) {
+      routeCache.set(callsign, { status: "missing" });
+      state.marker.setPopupContent(popupFor(ac));
+      return;
+    }
+
+    const request = fetch(
+      `https://api.adsb.lol/api/0/route/${encodeURIComponent(callsign)}/${lat.toFixed(5)}/${lon.toFixed(5)}`,
+      { cache: "no-store", headers: { "Accept": "application/json" } }
+    )
+      .then(async response => {
+        if (!response.ok) throw new Error("Route HTTP " + response.status);
+        return response.json();
+      })
+      .then(route => {
+        if (!route || route.airport_codes === "unknown") {
+          routeCache.set(callsign, { status: "missing" });
+        } else {
+          routeCache.set(callsign, { status: "ok", data: route });
+        }
+      })
+      .catch(error => {
+        console.warn("Rota alınamadı:", callsign, error);
+        routeCache.set(callsign, { status: "error" });
+      })
+      .finally(() => routeRequests.delete(callsign));
+
+    routeRequests.set(callsign, request);
+    await request;
+
+    if (aircraft.get(state.id) === state) {
+      state.marker.setPopupContent(popupFor(state.data));
+    }
+  }
+
   function popupFor(ac) {
     const flight = esc(cleanFlight(ac));
     const registration = esc(ac.r || "—");
@@ -170,6 +273,7 @@
 
     return `<div class="popup-flight">${flight}</div>
       <div class="popup-sub">${type}</div>
+      ${routeHtml(ac)}
       <div class="popup-grid">
         <div><span>Kuyruk</span><strong>${registration}</strong></div>
         <div><span>İrtifa</span><strong>${esc(formatAltitude(ac.alt_baro))}</strong></div>
@@ -207,6 +311,7 @@
         data: ac
       };
 
+      marker.on("popupopen", () => ensureRoute(state));
       aircraft.set(id, state);
     } else {
       const current = state.marker.getLatLng();
