@@ -158,7 +158,7 @@
       html: `<div class="aircraft-marker${emergencyClass}">
         <span class="plane" style="transform:rotate(${track}deg)">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M12 1.5c-.7 0-1.2.55-1.3 1.25L9.9 8.2 3 12.1v2.15l6.55-1.85-.45 5.15-2.35 1.65v1.65L12 19.55l5.25 1.3V19.2l-2.35-1.65-.45-5.15L21 14.25V12.1l-6.9-3.9-.8-5.45C13.2 2.05 12.7 1.5 12 1.5Z"/>
+            <path d="M12 1.25c-.75 0-1.3.6-1.38 1.38L10 8.1 2.6 12v2.15l7.1-1.75-.42 4.82-2.58 1.9v1.55L12 19.45l5.3 1.22v-1.55l-2.58-1.9-.42-4.82 7.1 1.75V12L14 8.1l-.62-5.47C13.3 1.85 12.75 1.25 12 1.25Z"/>
           </svg>
         </span>
         <span class="aircraft-label">${flight}</span>
@@ -436,7 +436,7 @@
     refreshTimer = setTimeout(fetchAircraft, REFRESH_MS);
   }
 
-  function queueViewRefresh() {
+  function refreshForViewChange() {
     clearTimeout(refreshTimer);
     clearTimeout(moveRefreshTimer);
     clearTimeout(hintTimer);
@@ -444,18 +444,15 @@
     hint.classList.remove("hidden");
     hint.textContent = "Yeni bölgedeki uçaklar yükleniyor…";
 
-    moveRefreshTimer = setTimeout(() => {
-      const center = map.getCenter();
-      console.info("Harita bölgesi yenileniyor:", {
-        lat: center.lat.toFixed(4),
-        lon: center.lng.toFixed(4),
-        radius: radiusForView()
-      });
+    const center = map.getCenter();
+    console.info("Harita bölgesi yenileniyor:", {
+      lat: center.lat.toFixed(4),
+      lon: center.lng.toFixed(4),
+      radius: radiusForView()
+    });
 
-      fetchAircraft();
-
-      hintTimer = setTimeout(() => hint.classList.add("hidden"), 1800);
-    }, 350);
+    fetchAircraft();
+    hintTimer = setTimeout(() => hint.classList.add("hidden"), 1200);
   }
 
   function searchAircraft() {
@@ -538,11 +535,10 @@
     if (event.key === "Enter") searchAircraft();
   });
 
-  map.on("zoomend", () => {
+  map.on("moveend", () => {
     updateDetailMode();
-    queueViewRefresh();
+    refreshForViewChange();
   });
-  map.on("dragend", queueViewRefresh);
 
   updateDetailMode();
   fetchAircraft();
