@@ -164,13 +164,14 @@
 
   function popupFor(ac) {
     const flight = esc(cleanFlight(ac));
-    const registration = esc(ac.r || "Tescil bilinmiyor");
-    const type = esc(ac.t || ac.desc || "Tip bilinmiyor");
+    const registration = esc(ac.r || "—");
+    const type = esc(ac.t || ac.desc || "—");
     const squawk = esc(ac.squawk || "—");
 
     return `<div class="popup-flight">${flight}</div>
-      <div class="popup-sub">${registration} · ${type}</div>
+      <div class="popup-sub">${type}</div>
       <div class="popup-grid">
+        <div><span>Kuyruk</span><strong>${registration}</strong></div>
         <div><span>İrtifa</span><strong>${esc(formatAltitude(ac.alt_baro))}</strong></div>
         <div><span>Hız</span><strong>${esc(formatSpeed(ac.gs))}</strong></div>
         <div><span>Heading</span><strong>${esc(formatTrack(ac.track))}</strong></div>
