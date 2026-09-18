@@ -7,30 +7,85 @@
   <meta name="description" content="Yulcaribe Aviation canlı uçuş haritası">
   <title>Canlı Uçuş Haritası | Yulcaribe Aviation">
 
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html,body{margin:0;width:100%;height:100%;background:#07131f}
+    #boot-status{
+      position:fixed;inset:0;z-index:99999;display:grid;place-items:center;
+      background:#07131f;color:#eef6fb;font-family:system-ui,sans-serif;text-align:center;padding:24px
+    }
+    #boot-status small{display:block;margin-top:8px;color:#94a9b9}
+    :root{
+  --glass:rgba(7,19,31,.88);--glass-light:rgba(255,255,255,.91);--line:rgba(255,255,255,.11);
+  --text:#edf7ff;--muted:#8ca3b6;--cyan:#58d8d3;--green:#68d7a4;--orange:#ffb55f;
+  --danger:#ff6464;--shadow:0 16px 50px rgba(0,0,0,.23)
+}
+*{box-sizing:border-box}
+html,body,#map{width:100%;height:100%;margin:0}
+body{overflow:hidden;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#d9e0e4}
+#map{position:fixed;inset:0;z-index:1}
+.leaflet-control-attribution{font-size:9px!important}
+.leaflet-control-zoom{border:0!important;box-shadow:var(--shadow)!important;margin-left:16px!important;margin-bottom:20px!important}
+.leaflet-control-zoom a{border:0!important;background:rgba(255,255,255,.92)!important;color:#16222c!important}
+body[data-theme="night"] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.72) contrast(.95) saturate(.65)}
+body[data-theme="night"] .leaflet-control-zoom a{background:rgba(10,26,39,.94)!important;color:#eaf6ff!important}
+body[data-theme="night"] .leaflet-control-attribution{background:rgba(6,16,26,.78)!important;color:#9db0bf!important}
+body[data-theme="night"] .leaflet-control-attribution a{color:#8bc9ff!important}
 
-  <link rel="stylesheet" href="/main/map/map.css">
+.map-header{position:fixed;z-index:1000;top:14px;left:14px;right:14px;min-height:62px;padding:9px 10px;display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:18px;background:var(--glass);box-shadow:var(--shadow);backdrop-filter:blur(18px);color:var(--text)}
+.back-button,.round-button{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.11);border-radius:13px;background:rgba(255,255,255,.05);color:var(--text);text-decoration:none;font-size:20px;cursor:pointer}
+.map-brand{min-width:160px;line-height:1.1}.map-brand strong{display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase}.map-brand span{display:block;margin-top:4px;color:var(--muted);font-size:10px;letter-spacing:.05em}
+.header-spacer{flex:1}.search-wrap{width:min(320px,32vw)}.search-wrap input{width:100%;height:42px;padding:0 14px;border:1px solid rgba(255,255,255,.1);border-radius:13px;outline:none;background:rgba(255,255,255,.055);color:var(--text);font:inherit;font-size:12px}
+.search-wrap input::placeholder{color:#708798}.search-wrap input:focus{border-color:rgba(88,216,211,.55);box-shadow:0 0 0 3px rgba(88,216,211,.08)}
+
+.status-panel{position:fixed;z-index:1000;top:90px;left:14px;display:flex;align-items:center;gap:14px;padding:12px 15px;border:1px solid var(--line);border-radius:16px;background:var(--glass);box-shadow:var(--shadow);backdrop-filter:blur(18px);color:var(--text)}
+.status-item{display:flex;align-items:center;gap:10px}.status-item small,.status-item strong{display:block}.status-item small{margin-bottom:3px;color:var(--muted);font-size:8px;font-weight:800;letter-spacing:.14em}.status-item strong{font-size:11px;font-weight:800}.status-dot{width:9px;height:9px;border-radius:50%;background:#788b99}.status-dot.ok{background:var(--green);box-shadow:0 0 0 5px rgba(104,215,164,.11)}.status-dot.bad{background:var(--danger)}.status-separator{width:1px;height:28px;background:var(--line)}
+
+.map-hint{position:fixed;z-index:999;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 13px;border:1px solid rgba(255,255,255,.1);border-radius:999px;background:rgba(7,19,31,.8);backdrop-filter:blur(14px);color:#b7c8d4;font-size:10px;box-shadow:var(--shadow);pointer-events:none;transition:opacity .3s}
+.map-hint.hidden{opacity:0}
+
+.aircraft-div-icon{background:transparent!important;border:0!important}
+.aircraft-marker{position:relative;width:28px;height:28px;display:grid;place-items:center}
+.aircraft-marker .plane{position:absolute;inset:0;display:grid;place-items:center;color:#112231;font-size:22px;line-height:1;text-shadow:0 1px 2px rgba(255,255,255,.8);transform-origin:50% 50%}
+body[data-theme="night"] .aircraft-marker .plane{color:#f6fbff;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+.aircraft-marker.emergency .plane{color:#ff3c3c!important;filter:drop-shadow(0 0 5px rgba(255,40,40,.85))}
+.aircraft-label{position:absolute;left:28px;top:4px;display:none;min-width:max-content;padding:4px 6px;border:1px solid rgba(0,0,0,.1);border-radius:7px;background:rgba(255,255,255,.88);color:#10202c;font-size:9px;font-weight:800;line-height:1;box-shadow:0 4px 15px rgba(0,0,0,.12);pointer-events:none}
+body[data-theme="night"] .aircraft-label{border-color:rgba(255,255,255,.1);background:rgba(7,19,31,.85);color:#edf7ff}
+body.map-detailed .aircraft-label{display:block}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0b1d2d;color:#edf7ff}.leaflet-popup-content-wrapper{border:1px solid rgba(255,255,255,.1);border-radius:16px;box-shadow:var(--shadow)}.leaflet-popup-content{margin:15px 16px!important;min-width:200px}.popup-flight{font-size:18px;font-weight:900;letter-spacing:-.02em}.popup-sub{margin:3px 0 13px;color:#89a0b1;font-size:10px}.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.popup-grid span{display:block;color:#8298aa;font-size:8px;text-transform:uppercase;letter-spacing:.08em}.popup-grid strong{display:block;margin-top:2px;font-size:11px}
+
+@media(max-width:720px){
+  .map-header{top:8px;left:8px;right:8px;min-height:56px;border-radius:15px;padding:7px}
+  .back-button,.round-button{width:40px;height:40px;flex-basis:40px}.map-brand{min-width:0}.map-brand strong{font-size:11px}.map-brand span{display:none}
+  .search-wrap{position:fixed;top:72px;left:8px;right:8px;width:auto}.search-wrap input{height:43px;background:rgba(7,19,31,.9);box-shadow:var(--shadow)}
+  .status-panel{top:auto;left:8px;right:8px;bottom:8px;justify-content:center;border-radius:15px;padding:10px 12px}.desktop-only{display:none}.status-separator{height:24px}
+  .map-hint{bottom:70px;max-width:calc(100% - 20px);text-align:center}.leaflet-control-zoom{margin-bottom:76px!important;margin-left:10px!important}
+}
+  </style>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body data-theme="night">
+
+  <div id="boot-status">
+    <div><strong>Harita başlatılıyor…</strong><small>Leaflet yükleniyor</small></div>
+  </div>
+
   <div id="map" aria-label="Canlı uçuş haritası"></div>
 
   <header class="map-header">
     <a class="back-button" href="/" aria-label="Ana sayfaya dön">←</a>
-
     <div class="map-brand">
       <strong>Yulcaribe Aviation</strong>
       <span>Live Flight Map</span>
     </div>
-
     <div class="header-spacer"></div>
-
     <div class="search-wrap">
       <input id="flight-search" type="search" autocomplete="off"
              placeholder="Uçuş / tescil / ICAO ara"
              aria-label="Uçuş ara">
     </div>
-
-    <button id="theme-toggle" class="round-button" type="button" aria-label="Gece gündüz modunu değiştir">☀</button>
+    <button id="theme-toggle" class="round-button" type="button"
+            aria-label="Gece gündüz modunu değiştir">☀</button>
   </header>
 
   <aside class="status-panel">
@@ -50,7 +105,414 @@
 
   <div class="map-hint" id="map-hint">Haritayı taşıdığında o bölgedeki uçaklar yüklenir.</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/main/map/map.js"></script>
+  <script>
+    function loadLeafletFallback(){
+      var s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
+      s.onload=startMap;
+      s.onerror=function(){
+        document.getElementById('boot-status').innerHTML =
+          '<div><strong>Leaflet yüklenemedi</strong><small>CDN bağlantıları engellenmiş olabilir.</small></div>';
+      };
+      document.head.appendChild(s);
+    }
+
+    function startMap(){
+      if(window.__mapStarted) return;
+      window.__mapStarted=true;
+      var boot=document.getElementById('boot-status');
+      if(boot) boot.remove();
+
+      (() => {
+  "use strict";
+
+  if (!window.L) {
+    document.body.innerHTML = `
+      <div style="min-height:100vh;display:grid;place-items:center;background:#07131f;color:#eef6fb;font-family:system-ui,sans-serif;padding:24px;text-align:center">
+        <div>
+          <h2 style="margin:0 0 10px">Harita motoru yüklenemedi</h2>
+          <p style="margin:0;color:#94a9b9">Leaflet CDN bağlantısı engellenmiş olabilir.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const REFRESH_MS = 10000;
+  const MAX_RADIUS_NM = 250;
+  const MIN_RADIUS_NM = 10;
+
+  const countEl = document.getElementById("aircraft-count");
+  const sourceEl = document.getElementById("source-label");
+  const updateEl = document.getElementById("update-label");
+  const feedDot = document.getElementById("feed-dot");
+  const searchInput = document.getElementById("flight-search");
+  const themeButton = document.getElementById("theme-toggle");
+  const hint = document.getElementById("map-hint");
+
+  const savedTheme = localStorage.getItem("aviation-map-theme");
+  if (savedTheme === "day" || savedTheme === "night") {
+    document.body.dataset.theme = savedTheme;
+  }
+  updateThemeButton();
+
+  const map = L.map("map", {
+    zoomControl: false,
+    minZoom: 3,
+    worldCopyJump: true,
+    preferCanvas: true
+  }).setView([40.65, 29.05], 7);
+
+  L.control.zoom({ position: "bottomleft" }).addTo(map);
+
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  const aircraft = new Map();
+  let refreshTimer = null;
+  let requestSerial = 0;
+  let preferredSource = "adsblol";
+  let hintTimer = setTimeout(() => hint.classList.add("hidden"), 6000);
+
+  const sources = {
+    adsblol: {
+      label: "ADSB.lol",
+      url: (lat, lon, radius) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`
+    },
+    airplanes: {
+      label: "Airplanes.live",
+      url: (lat, lon, radius) => `https://api.airplanes.live/v2/point/${lat}/${lon}/${radius}`
+    }
+  };
+
+  function esc(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function cleanFlight(ac) {
+    return String(ac.flight || "").trim() || "UNKNOWN";
+  }
+
+  function aircraftId(ac) {
+    return String(ac.hex || ac.r || ac.flight || "").trim().toLowerCase();
+  }
+
+  function isEmergency(ac) {
+    return ["7500", "7600", "7700"].includes(String(ac.squawk || ""));
+  }
+
+  function formatAltitude(value) {
+    if (value === "ground") return "GROUND";
+    const n = num(value);
+    return n === null ? "—" : Math.round(n).toLocaleString("tr-TR") + " ft";
+  }
+
+  function formatSpeed(value) {
+    const n = num(value);
+    return n === null ? "—" : Math.round(n) + " kt";
+  }
+
+  function formatTrack(value) {
+    const n = num(value);
+    return n === null ? "—" : Math.round(n) + "°";
+  }
+
+  function destination(lat, lon, bearingDeg, distanceNm) {
+    const R = 3440.065;
+    const d = distanceNm / R;
+    const brng = bearingDeg * Math.PI / 180;
+    const p1 = lat * Math.PI / 180;
+    const l1 = lon * Math.PI / 180;
+
+    const p2 = Math.asin(
+      Math.sin(p1) * Math.cos(d) +
+      Math.cos(p1) * Math.sin(d) * Math.cos(brng)
+    );
+
+    const l2 = l1 + Math.atan2(
+      Math.sin(brng) * Math.sin(d) * Math.cos(p1),
+      Math.cos(d) - Math.sin(p1) * Math.sin(p2)
+    );
+
+    return [
+      p2 * 180 / Math.PI,
+      ((l2 * 180 / Math.PI + 540) % 360) - 180
+    ];
+  }
+
+  function predictedPosition(ac) {
+    const lat = num(ac.lat);
+    const lon = num(ac.lon);
+    const speed = num(ac.gs);
+    const track = num(ac.track);
+
+    if (lat === null || lon === null) return null;
+    if (speed === null || track === null || speed < 1) return [lat, lon];
+
+    const distanceNm = speed * (REFRESH_MS / 3600000);
+    return destination(lat, lon, track, distanceNm);
+  }
+
+  function iconFor(ac) {
+    const flight = esc(cleanFlight(ac));
+    const track = num(ac.track) ?? 0;
+    const emergencyClass = isEmergency(ac) ? " emergency" : "";
+
+    return L.divIcon({
+      className: "aircraft-div-icon",
+      html: `<div class="aircraft-marker${emergencyClass}">
+        <span class="plane" style="transform:rotate(${track - 45}deg)">✈</span>
+        <span class="aircraft-label">${flight}</span>
+      </div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14]
+    });
+  }
+
+  function popupFor(ac) {
+    const flight = esc(cleanFlight(ac));
+    const registration = esc(ac.r || "Tescil bilinmiyor");
+    const type = esc(ac.t || ac.desc || "Tip bilinmiyor");
+    const squawk = esc(ac.squawk || "—");
+
+    return `<div class="popup-flight">${flight}</div>
+      <div class="popup-sub">${registration} · ${type}</div>
+      <div class="popup-grid">
+        <div><span>İrtifa</span><strong>${esc(formatAltitude(ac.alt_baro))}</strong></div>
+        <div><span>Hız</span><strong>${esc(formatSpeed(ac.gs))}</strong></div>
+        <div><span>Heading</span><strong>${esc(formatTrack(ac.track))}</strong></div>
+        <div><span>Squawk</span><strong>${squawk}</strong></div>
+      </div>`;
+  }
+
+  function upsertAircraft(ac, now) {
+    const id = aircraftId(ac);
+    const lat = num(ac.lat);
+    const lon = num(ac.lon);
+    if (!id || lat === null || lon === null) return null;
+
+    const future = predictedPosition(ac) || [lat, lon];
+    let state = aircraft.get(id);
+
+    if (!state) {
+      const marker = L.marker([lat, lon], {
+        icon: iconFor(ac),
+        keyboard: false,
+        riseOnHover: true
+      }).addTo(map);
+
+      marker.bindPopup(popupFor(ac), { closeButton: false, offset: [0, -8] });
+
+      state = {
+        id,
+        marker,
+        from: L.latLng(lat, lon),
+        to: L.latLng(future[0], future[1]),
+        animStart: now,
+        animDuration: REFRESH_MS,
+        data: ac
+      };
+
+      aircraft.set(id, state);
+    } else {
+      const current = state.marker.getLatLng();
+      state.from = L.latLng(current.lat, current.lng);
+      state.to = L.latLng(future[0], future[1]);
+      state.animStart = now;
+      state.animDuration = REFRESH_MS;
+      state.data = ac;
+      state.marker.setIcon(iconFor(ac));
+      state.marker.setPopupContent(popupFor(ac));
+    }
+
+    return id;
+  }
+
+  function animate(now) {
+    for (const state of aircraft.values()) {
+      const elapsed = Math.max(0, now - state.animStart);
+      const p = Math.min(1, elapsed / state.animDuration);
+      const eased = p < 1 ? (1 - Math.pow(1 - p, 2)) : 1;
+
+      const lat = state.from.lat + (state.to.lat - state.from.lat) * eased;
+      const lng = state.from.lng + (state.to.lng - state.from.lng) * eased;
+      state.marker.setLatLng([lat, lng]);
+    }
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+
+  function radiusForView() {
+    const center = map.getCenter();
+    const edge = map.getBounds().getNorthEast();
+    const meters = map.distance(center, edge);
+    const nm = Math.ceil(meters / 1852);
+    return Math.max(MIN_RADIUS_NM, Math.min(MAX_RADIUS_NM, nm));
+  }
+
+  async function fetchSource(sourceKey, lat, lon, radius) {
+    const source = sources[sourceKey];
+    const response = await fetch(source.url(lat, lon, radius), {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      headers: { "Accept": "application/json" }
+    });
+
+    if (!response.ok) {
+      throw new Error(source.label + " HTTP " + response.status);
+    }
+
+    const data = await response.json();
+    if (!data || !Array.isArray(data.ac)) {
+      throw new Error(source.label + " beklenmeyen yanıt");
+    }
+    return { data, sourceKey };
+  }
+
+  async function fetchAircraft() {
+    const serial = ++requestSerial;
+    const center = map.getCenter();
+    const radius = radiusForView();
+    const lat = center.lat.toFixed(4);
+    const lon = center.lng.toFixed(4);
+
+    feedDot.classList.remove("bad");
+    sourceEl.textContent = "Bağlanıyor…";
+
+    let result = null;
+
+    if (preferredSource === "adsblol") {
+      try {
+        result = await fetchSource("adsblol", lat, lon, radius);
+      } catch (error) {
+        console.info("ADSB.lol doğrudan tarayıcı erişimi başarısız; CORS uyumlu kaynağa geçiliyor.", error);
+        preferredSource = "airplanes";
+      }
+    }
+
+    if (!result) {
+      try {
+        result = await fetchSource("airplanes", lat, lon, radius);
+      } catch (error) {
+        if (serial !== requestSerial) return;
+        console.error("Uçak verisi alınamadı:", error);
+        feedDot.classList.remove("ok");
+        feedDot.classList.add("bad");
+        sourceEl.textContent = "Veri yok";
+        updateEl.textContent = "Bağlantı hatası";
+        scheduleRefresh();
+        return;
+      }
+    }
+
+    if (serial !== requestSerial) return;
+
+    const now = performance.now();
+    const freshIds = new Set();
+
+    for (const ac of result.data.ac) {
+      const id = upsertAircraft(ac, now);
+      if (id) freshIds.add(id);
+    }
+
+    for (const [id, state] of aircraft) {
+      if (!freshIds.has(id)) {
+        map.removeLayer(state.marker);
+        aircraft.delete(id);
+      }
+    }
+
+    countEl.textContent = aircraft.size + " uçak";
+    sourceEl.textContent = sources[result.sourceKey].label;
+    updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    }).format(new Date());
+
+    feedDot.classList.remove("bad");
+    feedDot.classList.add("ok");
+
+    scheduleRefresh();
+  }
+
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(fetchAircraft, REFRESH_MS);
+  }
+
+  function refreshForMapMove() {
+    clearTimeout(refreshTimer);
+    clearTimeout(hintTimer);
+    hint.classList.remove("hidden");
+    hint.textContent = "Yeni bölgedeki uçaklar yükleniyor…";
+    hintTimer = setTimeout(() => hint.classList.add("hidden"), 2200);
+    fetchAircraft();
+  }
+
+  function searchAircraft() {
+    const q = searchInput.value.trim().toLowerCase();
+    if (!q) return;
+
+    for (const state of aircraft.values()) {
+      const ac = state.data || {};
+      const haystack = [
+        ac.flight, ac.r, ac.hex, ac.t, ac.desc
+      ].map(v => String(v || "").toLowerCase()).join(" ");
+
+      if (haystack.includes(q)) {
+        map.setView(state.marker.getLatLng(), Math.max(map.getZoom(), 10), { animate: true });
+        state.marker.openPopup();
+        return;
+      }
+    }
+
+    searchInput.classList.add("not-found");
+    setTimeout(() => searchInput.classList.remove("not-found"), 800);
+  }
+
+  function updateDetailMode() {
+    document.body.classList.toggle("map-detailed", map.getZoom() >= 8);
+  }
+
+  function updateThemeButton() {
+    const night = document.body.dataset.theme === "night";
+    themeButton.textContent = night ? "☀" : "☾";
+    themeButton.title = night ? "Gündüz moduna geç" : "Gece moduna geç";
+  }
+
+  themeButton.addEventListener("click", () => {
+    const next = document.body.dataset.theme === "night" ? "day" : "night";
+    document.body.dataset.theme = next;
+    localStorage.setItem("aviation-map-theme", next);
+    updateThemeButton();
+  });
+
+  searchInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") searchAircraft();
+  });
+
+  map.on("zoomend", updateDetailMode);
+  map.on("moveend", refreshForMapMove);
+
+  updateDetailMode();
+  fetchAircraft();
+})();
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+          onload="startMap()"
+          onerror="loadLeafletFallback()"></script>
 </body>
 </html>
