@@ -62,9 +62,19 @@ body.map-detailed .aircraft-label{display:block}
 }
   </style>
 
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
+        onload="__debugLog('Leaflet CSS yüklendi','ok')"
+        onerror="__debugLog('Leaflet CSS YÜKLENEMEDİ','err')">
 </head>
 <body data-theme="night">
+
+  <div id="debug-panel">
+    <b>Yulcaribe Map Debug</b>
+    <div id="debug-log">
+      <div class="ok">HTML çalıştı.</div>
+    </div>
+  </div>
 
   <div id="boot-status">
     <div><strong>Harita başlatılıyor…</strong><small>Leaflet yükleniyor</small></div>
@@ -118,8 +128,10 @@ body.map-detailed .aircraft-label{display:block}
     }
 
     function startMap(){
-      if(window.__mapStarted) return;
+      __debugLog('startMap çağrıldı','ok');
+      if(window.__mapStarted){ __debugLog('startMap ikinci kez çağrıldı','warn'); return; }
       window.__mapStarted=true;
+      __debugLog('Leaflet mevcut: '+String(!!window.L), window.L?'ok':'err');
       var boot=document.getElementById('boot-status');
       if(boot) boot.remove();
 
@@ -512,7 +524,7 @@ body.map-detailed .aircraft-label{display:block}
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
-          onload="startMap()"
-          onerror="loadLeafletFallback()"></script>
+          onload="__debugLog('Leaflet JS yüklendi','ok');startMap()"
+          onerror="__debugLog('jsDelivr Leaflet JS YÜKLENEMEDİ','err');loadLeafletFallback()"></script>
 </body>
 </html>
