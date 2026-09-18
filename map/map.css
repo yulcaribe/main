@@ -28,11 +28,14 @@ body[data-theme="night"] .leaflet-control-attribution a{color:#8bc9ff!important}
 .map-hint.hidden{opacity:0}
 
 .aircraft-div-icon{background:transparent!important;border:0!important}
-.aircraft-marker{position:relative;width:28px;height:28px;display:grid;place-items:center}
-.aircraft-marker .plane{position:absolute;inset:0;display:grid;place-items:center;color:#112231;font-size:22px;line-height:1;text-shadow:0 1px 2px rgba(255,255,255,.8);transform-origin:50% 50%}
+body[data-aircraft-size="small"]{--aircraft-size:30px;--aircraft-font:24px}
+body[data-aircraft-size="medium"],body:not([data-aircraft-size]){--aircraft-size:38px;--aircraft-font:31px}
+body[data-aircraft-size="large"]{--aircraft-size:48px;--aircraft-font:39px}
+.aircraft-marker{position:relative;width:var(--aircraft-size);height:var(--aircraft-size);display:grid;place-items:center}
+.aircraft-marker .plane{position:absolute;inset:0;display:grid;place-items:center;color:#112231;font-size:var(--aircraft-font);line-height:1;text-shadow:0 1px 2px rgba(255,255,255,.8);transform-origin:50% 50%}
 body[data-theme="night"] .aircraft-marker .plane{color:#f6fbff;text-shadow:0 1px 3px rgba(0,0,0,.9)}
 .aircraft-marker.emergency .plane{color:#ff3c3c!important;filter:drop-shadow(0 0 5px rgba(255,40,40,.85))}
-.aircraft-label{position:absolute;left:28px;top:4px;display:none;min-width:max-content;padding:4px 6px;border:1px solid rgba(0,0,0,.1);border-radius:7px;background:rgba(255,255,255,.88);color:#10202c;font-size:9px;font-weight:800;line-height:1;box-shadow:0 4px 15px rgba(0,0,0,.12);pointer-events:none}
+.aircraft-label{position:absolute;left:calc(var(--aircraft-size) + 3px);top:calc(var(--aircraft-size) * .16);display:none;min-width:max-content;padding:4px 6px;border:1px solid rgba(0,0,0,.1);border-radius:7px;background:rgba(255,255,255,.88);color:#10202c;font-size:9px;font-weight:800;line-height:1;box-shadow:0 4px 15px rgba(0,0,0,.12);pointer-events:none}
 body[data-theme="night"] .aircraft-label{border-color:rgba(255,255,255,.1);background:rgba(7,19,31,.85);color:#edf7ff}
 body.map-detailed .aircraft-label{display:block}
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0b1d2d;color:#edf7ff}.leaflet-popup-content-wrapper{border:1px solid rgba(255,255,255,.1);border-radius:16px;box-shadow:var(--shadow)}.leaflet-popup-content{margin:15px 16px!important;min-width:200px}.popup-flight{font-size:18px;font-weight:900;letter-spacing:-.02em}.popup-sub{margin:3px 0 13px;color:#89a0b1;font-size:10px}.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.popup-grid span{display:block;color:#8298aa;font-size:8px;text-transform:uppercase;letter-spacing:.08em}.popup-grid strong{display:block;margin-top:2px;font-size:11px}
@@ -42,5 +45,31 @@ body.map-detailed .aircraft-label{display:block}
   .back-button,.round-button{width:40px;height:40px;flex-basis:40px}.map-brand{min-width:0}.map-brand strong{font-size:11px}.map-brand span{display:none}
   .search-wrap{position:fixed;top:72px;left:8px;right:8px;width:auto}.search-wrap input{height:43px;background:rgba(7,19,31,.9);box-shadow:var(--shadow)}
   .status-panel{top:auto;left:8px;right:8px;bottom:8px;justify-content:center;border-radius:15px;padding:10px 12px}.desktop-only{display:none}.status-separator{height:24px}
-  .map-hint{bottom:70px;max-width:calc(100% - 20px);text-align:center}.leaflet-control-zoom{margin-bottom:76px!important;margin-left:10px!important}
+  .map-hint{bottom:122px;max-width:calc(100% - 20px);text-align:center}.leaflet-control-zoom{margin-bottom:76px!important;margin-left:10px!important}
+  .options-toggle{right:8px;bottom:72px;height:42px;padding:0 13px}
+  .options-panel{right:8px;bottom:122px;width:min(330px,calc(100vw - 16px))}
 }
+
+.options-toggle{
+  position:fixed;z-index:1001;right:18px;bottom:18px;height:44px;padding:0 15px;
+  display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.12);border-radius:14px;
+  background:rgba(7,19,31,.9);color:#edf7ff;box-shadow:var(--shadow);backdrop-filter:blur(16px);
+  font:800 11px/1 Inter,ui-sans-serif,system-ui,sans-serif;letter-spacing:.02em;cursor:pointer
+}
+.options-toggle:hover{background:rgba(13,33,50,.96)}
+.options-panel{
+  position:fixed;z-index:1002;right:18px;bottom:72px;width:min(330px,calc(100vw - 28px));
+  padding:16px;border:1px solid rgba(255,255,255,.12);border-radius:19px;
+  background:rgba(7,19,31,.95);color:#edf7ff;box-shadow:0 22px 70px rgba(0,0,0,.35);
+  backdrop-filter:blur(20px);opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease
+}
+.options-panel.open{opacity:1;transform:none;pointer-events:auto}
+.options-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:13px;border-bottom:1px solid rgba(255,255,255,.08)}
+.options-head strong,.options-head small{display:block}.options-head strong{font-size:13px}.options-head small{margin-top:4px;color:#8198aa;font-size:10px}
+.options-head button{width:30px;height:30px;border:0;border-radius:9px;background:rgba(255,255,255,.06);color:#dcebf4;font-size:20px;line-height:1;cursor:pointer}
+.option-group{padding-top:15px}.option-label{display:block;margin-bottom:8px;color:#8ea5b6;font-size:9px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.segmented{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.segmented.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.segmented button{height:38px;border:1px solid rgba(255,255,255,.09);border-radius:11px;background:rgba(255,255,255,.045);color:#aebfcb;font:750 10px/1 Inter,ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.segmented button.active{border-color:rgba(88,216,211,.38);background:rgba(88,216,211,.12);color:#eaffff;box-shadow:inset 0 0 0 1px rgba(88,216,211,.07)}
