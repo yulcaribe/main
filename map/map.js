@@ -21,14 +21,22 @@
   const updateEl = document.getElementById("update-label");
   const feedDot = document.getElementById("feed-dot");
   const searchInput = document.getElementById("flight-search");
-  const themeButton = document.getElementById("theme-toggle");
+  const optionsToggle = document.getElementById("options-toggle");
+  const optionsPanel = document.getElementById("options-panel");
+  const optionsClose = document.getElementById("options-close");
+  const themeButtons = [...document.querySelectorAll("[data-theme-value]")];
+  const sizeButtons = [...document.querySelectorAll("[data-size-value]")];
   const hint = document.getElementById("map-hint");
 
   const savedTheme = localStorage.getItem("aviation-map-theme");
-  if (savedTheme === "day" || savedTheme === "night") {
-    document.body.dataset.theme = savedTheme;
-  }
-  updateThemeButton();
+  document.body.dataset.theme = (savedTheme === "day" || savedTheme === "night") ? savedTheme : "night";
+
+  const savedAircraftSize = localStorage.getItem("aviation-aircraft-size");
+  document.body.dataset.aircraftSize = ["small","medium","large"].includes(savedAircraftSize)
+    ? savedAircraftSize
+    : "medium";
+
+  syncOptionsUi();
 
   const map = L.map("map", {
     zoomControl: false,
@@ -130,6 +138,14 @@
     return destination(lat, lon, track, distanceNm);
   }
 
+  function aircraftPixelSize() {
+    return {
+      small: 30,
+      medium: 38,
+      large: 48
+    }[document.body.dataset.aircraftSize] || 38;
+  }
+
   function iconFor(ac) {
     const flight = esc(cleanFlight(ac));
     const track = num(ac.track) ?? 0;
@@ -141,8 +157,8 @@
         <span class="plane" style="transform:rotate(${track - 45}deg)">✈</span>
         <span class="aircraft-label">${flight}</span>
       </div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14]
+      iconSize: [aircraftPixelSize(), aircraftPixelSize()],
+      iconAnchor: [aircraftPixelSize() / 2, aircraftPixelSize() / 2]
     });
   }
 
@@ -357,17 +373,55 @@
     document.body.classList.toggle("map-detailed", map.getZoom() >= 8);
   }
 
-  function updateThemeButton() {
-    const night = document.body.dataset.theme === "night";
-    themeButton.textContent = night ? "☀" : "☾";
-    themeButton.title = night ? "Gündüz moduna geç" : "Gece moduna geç";
+  function syncOptionsUi() {
+    themeButtons.forEach(button => {
+      button.classList.toggle("active", button.dataset.themeValue === document.body.dataset.theme);
+    });
+
+    sizeButtons.forEach(button => {
+      button.classList.toggle("active", button.dataset.sizeValue === document.body.dataset.aircraftSize);
+    });
   }
 
-  themeButton.addEventListener("click", () => {
-    const next = document.body.dataset.theme === "night" ? "day" : "night";
-    document.body.dataset.theme = next;
-    localStorage.setItem("aviation-map-theme", next);
-    updateThemeButton();
+  function setTheme(theme) {
+    document.body.dataset.theme = theme;
+    localStorage.setItem("aviation-map-theme", theme);
+    syncOptionsUi();
+  }
+
+  function setAircraftSize(size) {
+    document.body.dataset.aircraftSize = size;
+    localStorage.setItem("aviation-aircraft-size", size);
+
+    for (const state of aircraft.values()) {
+      state.marker.setIcon(iconFor(state.data));
+    }
+
+    syncOptionsUi();
+  }
+
+  function setOptionsOpen(open) {
+    optionsPanel.classList.toggle("open", open);
+    optionsPanel.setAttribute("aria-hidden", String(!open));
+    optionsToggle.setAttribute("aria-expanded", String(open));
+  }
+
+  optionsToggle.addEventListener("click", () => {
+    setOptionsOpen(!optionsPanel.classList.contains("open"));
+  });
+
+  optionsClose.addEventListener("click", () => setOptionsOpen(false));
+
+  themeButtons.forEach(button => {
+    button.addEventListener("click", () => setTheme(button.dataset.themeValue));
+  });
+
+  sizeButtons.forEach(button => {
+    button.addEventListener("click", () => setAircraftSize(button.dataset.sizeValue));
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") setOptionsOpen(false);
   });
 
   searchInput.addEventListener("keydown", event => {
