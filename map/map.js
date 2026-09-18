@@ -47,19 +47,7 @@
   const aircraft = new Map();
   let refreshTimer = null;
   let requestSerial = 0;
-  let preferredSource = "adsblol";
-  let hintTimer = setTimeout(() => hint.classList.add("hidden"), 6000);
-
-  const sources = {
-    adsblol: {
-      label: "ADSB.lol",
-      url: (lat, lon, radius) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${radius}`
-    },
-    airplanes: {
-      label: "Airplanes.live",
-      url: (lat, lon, radius) => `https://api.airplanes.live/v2/point/${lat}/${lon}/${radius}`
-    }
-  };
+  const LOCAL_FLIGHT_API = "/main/api/flights.php";
 
   function esc(value) {
     return String(value ?? "")
@@ -236,26 +224,6 @@
     return Math.max(MIN_RADIUS_NM, Math.min(MAX_RADIUS_NM, nm));
   }
 
-  async function fetchSource(sourceKey, lat, lon, radius) {
-    const source = sources[sourceKey];
-    const response = await fetch(source.url(lat, lon, radius), {
-      method: "GET",
-      mode: "cors",
-      cache: "no-store",
-      headers: { "Accept": "application/json" }
-    });
-
-    if (!response.ok) {
-      throw new Error(source.label + " HTTP " + response.status);
-    }
-
-    const data = await response.json();
-    if (!data || !Array.isArray(data.ac)) {
-      throw new Error(source.label + " beklenmeyen yanıt");
-    }
-    return { data, sourceKey };
-  }
-
   async function fetchAircraft() {
     const serial = ++requestSerial;
     const center = map.getCenter();
@@ -266,22 +234,42 @@
     feedDot.classList.remove("bad");
     sourceEl.textContent = "Bağlanıyor…";
 
-    let result = null;
+    let result;
 
-    if (preferredSource === "adsblol") {
-      try {
-        result = await fetchSource("adsblol", lat, lon, radius);
-      } catch (error) {
-        console.info("ADSB.lol doğrudan tarayıcı erişimi başarısız; CORS uyumlu kaynağa geçiliyor.", error);
-        preferredSource = "airplanes";
+    try {
+      const response = await fetch(
+        `${LOCAL_FLIGHT_API}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius=${radius}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: { "Accept": "application/json" }
+        }
+      );
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error || ("HTTP " + response.status));
       }
+
+      if (!payload || !Array.isArray(payload.ac)) {
+        throw new Error("Beklenmeyen uçak verisi.");
+      }
+
+      result = payload;
+    } catch (error) {
+      if (serial !== requestSerial) return;
+
+      console.error("Uçak verisi alınamadı:", error);
+      feedDot.classList.remove("ok");
+      feedDot.classList.add("bad");
+      sourceEl.textContent = "Veri yok";
+      updateEl.textContent = "Bağlantı hatası";
+      scheduleRefresh();
+      return;
     }
 
-    if (!result) {
-      try {
-        result = await fetchSource("airplanes", lat, lon, radius);
-      } catch (error) {
-        if (serial !== requestSerial) return;
+    if (serial !== requestSerial) return;
         console.error("Uçak verisi alınamadı:", error);
         feedDot.classList.remove("ok");
         feedDot.classList.add("bad");
@@ -297,7 +285,7 @@
     const now = performance.now();
     const freshIds = new Set();
 
-    for (const ac of result.data.ac) {
+    for (const ac of result.ac) {
       const id = upsertAircraft(ac, now);
       if (id) freshIds.add(id);
     }
@@ -310,7 +298,7 @@
     }
 
     countEl.textContent = aircraft.size + " uçak";
-    sourceEl.textContent = sources[result.sourceKey].label;
+    sourceEl.textContent = result?._proxy?.source || "Airplanes.live";
     updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
       hour: "2-digit", minute: "2-digit", second: "2-digit"
     }).format(new Date());
