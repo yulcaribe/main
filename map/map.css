@@ -32,8 +32,10 @@ body[data-aircraft-size="small"]{--aircraft-size:30px;--aircraft-font:24px}
 body[data-aircraft-size="medium"],body:not([data-aircraft-size]){--aircraft-size:38px;--aircraft-font:31px}
 body[data-aircraft-size="large"]{--aircraft-size:48px;--aircraft-font:39px}
 .aircraft-marker{position:relative;width:var(--aircraft-size);height:var(--aircraft-size);display:grid;place-items:center}
-.aircraft-marker .plane{position:absolute;inset:0;display:grid;place-items:center;color:#112231;font-size:var(--aircraft-font);line-height:1;text-shadow:0 1px 2px rgba(255,255,255,.8);transform-origin:50% 50%}
-body[data-theme="night"] .aircraft-marker .plane{color:#f6fbff;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+.aircraft-marker .plane{position:absolute;inset:0;display:grid;place-items:center;color:#112231;line-height:1;transform-origin:50% 50%}
+.aircraft-marker .plane svg{width:82%;height:82%;display:block;fill:currentColor;filter:drop-shadow(0 1px 1px rgba(255,255,255,.7));pointer-events:none}
+body[data-theme="night"] .aircraft-marker .plane{color:#f6fbff}
+body[data-theme="night"] .aircraft-marker .plane svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))}
 .aircraft-marker.emergency .plane{color:#ff3c3c!important;filter:drop-shadow(0 0 5px rgba(255,40,40,.85))}
 .aircraft-label{position:absolute;left:calc(var(--aircraft-size) + 3px);top:calc(var(--aircraft-size) * .16);display:none;min-width:max-content;padding:4px 6px;border:1px solid rgba(0,0,0,.1);border-radius:7px;background:rgba(255,255,255,.88);color:#10202c;font-size:9px;font-weight:800;line-height:1;box-shadow:0 4px 15px rgba(0,0,0,.12);pointer-events:none}
 body[data-theme="night"] .aircraft-label{border-color:rgba(255,255,255,.1);background:rgba(7,19,31,.85);color:#edf7ff}
