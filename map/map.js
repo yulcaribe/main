@@ -46,6 +46,8 @@
 
   const aircraft = new Map();
   let refreshTimer = null;
+  let moveRefreshTimer = null;
+  let activeRequest = null;
   let requestSerial = 0;
   const LOCAL_FLIGHT_API = "/main/api/flights.php";
 
@@ -226,6 +228,12 @@
 
   async function fetchAircraft() {
     const serial = ++requestSerial;
+
+    if (activeRequest) {
+      activeRequest.abort();
+    }
+    activeRequest = new AbortController();
+
     const center = map.getCenter();
     const radius = radiusForView();
     const lat = center.lat.toFixed(4);
@@ -240,7 +248,8 @@
         {
           method: "GET",
           cache: "no-store",
-          headers: { "Accept": "application/json" }
+          headers: { "Accept": "application/json" },
+          signal: activeRequest.signal
         }
       );
 
@@ -272,7 +281,7 @@
       }
 
       countEl.textContent = aircraft.size + " uçak";
-      sourceEl.textContent = payload?._proxy?.source || "Airplanes.live";
+      sourceEl.textContent = payload?._proxy?.source || "ADSB.lol";
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
         minute: "2-digit",
@@ -283,6 +292,7 @@
       feedDot.classList.add("ok");
     } catch (error) {
       if (serial !== requestSerial) return;
+      if (error?.name === "AbortError") return;
 
       console.error("Uçak verisi alınamadı:", error);
       feedDot.classList.remove("ok");
@@ -299,13 +309,26 @@
     refreshTimer = setTimeout(fetchAircraft, REFRESH_MS);
   }
 
-  function refreshForMapMove() {
+  function queueViewRefresh() {
     clearTimeout(refreshTimer);
+    clearTimeout(moveRefreshTimer);
     clearTimeout(hintTimer);
+
     hint.classList.remove("hidden");
     hint.textContent = "Yeni bölgedeki uçaklar yükleniyor…";
-    hintTimer = setTimeout(() => hint.classList.add("hidden"), 2200);
-    fetchAircraft();
+
+    moveRefreshTimer = setTimeout(() => {
+      const center = map.getCenter();
+      console.info("Harita bölgesi yenileniyor:", {
+        lat: center.lat.toFixed(4),
+        lon: center.lng.toFixed(4),
+        radius: radiusForView()
+      });
+
+      fetchAircraft();
+
+      hintTimer = setTimeout(() => hint.classList.add("hidden"), 1800);
+    }, 350);
   }
 
   function searchAircraft() {
@@ -350,8 +373,11 @@
     if (event.key === "Enter") searchAircraft();
   });
 
-  map.on("zoomend", updateDetailMode);
-  map.on("moveend", refreshForMapMove);
+  map.on("zoomend", () => {
+    updateDetailMode();
+    queueViewRefresh();
+  });
+  map.on("dragend", queueViewRefresh);
 
   updateDetailMode();
   fetchAircraft();
