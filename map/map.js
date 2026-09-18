@@ -234,8 +234,6 @@
     feedDot.classList.remove("bad");
     sourceEl.textContent = "Bağlanıyor…";
 
-    let result;
-
     try {
       const response = await fetch(
         `${LOCAL_FLIGHT_API}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius=${radius}`,
@@ -256,7 +254,33 @@
         throw new Error("Beklenmeyen uçak verisi.");
       }
 
-      result = payload;
+      if (serial !== requestSerial) return;
+
+      const now = performance.now();
+      const freshIds = new Set();
+
+      for (const ac of payload.ac) {
+        const id = upsertAircraft(ac, now);
+        if (id) freshIds.add(id);
+      }
+
+      for (const [id, state] of aircraft) {
+        if (!freshIds.has(id)) {
+          map.removeLayer(state.marker);
+          aircraft.delete(id);
+        }
+      }
+
+      countEl.textContent = aircraft.size + " uçak";
+      sourceEl.textContent = payload?._proxy?.source || "Airplanes.live";
+      updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).format(new Date());
+
+      feedDot.classList.remove("bad");
+      feedDot.classList.add("ok");
     } catch (error) {
       if (serial !== requestSerial) return;
 
@@ -265,46 +289,7 @@
       feedDot.classList.add("bad");
       sourceEl.textContent = "Veri yok";
       updateEl.textContent = "Bağlantı hatası";
-      scheduleRefresh();
-      return;
     }
-
-    if (serial !== requestSerial) return;
-        console.error("Uçak verisi alınamadı:", error);
-        feedDot.classList.remove("ok");
-        feedDot.classList.add("bad");
-        sourceEl.textContent = "Veri yok";
-        updateEl.textContent = "Bağlantı hatası";
-        scheduleRefresh();
-        return;
-      }
-    }
-
-    if (serial !== requestSerial) return;
-
-    const now = performance.now();
-    const freshIds = new Set();
-
-    for (const ac of result.ac) {
-      const id = upsertAircraft(ac, now);
-      if (id) freshIds.add(id);
-    }
-
-    for (const [id, state] of aircraft) {
-      if (!freshIds.has(id)) {
-        map.removeLayer(state.marker);
-        aircraft.delete(id);
-      }
-    }
-
-    countEl.textContent = aircraft.size + " uçak";
-    sourceEl.textContent = result?._proxy?.source || "Airplanes.live";
-    updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
-      hour: "2-digit", minute: "2-digit", second: "2-digit"
-    }).format(new Date());
-
-    feedDot.classList.remove("bad");
-    feedDot.classList.add("ok");
 
     scheduleRefresh();
   }
