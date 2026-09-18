@@ -4,123 +4,131 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 
-function fail(int $status, string $message, array $extra = []): never {
+function respond(int $status, array $payload): never {
     http_response_code($status);
     echo json_encode(
-        array_merge(['ok' => false, 'error' => $message], $extra),
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        $payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
     );
     exit;
 }
 
-$lat = filter_input(INPUT_GET, 'lat', FILTER_VALIDATE_FLOAT);
-$lon = filter_input(INPUT_GET, 'lon', FILTER_VALIDATE_FLOAT);
-$radius = filter_input(INPUT_GET, 'radius', FILTER_VALIDATE_INT);
+$latRaw = $_GET['lat'] ?? null;
+$lonRaw = $_GET['lon'] ?? null;
+$radiusRaw = $_GET['radius'] ?? '100';
 
-if ($lat === false || $lat === null || $lat < -90 || $lat > 90) {
-    fail(400, 'Geçersiz lat değeri.');
+if ($latRaw === null || !is_numeric($latRaw)) {
+    respond(400, ['ok' => false, 'error' => 'Geçersiz lat değeri.']);
+}
+if ($lonRaw === null || !is_numeric($lonRaw)) {
+    respond(400, ['ok' => false, 'error' => 'Geçersiz lon değeri.']);
+}
+if (!is_numeric($radiusRaw)) {
+    respond(400, ['ok' => false, 'error' => 'Geçersiz radius değeri.']);
 }
 
-if ($lon === false || $lon === null || $lon < -180 || $lon > 180) {
-    fail(400, 'Geçersiz lon değeri.');
+$lat = (float)$latRaw;
+$lon = (float)$lonRaw;
+$radius = (int)$radiusRaw;
+
+if ($lat < -90 || $lat > 90) {
+    respond(400, ['ok' => false, 'error' => 'Lat -90 ile 90 arasında olmalı.']);
+}
+if ($lon < -180 || $lon > 180) {
+    respond(400, ['ok' => false, 'error' => 'Lon -180 ile 180 arasında olmalı.']);
 }
 
-if ($radius === false || $radius === null) {
-    $radius = 100;
-}
-
-$radius = max(1, min(250, (int)$radius));
+// Airplanes.live point endpoint: radius is nautical miles, max 250 NM.
+$radius = max(1, min(250, $radius));
 
 $url = sprintf(
     'https://api.airplanes.live/v2/point/%s/%s/%d',
-    rawurlencode((string)$lat),
-    rawurlencode((string)$lon),
+    rtrim(rtrim(sprintf('%.6F', $lat), '0'), '.'),
+    rtrim(rtrim(sprintf('%.6F', $lon), '0'), '.'),
     $radius
 );
 
-$body = false;
-$status = 0;
-$contentType = 'application/json';
-
-if (function_exists('curl_init')) {
-    $ch = curl_init($url);
-
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_USERAGENT => 'Yulcaribe-Aviation/1.0',
-        CURLOPT_HTTPHEADER => [
-            'Accept: application/json'
-        ],
-        CURLOPT_ENCODING => ''
+if (!function_exists('curl_init')) {
+    respond(500, [
+        'ok' => false,
+        'error' => 'PHP cURL bu sunucuda aktif değil.',
+        'upstreamUrl' => $url
     ]);
-
-    $body = curl_exec($ch);
-
-    if ($body === false) {
-        $error = curl_error($ch);
-        curl_close($ch);
-        fail(502, 'Airplanes.live bağlantı hatası.', ['detail' => $error]);
-    }
-
-    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $remoteType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-    if (is_string($remoteType) && $remoteType !== '') {
-        $contentType = $remoteType;
-    }
-
-    curl_close($ch);
-} else {
-    $context = stream_context_create([
-        'http' => [
-            'method' => 'GET',
-            'timeout' => 15,
-            'ignore_errors' => true,
-            'header' => implode("\r\n", [
-                'Accept: application/json',
-                'User-Agent: Yulcaribe-Aviation/1.0'
-            ])
-        ]
-    ]);
-
-    $body = @file_get_contents($url, false, $context);
-
-    if ($body === false) {
-        fail(502, 'Airplanes.live bağlantısı kurulamadı.');
-    }
-
-    if (isset($http_response_header) && is_array($http_response_header)) {
-        foreach ($http_response_header as $headerLine) {
-            if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $headerLine, $m)) {
-                $status = (int)$m[1];
-            }
-            if (stripos($headerLine, 'Content-Type:') === 0) {
-                $contentType = trim(substr($headerLine, 13));
-            }
-        }
-    }
 }
 
-if ($status < 200 || $status >= 300) {
-    fail(502, 'Airplanes.live beklenmeyen HTTP yanıtı.', [
-        'upstreamStatus' => $status
+$ch = curl_init($url);
+
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_FOLLOWLOCATION => true,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_TIMEOUT => 20,
+    CURLOPT_USERAGENT => 'Yulcaribe-Aviation/1.0 (+https://yulcaribe.com)',
+    CURLOPT_HTTPHEADER => [
+        'Accept: application/json',
+        'Cache-Control: no-cache'
+    ],
+    CURLOPT_ENCODING => '',
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_SSL_VERIFYPEER => true,
+    CURLOPT_SSL_VERIFYHOST => 2
+]);
+
+$body = curl_exec($ch);
+
+$curlErrno = curl_errno($ch);
+$curlError = curl_error($ch);
+$httpStatus = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+$primaryIp = (string)curl_getinfo($ch, CURLINFO_PRIMARY_IP);
+$totalTime = (float)curl_getinfo($ch, CURLINFO_TOTAL_TIME);
+
+curl_close($ch);
+
+if ($body === false || $curlErrno !== 0) {
+    respond(502, [
+        'ok' => false,
+        'error' => 'Airplanes.live bağlantısı kurulamadı.',
+        'curlErrno' => $curlErrno,
+        'curlError' => $curlError,
+        'upstreamUrl' => $url,
+        'primaryIp' => $primaryIp,
+        'totalTime' => $totalTime
+    ]);
+}
+
+if ($httpStatus < 200 || $httpStatus >= 300) {
+    respond(502, [
+        'ok' => false,
+        'error' => 'Airplanes.live başarılı olmayan HTTP yanıtı döndürdü.',
+        'upstreamStatus' => $httpStatus,
+        'upstreamBody' => mb_substr((string)$body, 0, 1200),
+        'upstreamContentType' => $contentType,
+        'upstreamUrl' => $url,
+        'primaryIp' => $primaryIp,
+        'totalTime' => $totalTime
     ]);
 }
 
 $data = json_decode((string)$body, true);
 
 if (!is_array($data)) {
-    fail(502, 'Airplanes.live geçersiz JSON döndürdü.', [
-        'contentType' => $contentType
+    respond(502, [
+        'ok' => false,
+        'error' => 'Airplanes.live geçerli JSON döndürmedi.',
+        'upstreamStatus' => $httpStatus,
+        'upstreamBody' => mb_substr((string)$body, 0, 1200),
+        'upstreamContentType' => $contentType,
+        'upstreamUrl' => $url
     ]);
 }
 
 $data['_proxy'] = [
     'source' => 'Airplanes.live',
     'requestedAt' => gmdate('c'),
-    'radiusNm' => $radius
+    'radiusNm' => $radius,
+    'upstreamStatus' => $httpStatus,
+    'totalTime' => $totalTime
 ];
 
-echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+respond(200, $data);
