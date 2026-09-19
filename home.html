@@ -1,318 +1,79 @@
 <header class="site-header">
   <div class="shell header-inner">
-    <a class="brand" href="/" aria-label="YulCaribe ana sayfa">
-      <span class="brand-mark" aria-hidden="true">
-        <span class="brand-wing"></span>
-        <span class="brand-dot"></span>
-      </span>
-      <span class="brand-copy">
-        <strong>YulCaribe</strong>
-        <small>Aviation / Airspace Intelligence</small>
-      </span>
-    </a>
+    <a class="brand" href="/" aria-label="YulCaribe ana sayfa">YulCaribe</a>
 
     <nav class="top-nav" aria-label="Ana menü">
-      <a href="#weather">Weather</a>
-      <a href="#guncel">Airspace</a>
-      <a href="#operasyon">Operations</a>
-      <a href="#hakkinda">About</a>
+      <a href="#weather">METAR / TAF</a>
       <a class="map-nav" href="/main/map/">Live Map <span>↗</span></a>
     </nav>
-
-    <span class="live-chip">
-      <i></i>
-      <span id="today-label">Live</span>
-    </span>
   </div>
 </header>
 
 <main id="top">
   <section class="hero-section">
-    <div class="hero-orbit orbit-one" aria-hidden="true"></div>
-    <div class="hero-orbit orbit-two" aria-hidden="true"></div>
-    <div class="hero-grid" aria-hidden="true"></div>
-
     <div class="shell hero">
-      <div class="hero-copy">
-        <div class="eyebrow"><span></span> LIVE AVIATION INTERFACE</div>
-        <h1>Gökyüzünü<br><em>canlı oku.</em></h1>
-        <p>Canlı uçuş takibi, hava trafik verileri ve operasyonel havacılık notlarını tek, sade ve modern bir arayüzde keşfet.</p>
+      <h1>YulCaribe</h1>
 
-        <div class="hero-actions">
-          <a class="primary-button" href="/main/map/">
-            <span class="button-pulse"></span>
-            Canlı haritayı aç
-            <b>↗</b>
-          </a>
-          <a class="weather-hero-link" href="#weather">
-            <span>METAR / TAF</span>
-            <b>↓</b>
-          </a>
-          <a class="secondary-button" href="#guncel">Sistemi keşfet <span>↓</span></a>
-        </div>
-
-        <div class="hero-data-strip" aria-label="Sistem bilgileri">
-          <div><small>DATA SOURCE</small><strong>ADS-B LIVE</strong></div>
-          <div><small>MAP LAYER</small><strong>OPENSTREETMAP</strong></div>
-          <div><small>INTERFACE</small><strong>RESPONSIVE</strong></div>
-        </div>
-      </div>
-
-      <div class="airspace-stage" aria-hidden="true">
-        <div class="stage-frame">
-          <div class="stage-corner c1"></div>
-          <div class="stage-corner c2"></div>
-          <div class="stage-corner c3"></div>
-          <div class="stage-corner c4"></div>
-
-          <div class="stage-topline">
-            <span>AIRSPACE / LIVE</span>
-            <span class="stage-signal"><i></i> LINKED</span>
-          </div>
-
-          <div class="radar">
-            <span class="radar-ring r1"></span>
-            <span class="radar-ring r2"></span>
-            <span class="radar-ring r3"></span>
-            <span class="radar-axis axis-x"></span>
-            <span class="radar-axis axis-y"></span>
-            <span class="radar-sweep"></span>
-
-            <span class="radar-target t1"><i></i><b>TK2431</b></span>
-            <span class="radar-target t2"><i></i><b>PC2018</b></span>
-            <span class="radar-target t3"><i></i><b>XQ703</b></span>
-
-            <span class="hero-plane">✈</span>
-          </div>
-
-          <div class="stage-readout">
-            <div><small>ALT</small><strong>34,000 FT</strong></div>
-            <div><small>SPD</small><strong>462 KT</strong></div>
-            <div><small>HDG</small><strong>271°</strong></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="scroll-cue"><span></span> SCROLL TO EXPLORE</div>
-  </section>
-
-  <section class="weather-console-section" id="weather">
-    <div class="shell">
-      <div class="weather-console">
-        <div class="weather-console-grid" aria-hidden="true"></div>
-
-        <div class="weather-console-head">
-          <div>
-            <div class="weather-kicker"><i></i> OPMET TERMINAL WEATHER</div>
-            <h2>METAR / TAF</h2>
-            <p>Havalimanının ICAO kodunu gir. Güncel terminal rasadı ve tahmini sayfa yenilenmeden getirilsin.</p>
-          </div>
-          <div class="weather-source">
-            <span>SOURCE</span>
-            <strong>AVIATIONWEATHER.GOV</strong>
-          </div>
-        </div>
-
-        <form class="weather-search" id="weather-search-form" autocomplete="off">
-          <label for="weather-icao">AIRPORT / ICAO</label>
-          <div class="weather-search-field">
-            <span class="weather-search-prefix">ICAO</span>
-            <input
-              id="weather-icao"
-              name="icao"
-              type="text"
-              inputmode="text"
-              maxlength="4"
-              minlength="4"
-              pattern="[A-Za-z0-9]{4}"
-              placeholder="LTAI"
-              aria-describedby="weather-search-help"
-              spellcheck="false"
-              required
-            >
-            <button type="submit">
-              <span>SORGULA</span>
-              <b>↗</b>
-            </button>
-          </div>
-
-          <div class="weather-search-bottom">
-            <div class="weather-quick" aria-label="Hızlı havalimanı seçimi">
-              <span>QUICK</span>
-              <button type="button" data-weather-icao="LTAI">LTAI</button>
-              <button type="button" data-weather-icao="LTFM">LTFM</button>
-              <button type="button" data-weather-icao="LTAC">LTAC</button>
-              <button type="button" data-weather-icao="LTBJ">LTBJ</button>
-            </div>
-            <span id="weather-search-help">4 karakterli ICAO kodu · örn. LTAI</span>
-          </div>
-        </form>
-
-        <div class="weather-feedback" id="weather-feedback" aria-live="polite">
-          <span class="weather-feedback-dot"></span>
-          <span>Bir meydan seç veya ICAO kodunu gir.</span>
-        </div>
-
-        <div class="weather-results" id="weather-results" hidden>
-          <article class="weather-result-card">
-            <div class="weather-result-head">
-              <div>
-                <span class="weather-type">METAR</span>
-                <span class="weather-live-state"><i></i> CURRENT</span>
-              </div>
-              <button class="weather-copy" type="button" data-copy-weather="metar">COPY</button>
-            </div>
-            <pre id="weather-metar">—</pre>
-          </article>
-
-          <article class="weather-result-card">
-            <div class="weather-result-head">
-              <div>
-                <span class="weather-type">TAF</span>
-                <span class="weather-live-state forecast"><i></i> FORECAST</span>
-              </div>
-              <button class="weather-copy" type="button" data-copy-weather="taf">COPY</button>
-            </div>
-            <pre id="weather-taf">—</pre>
-          </article>
-
-          <div class="weather-result-footer">
-            <div>
-              <span>STATION</span>
-              <strong id="weather-station">----</strong>
-            </div>
-            <div>
-              <span>UPDATED</span>
-              <strong id="weather-updated">--:-- UTC</strong>
-            </div>
-            <div>
-              <span>DELIVERY</span>
-              <strong>ASYNC / FETCH</strong>
-            </div>
-            <p>Bilgilendirme amaçlıdır. Operasyonel kararlar için resmi havacılık kaynaklarını doğrula.</p>
-          </div>
-        </div>
+      <div class="hero-actions">
+        <a class="primary-button" href="/main/map/">Live Map <span>↗</span></a>
+        <a class="secondary-button" href="#weather">METAR / TAF <span>↓</span></a>
       </div>
     </div>
   </section>
 
-  <section class="content-section" id="guncel">
-    <div class="shell">
-      <div class="section-heading">
-        <div>
-          <small>01 / AIRSPACE</small>
-          <h2>Havacılığı tek ekranda takip et.</h2>
+  <section class="weather-section" id="weather">
+    <div class="shell weather-wrap">
+      <div class="weather-head">
+        <h2>METAR / TAF</h2>
+      </div>
+
+      <form class="weather-search" id="weather-search-form" autocomplete="off">
+        <div class="weather-search-field">
+          <input
+            id="weather-icao"
+            name="icao"
+            type="text"
+            inputmode="text"
+            maxlength="4"
+            minlength="4"
+            pattern="[A-Za-z0-9]{4}"
+            placeholder="ICAO"
+            aria-label="ICAO kodu"
+            spellcheck="false"
+            required
+          >
+          <button type="submit">Sorgula</button>
         </div>
-        <p>Canlı trafik haritası, operasyonel referanslar ve hızlı bilgi kartları; gereksiz kalabalık olmadan, doğrudan ihtiyacın olan veriye odaklanır.</p>
-      </div>
 
-      <div class="feature-grid">
-        <article class="feature-card feature-main">
-          <div class="feature-head">
-            <span class="tag live-tag"><i></i> LIVE</span>
-            <span class="mono-label">ADS-B / TRACKING</span>
-          </div>
-
-          <div class="mini-map" aria-hidden="true">
-            <span class="mini-route route-a"></span>
-            <span class="mini-route route-b"></span>
-            <span class="mini-dot md1"></span>
-            <span class="mini-dot md2"></span>
-            <span class="mini-dot md3"></span>
-            <span class="mini-plane">✈</span>
-          </div>
-
-          <div class="feature-copy">
-            <h3>Canlı uçuş haritası</h3>
-            <p>Uçakların konum, irtifa, hız, heading ve çağrı kodlarını canlı harita üzerinde takip et.</p>
-            <a href="/main/map/">Haritayı aç <span>↗</span></a>
-          </div>
-        </article>
-
-        <article class="feature-card">
-          <div class="feature-head">
-            <span class="tag">OPS</span>
-            <span class="mono-label">QUICK REFERENCE</span>
-          </div>
-          <div class="metric-symbol">QNH</div>
-          <h3>Operasyonel kısa notlar</h3>
-          <p>QNH, CTOT, NOTAM ve ATFM gibi temel havacılık terimlerine hızlı erişim.</p>
-          <span class="card-foot">Flight operations reference</span>
-        </article>
-
-        <article class="feature-card">
-          <div class="feature-head">
-            <span class="tag">MAP</span>
-            <span class="mono-label">OSM / LEAFLET</span>
-          </div>
-          <div class="metric-symbol soft">DAY<br><span>/</span>NIGHT</div>
-          <h3>Gece ve gündüz görünümü</h3>
-          <p>Harita arayüzünü ortamına göre açık veya koyu görünümde kullan.</p>
-          <span class="card-foot">Responsive on desktop & mobile</span>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="content-section bordered" id="operasyon">
-    <div class="shell">
-      <div class="section-heading">
-        <div>
-          <small>02 / OPERATIONS</small>
-          <h2>Hızlı operasyon referansı.</h2>
+        <div class="weather-quick" aria-label="Hızlı havalimanı seçimi">
+          <button type="button" data-weather-icao="LTAI">LTAI</button>
+          <button type="button" data-weather-icao="LTFM">LTFM</button>
+          <button type="button" data-weather-icao="LTAC">LTAC</button>
+          <button type="button" data-weather-icao="LTBJ">LTBJ</button>
         </div>
-        <p>Sahada ve uçuş operasyonlarında sık karşılaşılan temel kavramlar için sade bir başvuru alanı.</p>
+      </form>
+
+      <div class="weather-feedback" id="weather-feedback" aria-live="polite">
+        <span class="weather-feedback-dot"></span>
+        <span></span>
       </div>
 
-      <div class="ops-grid">
-        <article>
-          <div class="ops-index">01</div>
-          <b>NOTAM</b>
-          <h3>Notice to Air Missions</h3>
-          <p>Havaalanı, hava sahası veya operasyonları etkileyebilecek geçici bilgileri yayımlar.</p>
-        </article>
-        <article>
-          <div class="ops-index">02</div>
-          <b>ATFM</b>
-          <h3>Air Traffic Flow Management</h3>
-          <p>Hava trafik talebi ile mevcut ATC ve hava sahası kapasitesinin dengelenmesini amaçlar.</p>
-        </article>
-        <article>
-          <div class="ops-index">03</div>
-          <b>CTOT</b>
-          <h3>Calculated Take-Off Time</h3>
-          <p>ATFM düzenlemesine tabi uçuş için hesaplanan kalkış zamanıdır.</p>
-        </article>
-        <article>
-          <div class="ops-index">04</div>
-          <b>QNH</b>
-          <h3>Altimeter Setting</h3>
-          <p>Altimetrenin deniz seviyesine göre irtifa göstermesi için kullanılan basınç ayarıdır.</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="content-section bordered about-section" id="hakkinda">
-    <div class="shell about-layout">
-      <div>
-        <div class="section-heading compact-heading">
-          <div>
-            <small>03 / ABOUT</small>
-            <h2>YulCaribe</h2>
+      <div class="weather-results" id="weather-results" hidden>
+        <article class="weather-result-card">
+          <div class="weather-result-head">
+            <span class="weather-type">METAR</span>
+            <button class="weather-copy" type="button" data-copy-weather="metar">Copy</button>
           </div>
-        </div>
-        <p class="about-copy">Havacılık operasyonları, hava trafik yönetimi, canlı ADS-B verileri ve sektörel notlar için oluşturulmuş bağımsız bir bilgi ve takip alanı.</p>
-      </div>
+          <pre id="weather-metar">—</pre>
+        </article>
 
-      <div class="about-panel">
-        <div class="about-panel-top">
-          <span class="mono-label">SYSTEM NOTICE</span>
-          <span class="status-dot"></span>
-        </div>
-        <strong>Operational disclaimer</strong>
-        <p>Bu site genel bilgilendirme amaçlıdır. Operasyonel kararlar için resmi havacılık yayınları ve şirket dokümanları kullanılmalıdır.</p>
+        <article class="weather-result-card">
+          <div class="weather-result-head">
+            <span class="weather-type">TAF</span>
+            <button class="weather-copy" type="button" data-copy-weather="taf">Copy</button>
+          </div>
+          <pre id="weather-taf">—</pre>
+        </article>
       </div>
     </div>
   </section>
@@ -320,10 +81,6 @@
 
 <footer>
   <div class="shell footer-inner">
-    <div>
-      <strong>YULCARIBE</strong>
-      <span>Airspace / Operations / Data</span>
-    </div>
-    <span>© <span id="year-label"></span> · Built for the sky.</span>
+    <span>© <span id="year-label"></span> YulCaribe</span>
   </div>
 </footer>
