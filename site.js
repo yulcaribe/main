@@ -4,17 +4,17 @@ function createAviationLoader(){
   const loader=document.createElement("div");
   loader.id="aviation-loader";
   loader.className="aviation-loader";
-  loader.setAttribute("aria-label","Yulcaribe Aviation yükleniyor");
+  loader.setAttribute("aria-label","YulCaribe yükleniyor");
   loader.innerHTML=`
     <div class="loader-grid" aria-hidden="true"></div>
     <div class="loader-center">
-      <div class="loader-brand">YULCARIBE <span>AVIATION</span><small>AIRSPACE INTERFACE</small></div>
+      <div class="loader-brand">YULCARIBE<small>AIRSPACE INTERFACE</small></div>
 
       <div class="loader-radar" aria-hidden="true">
         <span class="loader-axis-x"></span>
         <span class="loader-axis-y"></span>
         <span class="loader-sweep"></span>
-        <span class="loader-plane" id="loader-plane">✈</span>
+        <span class="loader-plane" id="loader-plane">✈︎</span>
       </div>
 
       <div class="loader-runway" aria-hidden="true"></div>
