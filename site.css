@@ -53,9 +53,10 @@ a{color:inherit}
 .loader-axis-x{left:0;top:50%;width:100%;height:1px}.loader-axis-y{top:0;left:50%;height:100%;width:1px}
 .loader-sweep{position:absolute;left:50%;top:50%;width:50%;height:1px;transform-origin:left;background:linear-gradient(90deg,rgba(0,229,255,.95),transparent);filter:drop-shadow(0 0 7px rgba(0,229,255,.8));animation:loaderSweep 3s linear infinite}
 @keyframes loaderSweep{to{transform:rotate(360deg)}}
-.loader-plane{position:absolute;left:50%;top:50%;width:58px;height:58px;transform:translate(-50%,-50%);display:grid;place-items:center;color:#f4fdff;font-size:46px;text-shadow:0 0 18px rgba(0,229,255,.45)}
-.loader-plane.is-taking-off{animation:loaderTakeoff .8s cubic-bezier(.25,.8,.25,1) forwards}
-@keyframes loaderTakeoff{0%{transform:translate(-50%,-50%) scale(1);opacity:1}65%{transform:translate(-50%,-95%) scale(1.55);opacity:1}100%{transform:translate(-50%,-180%) scale(3.3);opacity:0}}
+.loader-plane{position:absolute;left:50%;top:50%;width:58px;height:58px;display:grid;place-items:center;color:#f4fdff;font-family:Arial,sans-serif;font-size:46px;line-height:1;text-shadow:0 0 18px rgba(0,229,255,.45);transform:translate3d(-50%,-50%,0);will-change:transform,opacity;backface-visibility:hidden;animation:loaderPlaneIdle 1.25s ease-in-out infinite}
+@keyframes loaderPlaneIdle{0%,100%{transform:translate3d(-50%,-50%,0) rotate(-2deg) scale(1)}50%{transform:translate3d(-50%,-64%,0) rotate(2deg) scale(1.055)}}
+.loader-plane.is-taking-off{animation:loaderTakeoff .95s cubic-bezier(.2,.76,.22,1) forwards!important}
+@keyframes loaderTakeoff{0%{transform:translate3d(-50%,-50%,0) rotate(0deg) scale(1);opacity:1}45%{transform:translate3d(-50%,-105%,0) rotate(-1deg) scale(1.28);opacity:1}100%{transform:translate3d(-50%,-310px,0) rotate(0deg) scale(2.8);opacity:0}}
 .loader-runway{position:absolute;left:50%;bottom:58px;width:min(80vw,560px);height:145px;transform:translateX(-50%) perspective(580px) rotateX(67deg);transform-origin:center bottom;border-left:1px solid rgba(0,229,255,.16);border-right:1px solid rgba(0,229,255,.16);opacity:.72}
 .loader-runway:before{content:"";position:absolute;left:50%;top:0;width:2px;height:100%;transform:translateX(-50%);background:repeating-linear-gradient(to bottom,rgba(255,255,255,.85) 0 13px,transparent 13px 30px)}
 .loader-status{width:min(88vw,520px);margin-top:34px;position:relative;z-index:2}
@@ -118,7 +119,8 @@ h1 em{color:transparent;font-style:normal;-webkit-text-stroke:1px rgba(125,242,2
 .radar-axis{position:absolute;background:rgba(0,229,255,.08)}.axis-x{left:0;top:50%;width:100%;height:1px}.axis-y{top:0;left:50%;height:100%;width:1px}
 .radar-sweep{position:absolute;left:50%;top:50%;width:50%;height:1px;transform-origin:left;background:linear-gradient(90deg,rgba(0,229,255,.95),transparent);filter:drop-shadow(0 0 7px rgba(0,229,255,.55));animation:radarSweep 5.5s linear infinite}
 @keyframes radarSweep{to{transform:rotate(360deg)}}
-.hero-plane{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-18deg);color:#eafdff;font-size:44px;text-shadow:0 0 22px rgba(0,229,255,.38)}
+.hero-plane{position:absolute;left:50%;top:50%;transform:translate3d(-50%,-50%,0) rotate(-18deg);color:#eafdff;font-family:Arial,sans-serif;font-size:44px;text-shadow:0 0 22px rgba(0,229,255,.38);will-change:transform;animation:heroPlaneDrift 3.8s ease-in-out infinite}
+@keyframes heroPlaneDrift{0%,100%{transform:translate3d(-50%,-50%,0) rotate(-18deg)}50%{transform:translate3d(calc(-50% + 8px),calc(-50% - 7px),0) rotate(-14deg)}}
 .radar-target{position:absolute;display:flex;align-items:center;gap:6px;color:#75909f;font:400 7px "IBM Plex Mono",monospace}
 .radar-target i{width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}.radar-target b{font-weight:400}.t1{left:67%;top:24%}.t2{left:20%;top:62%}.t3{left:65%;top:72%}
 .stage-readout{position:absolute;left:24px;right:24px;bottom:20px;padding-top:15px;border-top:1px solid var(--line)}
@@ -143,7 +145,8 @@ h1 em{color:transparent;font-style:normal;-webkit-text-stroke:1px rgba(125,242,2
 .mini-map:before,.mini-map:after{content:"";position:absolute;border:1px solid rgba(0,229,255,.08);border-radius:50%}.mini-map:before{width:230px;height:230px;right:-40px;top:-70px}.mini-map:after{width:170px;height:170px;left:-50px;bottom:-90px}
 .mini-route{position:absolute;height:1px;transform-origin:left;background:linear-gradient(90deg,transparent,rgba(0,229,255,.35),transparent)}.route-a{width:72%;left:13%;top:53%;transform:rotate(-18deg)}.route-b{width:48%;left:32%;top:42%;transform:rotate(28deg)}
 .mini-dot{position:absolute;width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px rgba(0,229,255,.8)}.md1{left:24%;top:58%}.md2{left:68%;top:31%}.md3{left:76%;top:66%}
-.mini-plane{position:absolute;left:52%;top:48%;transform:translate(-50%,-50%) rotate(12deg);color:#ecfdff;font-size:30px;text-shadow:0 0 16px rgba(0,229,255,.35)}
+.mini-plane{position:absolute;left:52%;top:48%;transform:translate3d(-50%,-50%,0) rotate(12deg);color:#ecfdff;font-family:Arial,sans-serif;font-size:30px;text-shadow:0 0 16px rgba(0,229,255,.35);will-change:transform;animation:miniPlaneDrift 4.6s ease-in-out infinite}
+@keyframes miniPlaneDrift{0%,100%{transform:translate3d(-50%,-50%,0) rotate(12deg)}50%{transform:translate3d(calc(-50% + 14px),calc(-50% - 9px),0) rotate(16deg)}}
 .feature-copy{position:relative;z-index:2;margin-top:auto;padding-top:190px}
 .feature-card h3{margin:19px 0 9px;font:500 18px "Sora",sans-serif;letter-spacing:-.02em}.feature-card p{margin:0;color:#7e95a4;font-size:12px;line-height:1.68}
 .feature-copy a{display:inline-flex;gap:8px;margin-top:18px;color:#b8f7ff;font-size:11px;font-weight:700;text-decoration:none}
@@ -184,7 +187,7 @@ footer{padding:34px 0 42px;border-top:1px solid var(--line);color:#496171;font:4
   .feature-main{min-height:400px}.feature-card{min-height:330px}
   .footer-inner{display:block}.footer-inner>span{display:block;margin-top:15px}
   .scroll-cue{display:none}
-  .loader-center{min-height:470px}.loader-radar{width:min(74vw,300px)}.loader-runway{bottom:52px}
+  .loader-center{min-height:470px}.loader-radar{width:min(74vw,300px)}.loader-runway{bottom:52px}.loader-plane{animation-duration:1.05s}.loader-plane.is-taking-off{animation-duration:.88s!important}
 }
 @media(max-width:460px){
   .brand-copy strong{font-size:12px}.top-nav .map-nav{padding:9px 12px}
