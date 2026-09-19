@@ -13,7 +13,7 @@
   }
 
   const REFRESH_MS = 10000;
-  const MIN_API_INTERVAL_MS = 1100;
+  const MIN_API_INTERVAL_MS = 2200;
   const ABSENT_GRACE_MS = 30000;
   const MAX_RADIUS_NM = 250;
   const MIN_RADIUS_NM = 10;
@@ -64,7 +64,7 @@
   let pendingRefresh = false;
   let viewRevision = 0;
   let lastApiRequestAt = 0;
-  const ADSB_POINT_API = "https://opendata.adsb.fi/api/v3";
+  const ADSB_POINT_API = "https://api.adsb.one/v2/point";
 
   function esc(value) {
     return String(value ?? "")
@@ -412,7 +412,7 @@
 
     try {
       const response = await fetch(
-        `${ADSB_POINT_API}/lat/${encodeURIComponent(lat)}/lon/${encodeURIComponent(lon)}/dist/${radius}`,
+        `${ADSB_POINT_API}/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}/${radius}`,
         {
           method: "GET",
           cache: "no-store",
@@ -421,7 +421,7 @@
       );
 
       console.info("[YulCaribe ADS-B]", {
-        source: "adsb.fi",
+        source: "ADSB One",
         status: response.status,
         url: response.url
       });
@@ -429,13 +429,11 @@
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        sourceEl.textContent = `adsb.fi · HTTP ${response.status}`;
+        sourceEl.textContent = `ADSB One · HTTP ${response.status}`;
         throw new Error(payload?.error || ("HTTP " + response.status));
       }
 
-      const aircraftList = Array.isArray(payload?.ac)
-        ? payload.ac
-        : (Array.isArray(payload?.aircraft) ? payload.aircraft : null);
+      const aircraftList = Array.isArray(payload?.ac) ? payload.ac : null;
 
       if (!aircraftList) {
         console.error("[YulCaribe ADS-B] Beklenmeyen payload:", payload);
@@ -476,7 +474,7 @@
 
       countEl.textContent = aircraft.size + " uçak";
 
-      sourceEl.textContent = "adsb.fi · direct";
+      sourceEl.textContent = "ADSB One · direct";
 
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
@@ -492,8 +490,8 @@
         console.error("[YulCaribe ADS-B] Uçak verisi alınamadı:", error);
         feedDot.classList.remove("ok");
         feedDot.classList.add("bad");
-        if (!sourceEl.textContent.startsWith("adsb.fi · HTTP")) {
-          sourceEl.textContent = "adsb.fi · son veri korunuyor";
+        if (!sourceEl.textContent.startsWith("ADSB One · HTTP")) {
+          sourceEl.textContent = "ADSB One · NETWORK/CORS";
         }
         updateEl.textContent = "Geçici bağlantı hatası";
       }
