@@ -64,7 +64,7 @@
   let pendingRefresh = false;
   let viewRevision = 0;
   let lastApiRequestAt = 0;
-  const ADSB_POINT_API = "https://api.airplanes.live/v2/point";
+  const ADSB_POINT_API = "https://opendata.adsb.fi/api/v3";
 
   function esc(value) {
     return String(value ?? "")
@@ -412,7 +412,7 @@
 
     try {
       const response = await fetch(
-        `${ADSB_POINT_API}/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}/${radius}`,
+        `${ADSB_POINT_API}/lat/${encodeURIComponent(lat)}/lon/${encodeURIComponent(lon)}/dist/${radius}`,
         {
           method: "GET",
           cache: "no-store",
@@ -420,13 +420,25 @@
         }
       );
 
+      console.info("[YulCaribe ADS-B]", {
+        source: "adsb.fi",
+        status: response.status,
+        url: response.url
+      });
+
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
+        sourceEl.textContent = `adsb.fi · HTTP ${response.status}`;
         throw new Error(payload?.error || ("HTTP " + response.status));
       }
 
-      if (!payload || !Array.isArray(payload.ac)) {
+      const aircraftList = Array.isArray(payload?.ac)
+        ? payload.ac
+        : (Array.isArray(payload?.aircraft) ? payload.aircraft : null);
+
+      if (!aircraftList) {
+        console.error("[YulCaribe ADS-B] Beklenmeyen payload:", payload);
         throw new Error("Beklenmeyen uçak verisi.");
       }
 
@@ -441,7 +453,7 @@
       const wallNow = Date.now();
       const freshIds = new Set();
 
-      for (const ac of payload.ac) {
+      for (const ac of aircraftList) {
         const id = upsertAircraft(ac, now);
         if (id) freshIds.add(id);
       }
@@ -464,7 +476,7 @@
 
       countEl.textContent = aircraft.size + " uçak";
 
-      sourceEl.textContent = "Airplanes.live · direct";
+      sourceEl.textContent = "adsb.fi · direct";
 
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
@@ -477,10 +489,12 @@
     } catch (error) {
       // A failed refresh must never erase the last good aircraft set.
       if (revision === viewRevision) {
-        console.error("Uçak verisi alınamadı:", error);
+        console.error("[YulCaribe ADS-B] Uçak verisi alınamadı:", error);
         feedDot.classList.remove("ok");
         feedDot.classList.add("bad");
-        sourceEl.textContent = "Airplanes.live · son veri korunuyor";
+        if (!sourceEl.textContent.startsWith("adsb.fi · HTTP")) {
+          sourceEl.textContent = "adsb.fi · son veri korunuyor";
+        }
         updateEl.textContent = "Geçici bağlantı hatası";
       }
     } finally {
