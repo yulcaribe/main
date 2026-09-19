@@ -1,0 +1,163 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600&family=Sora:wght@500;600&display=swap');
+
+:root{
+  --bg:#02060b;
+  --panel:#07111a;
+  --cyan:#00e5ff;
+  --blue:#168cff;
+  --white:#f2fbff;
+  --muted:#7890a0;
+  --line:rgba(255,255,255,.08);
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--white);font-family:"Manrope",system-ui,sans-serif}
+body{overflow:hidden}
+a{color:inherit}
+.test-page{
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  position:relative;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 50% 84%,rgba(22,140,255,.12),transparent 36rem),
+    radial-gradient(circle at 50% 36%,rgba(0,229,255,.06),transparent 28rem),
+    var(--bg);
+}
+.topbar{
+  position:fixed;z-index:20;top:18px;left:18px;right:18px;
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+}
+.back,.replay{
+  border:1px solid rgba(0,229,255,.17);background:rgba(3,10,16,.7);backdrop-filter:blur(12px);
+  color:#bdeff5;text-decoration:none;border-radius:999px;padding:9px 13px;
+  font:500 10px "IBM Plex Mono",monospace;letter-spacing:.06em;cursor:pointer
+}
+.scene{
+  width:min(1120px,100vw);
+  height:100vh;
+  min-height:620px;
+  position:relative;
+  overflow:hidden;
+}
+.brand{
+  position:absolute;z-index:8;top:70px;left:50%;transform:translateX(-50%);
+  font:600 clamp(17px,2vw,24px) "Sora",sans-serif;letter-spacing:.12em;text-transform:uppercase
+}
+.brand small{
+  display:block;margin-top:8px;text-align:center;color:#607989;
+  font:400 8px "IBM Plex Mono",monospace;letter-spacing:.2em
+}
+.status{
+  position:absolute;z-index:9;left:50%;bottom:42px;transform:translateX(-50%);
+  width:min(520px,82vw);text-align:center
+}
+.status-text{
+  color:var(--cyan);min-height:18px;
+  font:400 10px "IBM Plex Mono",monospace;letter-spacing:.15em
+}
+.track{height:2px;background:rgba(255,255,255,.07);margin-top:14px;overflow:hidden}
+.fill{height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--cyan));box-shadow:0 0 13px var(--cyan);transition:width .45s ease}
+.meta{display:flex;justify-content:space-between;margin-top:10px;color:#456171;font:400 8px "IBM Plex Mono",monospace;letter-spacing:.1em}
+.flash{position:absolute;inset:0;z-index:18;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 50%,white,rgba(0,229,255,.45) 18%,transparent 62%)}
+.flash.on{animation:flash .75s ease forwards}
+@keyframes flash{0%{opacity:0}30%{opacity:.86}100%{opacity:0}}
+
+/* common vector aircraft */
+.aircraft{
+  position:absolute;z-index:7;width:74px;height:100px;
+  filter:drop-shadow(0 0 13px rgba(0,229,255,.28));
+  will-change:transform,opacity;
+}
+.aircraft svg{display:block;width:100%;height:100%}
+.aircraft path{fill:#eefdff}
+.aircraft .accent{fill:var(--cyan)}
+
+/* A — minimal runway */
+.scene-a .horizon{
+  position:absolute;left:0;right:0;top:34%;height:1px;background:linear-gradient(90deg,transparent,rgba(0,229,255,.25),transparent)
+}
+.scene-a .runway{
+  position:absolute;left:50%;bottom:-10%;width:min(86vw,860px);height:70%;
+  transform:translateX(-50%) perspective(860px) rotateX(63deg);
+  transform-origin:center bottom;
+  border-left:1px solid rgba(0,229,255,.18);border-right:1px solid rgba(0,229,255,.18);
+  background:linear-gradient(90deg,rgba(255,255,255,.012),rgba(0,229,255,.015),rgba(255,255,255,.012))
+}
+.scene-a .runway:before{
+  content:"";position:absolute;left:50%;top:0;width:3px;height:100%;transform:translateX(-50%);
+  background:repeating-linear-gradient(to bottom,rgba(255,255,255,.88) 0 18px,transparent 18px 45px)
+}
+.lights{position:absolute;left:50%;bottom:0;width:min(90vw,900px);height:66%;transform:translateX(-50%);pointer-events:none}
+.lights i{position:absolute;width:5px;height:5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 11px var(--cyan)}
+.scene-a .aircraft{left:50%;bottom:17%;transform:translateX(-50%) scale(1.12)}
+.scene-a.play .aircraft{animation:aPlane 4.8s cubic-bezier(.26,.6,.22,1) forwards}
+@keyframes aPlane{
+  0%,12%{transform:translateX(-50%) translateY(0) scale(1.12);opacity:1}
+  75%{transform:translateX(-50%) translateY(-30vh) scale(.52);opacity:1}
+  100%{transform:translateX(-50%) translateY(-46vh) scale(.23);opacity:.12}
+}
+
+/* B — isometric airport */
+.scene-b .iso{
+  position:absolute;left:50%;top:52%;width:min(900px,118vw);height:470px;transform:translate(-50%,-50%) rotateX(57deg) rotateZ(-22deg);
+  transform-style:preserve-3d
+}
+.iso-ground{position:absolute;inset:0;border:1px solid rgba(0,229,255,.1);background:
+  linear-gradient(rgba(0,229,255,.035) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,229,255,.035) 1px,transparent 1px),
+  rgba(0,229,255,.012);background-size:32px 32px}
+.iso-runway{position:absolute;left:10%;right:8%;top:43%;height:72px;border:1px solid rgba(255,255,255,.08);background:#07131d}
+.iso-runway:after{content:"";position:absolute;left:4%;right:4%;top:50%;height:2px;transform:translateY(-50%);background:repeating-linear-gradient(90deg,#dffcff 0 25px,transparent 25px 55px)}
+.terminal{position:absolute;left:12%;top:12%;width:230px;height:115px;border:1px solid rgba(0,229,255,.18);background:linear-gradient(145deg,#0b1a26,#07121c);box-shadow:18px 18px 0 rgba(0,229,255,.025)}
+.terminal:before{content:"TERMINAL";position:absolute;left:18px;top:18px;color:#6d8797;font:500 8px "IBM Plex Mono",monospace;letter-spacing:.15em}
+.tower{position:absolute;left:38%;top:6%;width:34px;height:120px;background:linear-gradient(#0e2432,#07111b);border:1px solid rgba(0,229,255,.13)}
+.tower:before{content:"";position:absolute;left:-12px;top:-12px;width:56px;height:18px;background:#0c202e;border:1px solid rgba(0,229,255,.22)}
+.gate-plane{position:absolute;width:42px;height:54px;opacity:.45}.gp1{left:22%;top:31%}.gp2{left:31%;top:29%;transform:rotate(14deg)}
+.scene-b .moving-plane{left:23%;top:63%;transform:rotate(68deg) scale(.9)}
+.scene-b.play .moving-plane{animation:bTaxi 5.3s cubic-bezier(.4,.05,.2,1) forwards}
+@keyframes bTaxi{
+  0%,9%{left:23%;top:63%;transform:rotate(68deg) scale(.9);opacity:1}
+  34%{left:39%;top:57%;transform:rotate(68deg) scale(.86);opacity:1}
+  48%{left:48%;top:52%;transform:rotate(90deg) scale(.8);opacity:1}
+  100%{left:78%;top:45%;transform:rotate(90deg) scale(.42);opacity:.14}
+}
+
+/* C — board + runway */
+.scene-c .board{
+  position:absolute;z-index:9;top:124px;left:50%;transform:translateX(-50%);
+  width:min(560px,86vw);border:1px solid rgba(0,229,255,.14);border-radius:18px;
+  background:rgba(4,12,20,.74);backdrop-filter:blur(14px);padding:17px 19px
+}
+.board-head{display:flex;justify-content:space-between;color:#5c7788;font:400 8px "IBM Plex Mono",monospace;letter-spacing:.12em;margin-bottom:15px}
+.board-row{display:grid;grid-template-columns:1fr 1.1fr .8fr;gap:12px;align-items:center}
+.board-row span{font:500 11px "IBM Plex Mono",monospace}
+.board-row .flight{color:#e7fbff}.board-row .gate{color:#7892a1}.board-row .state{color:var(--cyan);text-align:right}
+.scene-c .runway-c{
+  position:absolute;left:50%;bottom:-13%;width:min(78vw,760px);height:64%;
+  transform:translateX(-50%) perspective(780px) rotateX(65deg);transform-origin:center bottom;
+  border-left:1px solid rgba(0,229,255,.15);border-right:1px solid rgba(0,229,255,.15)
+}
+.runway-c:before{content:"";position:absolute;left:50%;top:0;width:3px;height:100%;transform:translateX(-50%);background:repeating-linear-gradient(to bottom,#dffcff 0 17px,transparent 17px 44px)}
+.scene-c .aircraft{left:50%;bottom:14%;transform:translateX(-50%) scale(1.08)}
+.scene-c.play .aircraft{animation:cPlane 5.6s cubic-bezier(.24,.6,.22,1) forwards}
+@keyframes cPlane{
+  0%,20%{transform:translateX(-50%) translateY(0) scale(1.08);opacity:1}
+  78%{transform:translateX(-50%) translateY(-29vh) scale(.48);opacity:1}
+  100%{transform:translateX(-50%) translateY(-45vh) scale(.2);opacity:.08}
+}
+
+.menu-page{min-height:100vh;padding:80px 24px;background:
+radial-gradient(circle at 50% 10%,rgba(0,229,255,.08),transparent 30rem),var(--bg)}
+.menu-wrap{width:min(1080px,100%);margin:auto}
+.menu-kicker{color:var(--cyan);font:400 9px "IBM Plex Mono",monospace;letter-spacing:.18em}
+.menu-wrap h1{margin:12px 0 14px;font:600 clamp(38px,6vw,72px)/1 "Sora",sans-serif;letter-spacing:-.05em}
+.menu-wrap>p{max-width:650px;color:var(--muted);line-height:1.7}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:42px}
+.choice{min-height:260px;padding:24px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(180deg,rgba(7,20,30,.82),rgba(4,12,18,.74));text-decoration:none;transition:.2s}
+.choice:hover{transform:translateY(-4px);border-color:rgba(0,229,255,.22)}
+.choice b{display:block;color:var(--cyan);font:500 9px "IBM Plex Mono",monospace;letter-spacing:.12em}
+.choice h2{margin:70px 0 10px;font:500 22px "Sora",sans-serif}.choice p{color:#78909f;font-size:12px;line-height:1.6}
+@media(max-width:800px){.choices{grid-template-columns:1fr}.scene{min-height:560px}.brand{top:68px}.status{bottom:28px}.scene-c .board{top:112px}.scene-b .iso{width:132vw;top:51%}}
+@media(max-width:520px){.topbar{top:12px;left:12px;right:12px}.scene{min-height:520px}.brand{top:62px}.scene-a .runway{width:100vw}.scene-c .runway-c{width:92vw}.board-row{grid-template-columns:1fr 1fr}.board-row .gate{display:none}.iso{scale:.9}.status-text{font-size:9px;letter-spacing:.1em}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}}
