@@ -151,6 +151,142 @@ async function finishLoader(planeAnimation){
   if(loader) loader.remove();
 }
 
+let weatherRequestController=null;
+
+function setWeatherFeedback(message,state="idle"){
+  const feedback=document.getElementById("weather-feedback");
+  if(!feedback) return;
+  feedback.classList.remove("is-loading","is-success","is-error");
+  if(state!=="idle") feedback.classList.add("is-"+state);
+  const text=feedback.querySelector("span:last-child");
+  if(text) text.textContent=message;
+}
+
+function formatWeatherUtc(value){
+  if(!value) return "--:-- UTC";
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime())) return "--:-- UTC";
+  return String(date.getUTCHours()).padStart(2,"0")+":"+
+    String(date.getUTCMinutes()).padStart(2,"0")+" UTC";
+}
+
+function renderWeatherResult(data){
+  const results=document.getElementById("weather-results");
+  const metarEl=document.getElementById("weather-metar");
+  const tafEl=document.getElementById("weather-taf");
+  const stationEl=document.getElementById("weather-station");
+  const updatedEl=document.getElementById("weather-updated");
+  if(!results || !metarEl || !tafEl) return;
+
+  const metar=data?.metar?.raw || "Bu meydan için güncel METAR bulunamadı.";
+  const taf=data?.taf?.raw || "Bu meydan için güncel TAF bulunamadı.";
+
+  metarEl.textContent=metar;
+  tafEl.textContent=taf;
+  metarEl.classList.toggle("is-empty",!data?.metar?.raw);
+  tafEl.classList.toggle("is-empty",!data?.taf?.raw);
+
+  if(stationEl) stationEl.textContent=data?.icao || "----";
+  if(updatedEl) updatedEl.textContent=formatWeatherUtc(data?.fetchedAt);
+
+  results.hidden=false;
+
+  const found=[];
+  if(data?.metar?.raw) found.push("METAR");
+  if(data?.taf?.raw) found.push("TAF");
+
+  if(found.length){
+    const cacheText=data?.cache?.hit ? " · CACHE "+data.cache.ageSeconds+"s" : "";
+    setWeatherFeedback((data.icao || "MEYDAN")+" · "+found.join(" + ")+" ALINDI"+cacheText,"success");
+  }else{
+    setWeatherFeedback((data?.icao || "Bu meydan")+" için güncel METAR/TAF bulunamadı.","error");
+  }
+}
+
+async function requestAirportWeather(icao){
+  const code=String(icao || "").trim().toUpperCase();
+  const form=document.getElementById("weather-search-form");
+  const submit=form?.querySelector('button[type="submit"]');
+
+  if(!/^[A-Z0-9]{4}$/.test(code)){
+    setWeatherFeedback("4 karakterli ICAO kodu gir. Örnek: LTAI","error");
+    return;
+  }
+
+  if(weatherRequestController) weatherRequestController.abort();
+  weatherRequestController=new AbortController();
+
+  if(submit) submit.disabled=true;
+  setWeatherFeedback(code+" · METAR / TAF sorgulanıyor…","loading");
+
+  try{
+    const response=await fetch(
+      "/main/api/weather.php?icao="+encodeURIComponent(code),
+      {
+        cache:"no-store",
+        signal:weatherRequestController.signal,
+        headers:{"Accept":"application/json"}
+      }
+    );
+
+    let data=null;
+    try{ data=await response.json(); }catch(e){}
+
+    if(!response.ok || !data?.ok){
+      throw new Error(data?.error || "Hava durumu verisi alınamadı.");
+    }
+
+    renderWeatherResult(data);
+  }catch(error){
+    if(error?.name==="AbortError") return;
+    console.error("METAR/TAF sorgusu başarısız:",error);
+    setWeatherFeedback(error?.message || "METAR/TAF sorgusu başarısız oldu.","error");
+  }finally{
+    if(submit) submit.disabled=false;
+  }
+}
+
+function initWeatherConsole(){
+  const form=document.getElementById("weather-search-form");
+  const input=document.getElementById("weather-icao");
+  if(!form || !input) return;
+
+  input.addEventListener("input",()=>{
+    const clean=input.value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,4);
+    if(input.value!==clean) input.value=clean;
+  });
+
+  form.addEventListener("submit",event=>{
+    event.preventDefault();
+    requestAirportWeather(input.value);
+  });
+
+  document.querySelectorAll("[data-weather-icao]").forEach(button=>{
+    button.addEventListener("click",()=>{
+      input.value=button.dataset.weatherIcao || "";
+      requestAirportWeather(input.value);
+    });
+  });
+
+  document.querySelectorAll("[data-copy-weather]").forEach(button=>{
+    button.addEventListener("click",async()=>{
+      const type=button.dataset.copyWeather;
+      const target=document.getElementById(type==="metar" ? "weather-metar" : "weather-taf");
+      const value=target?.textContent?.trim();
+      if(!value || target?.classList.contains("is-empty")) return;
+
+      try{
+        await navigator.clipboard.writeText(value);
+        const old=button.textContent;
+        button.textContent="COPIED";
+        setTimeout(()=>{button.textContent=old;},900);
+      }catch(error){
+        setWeatherFeedback("Kopyalama izni alınamadı.","error");
+      }
+    });
+  });
+}
+
 async function loadHome(){
   const root=document.getElementById("site-root");
   createAviationLoader();
@@ -196,6 +332,8 @@ async function loadHome(){
     }
 
     if(year) year.textContent=now.getFullYear();
+
+    initWeatherConsole();
 
     await finishLoader(planeAnimation);
   }catch(error){
