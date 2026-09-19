@@ -13,9 +13,8 @@
   }
 
   const REFRESH_MS = 10000;
-  const MIN_API_INTERVAL_MS = 2200;
   const ABSENT_GRACE_MS = 30000;
-  const MAX_RADIUS_NM = 250;
+  const MAX_RADIUS_NM = 235;
   const MIN_RADIUS_NM = 10;
 
   const countEl = document.getElementById("aircraft-count");
@@ -63,8 +62,7 @@
   let requestInFlight = false;
   let pendingRefresh = false;
   let viewRevision = 0;
-  let lastApiRequestAt = 0;
-  const ADSB_POINT_API = "https://api.adsb.one/v2/point";
+  const LOCAL_FLIGHT_API = "/main/api/flights.php";
 
   function esc(value) {
     return String(value ?? "")
@@ -385,22 +383,12 @@
   async function fetchAircraft() {
     clearTimeout(refreshTimer);
 
-    const elapsedSinceRequest = Date.now() - lastApiRequestAt;
-    if (elapsedSinceRequest < MIN_API_INTERVAL_MS) {
-      refreshTimer = setTimeout(
-        fetchAircraft,
-        MIN_API_INTERVAL_MS - elapsedSinceRequest
-      );
-      return;
-    }
-
     if (requestInFlight) {
       pendingRefresh = true;
       return;
     }
 
     requestInFlight = true;
-    lastApiRequestAt = Date.now();
     const revision = viewRevision;
     const center = map.getCenter();
     const radius = radiusForView();
@@ -412,7 +400,7 @@
 
     try {
       const response = await fetch(
-        `${ADSB_POINT_API}/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}/${radius}`,
+        `${LOCAL_FLIGHT_API}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius=${radius}`,
         {
           method: "GET",
           cache: "no-store",
@@ -421,7 +409,7 @@
       );
 
       console.info("[YulCaribe ADS-B]", {
-        source: "ADSB One",
+        source: "YulCaribe proxy",
         status: response.status,
         url: response.url
       });
@@ -429,7 +417,10 @@
       const payload = await response.json().catch(() => null);
 
       if (!response.ok) {
-        sourceEl.textContent = `ADSB One · HTTP ${response.status}`;
+        const upstreamStatus = payload?.upstreamStatus;
+        sourceEl.textContent = upstreamStatus
+          ? `ADSB.lol · upstream HTTP ${upstreamStatus}`
+          : `YulCaribe feed · HTTP ${response.status}`;
         throw new Error(payload?.error || ("HTTP " + response.status));
       }
 
@@ -474,7 +465,14 @@
 
       countEl.textContent = aircraft.size + " uçak";
 
-      sourceEl.textContent = "ADSB One · direct";
+      const proxy = payload?._proxy || {};
+      if (proxy.stale) {
+        sourceEl.textContent = `ADSB.lol · stale cache ${proxy.cacheAgeSeconds || 0} sn`;
+      } else if (proxy.cacheHit) {
+        sourceEl.textContent = `ADSB.lol · cache ${proxy.cacheAgeSeconds || 0} sn`;
+      } else {
+        sourceEl.textContent = "ADSB.lol · live";
+      }
 
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
@@ -490,8 +488,8 @@
         console.error("[YulCaribe ADS-B] Uçak verisi alınamadı:", error);
         feedDot.classList.remove("ok");
         feedDot.classList.add("bad");
-        if (!sourceEl.textContent.startsWith("ADSB One · HTTP")) {
-          sourceEl.textContent = "ADSB One · NETWORK/CORS";
+        if (!sourceEl.textContent.includes("HTTP")) {
+          sourceEl.textContent = "YulCaribe feed · bağlantı hatası";
         }
         updateEl.textContent = "Geçici bağlantı hatası";
       }
@@ -527,8 +525,8 @@
       radius: radiusForView()
     });
 
-    fetchAircraft();
-    hintTimer = setTimeout(() => hint.classList.add("hidden"), 1200);
+    moveRefreshTimer = setTimeout(fetchAircraft, 900);
+    hintTimer = setTimeout(() => hint.classList.add("hidden"), 1400);
   }
 
   function searchAircraft() {
