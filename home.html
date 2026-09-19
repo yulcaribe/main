@@ -12,6 +12,7 @@
     </a>
 
     <nav class="top-nav" aria-label="Ana menü">
+      <a href="#weather">Weather</a>
       <a href="#guncel">Airspace</a>
       <a href="#operasyon">Operations</a>
       <a href="#hakkinda">About</a>
@@ -90,6 +91,106 @@
     </div>
 
     <div class="scroll-cue"><span></span> SCROLL TO EXPLORE</div>
+  </section>
+
+  <section class="weather-console-section" id="weather">
+    <div class="shell">
+      <div class="weather-console">
+        <div class="weather-console-grid" aria-hidden="true"></div>
+
+        <div class="weather-console-head">
+          <div>
+            <div class="weather-kicker"><i></i> LIVE OPMET / TERMINAL WEATHER</div>
+            <h2>METAR / TAF sorgula.</h2>
+            <p>Havalimanının ICAO kodunu gir. Güncel terminal rasadı ve tahmini sayfa yenilenmeden getirilsin.</p>
+          </div>
+          <div class="weather-source">
+            <span>SOURCE</span>
+            <strong>AVIATIONWEATHER.GOV</strong>
+          </div>
+        </div>
+
+        <form class="weather-search" id="weather-search-form" autocomplete="off">
+          <label for="weather-icao">AIRPORT / ICAO</label>
+          <div class="weather-search-field">
+            <span class="weather-search-prefix">ICAO</span>
+            <input
+              id="weather-icao"
+              name="icao"
+              type="text"
+              inputmode="text"
+              maxlength="4"
+              minlength="4"
+              pattern="[A-Za-z0-9]{4}"
+              placeholder="LTAI"
+              aria-describedby="weather-search-help"
+              spellcheck="false"
+              required
+            >
+            <button type="submit">
+              <span>SORGULA</span>
+              <b>↗</b>
+            </button>
+          </div>
+
+          <div class="weather-search-bottom">
+            <div class="weather-quick" aria-label="Hızlı havalimanı seçimi">
+              <span>QUICK</span>
+              <button type="button" data-weather-icao="LTAI">LTAI</button>
+              <button type="button" data-weather-icao="LTFM">LTFM</button>
+              <button type="button" data-weather-icao="LTAC">LTAC</button>
+              <button type="button" data-weather-icao="LTBJ">LTBJ</button>
+            </div>
+            <span id="weather-search-help">4 karakterli ICAO kodu · örn. LTAI</span>
+          </div>
+        </form>
+
+        <div class="weather-feedback" id="weather-feedback" aria-live="polite">
+          <span class="weather-feedback-dot"></span>
+          <span>Bir meydan seç veya ICAO kodunu gir.</span>
+        </div>
+
+        <div class="weather-results" id="weather-results" hidden>
+          <article class="weather-result-card">
+            <div class="weather-result-head">
+              <div>
+                <span class="weather-type">METAR</span>
+                <span class="weather-live-state"><i></i> CURRENT</span>
+              </div>
+              <button class="weather-copy" type="button" data-copy-weather="metar">COPY</button>
+            </div>
+            <pre id="weather-metar">—</pre>
+          </article>
+
+          <article class="weather-result-card">
+            <div class="weather-result-head">
+              <div>
+                <span class="weather-type">TAF</span>
+                <span class="weather-live-state forecast"><i></i> FORECAST</span>
+              </div>
+              <button class="weather-copy" type="button" data-copy-weather="taf">COPY</button>
+            </div>
+            <pre id="weather-taf">—</pre>
+          </article>
+
+          <div class="weather-result-footer">
+            <div>
+              <span>STATION</span>
+              <strong id="weather-station">----</strong>
+            </div>
+            <div>
+              <span>UPDATED</span>
+              <strong id="weather-updated">--:-- UTC</strong>
+            </div>
+            <div>
+              <span>DELIVERY</span>
+              <strong>ASYNC / FETCH</strong>
+            </div>
+            <p>Bilgilendirme amaçlıdır. Operasyonel kararlar için resmi havacılık kaynaklarını doğrula.</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section class="content-section" id="guncel">
