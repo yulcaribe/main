@@ -62,7 +62,7 @@
   let requestInFlight = false;
   let pendingRefresh = false;
   let viewRevision = 0;
-  const LOCAL_FLIGHT_API = "/main/api/flights.php";
+  const ADSB_POINT_API = "https://api.adsb.lol/v2/point";
 
   function esc(value) {
     return String(value ?? "")
@@ -400,7 +400,7 @@
 
     try {
       const response = await fetch(
-        `${LOCAL_FLIGHT_API}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius=${radius}`,
+        `${ADSB_POINT_API}/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}/${radius}`,
         {
           method: "GET",
           cache: "no-store",
@@ -452,10 +452,7 @@
 
       countEl.textContent = aircraft.size + " uçak";
 
-      const proxy = payload?._proxy || {};
-      sourceEl.textContent = proxy.stale
-        ? `ADSB.lol · cache ${proxy.cacheAgeSeconds || 0} sn`
-        : (proxy.source || "ADSB.lol");
+      sourceEl.textContent = "ADSB.lol · direct";
 
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
