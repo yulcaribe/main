@@ -13,6 +13,7 @@
   }
 
   const REFRESH_MS = 10000;
+  const MIN_API_INTERVAL_MS = 1100;
   const ABSENT_GRACE_MS = 30000;
   const MAX_RADIUS_NM = 250;
   const MIN_RADIUS_NM = 10;
@@ -62,7 +63,8 @@
   let requestInFlight = false;
   let pendingRefresh = false;
   let viewRevision = 0;
-  const ADSB_POINT_API = "https://api.adsb.lol/v2/point";
+  let lastApiRequestAt = 0;
+  const ADSB_POINT_API = "https://api.airplanes.live/v2/point";
 
   function esc(value) {
     return String(value ?? "")
@@ -383,12 +385,22 @@
   async function fetchAircraft() {
     clearTimeout(refreshTimer);
 
+    const elapsedSinceRequest = Date.now() - lastApiRequestAt;
+    if (elapsedSinceRequest < MIN_API_INTERVAL_MS) {
+      refreshTimer = setTimeout(
+        fetchAircraft,
+        MIN_API_INTERVAL_MS - elapsedSinceRequest
+      );
+      return;
+    }
+
     if (requestInFlight) {
       pendingRefresh = true;
       return;
     }
 
     requestInFlight = true;
+    lastApiRequestAt = Date.now();
     const revision = viewRevision;
     const center = map.getCenter();
     const radius = radiusForView();
@@ -452,7 +464,7 @@
 
       countEl.textContent = aircraft.size + " uçak";
 
-      sourceEl.textContent = "ADSB.lol · direct";
+      sourceEl.textContent = "Airplanes.live · direct";
 
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
@@ -468,7 +480,7 @@
         console.error("Uçak verisi alınamadı:", error);
         feedDot.classList.remove("ok");
         feedDot.classList.add("bad");
-        sourceEl.textContent = "ADSB.lol · son veri korunuyor";
+        sourceEl.textContent = "Airplanes.live · son veri korunuyor";
         updateEl.textContent = "Geçici bağlantı hatası";
       }
     } finally {
