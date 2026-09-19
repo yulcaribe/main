@@ -13,6 +13,7 @@
   }
 
   const REFRESH_MS = 10000;
+  const ABSENT_GRACE_MS = 30000;
   const MAX_RADIUS_NM = 250;
   const MIN_RADIUS_NM = 10;
 
@@ -58,8 +59,9 @@
   let refreshTimer = null;
   let moveRefreshTimer = null;
   let hintTimer = null;
-  let activeRequest = null;
-  let requestSerial = 0;
+  let requestInFlight = false;
+  let pendingRefresh = false;
+  let viewRevision = 0;
   const LOCAL_FLIGHT_API = "/main/api/flights.php";
 
   function esc(value) {
@@ -298,9 +300,16 @@
         <div><span>Kuyruk</span><strong>${registration}</strong></div>
         <div><span>İrtifa</span><strong>${esc(formatAltitude(ac.alt_baro))}</strong></div>
         <div><span>Hız</span><strong>${esc(formatSpeed(ac.gs))}</strong></div>
-        <div><span>Heading</span><strong>${esc(formatTrack(ac.track))}</strong></div>
+        <div><span>Heading</span><strong>${esc(formatTrack(displayHeading(ac)))}</strong></div>
         <div><span>Squawk</span><strong>${squawk}</strong></div>
       </div>`;
+  }
+
+  function aircraftLastSeenAt(ac) {
+    const seenPos = num(ac.seen_pos);
+    const seen = num(ac.seen);
+    const ageSeconds = seenPos ?? seen ?? 0;
+    return Date.now() - Math.max(0, Math.min(60, ageSeconds)) * 1000;
   }
 
   function upsertAircraft(ac, now) {
@@ -328,7 +337,8 @@
         to: L.latLng(future[0], future[1]),
         animStart: now,
         animDuration: REFRESH_MS,
-        data: ac
+        data: ac,
+        lastSeenAt: aircraftLastSeenAt(ac)
       };
 
       marker.on("popupopen", () => ensureRoute(state));
@@ -340,6 +350,7 @@
       state.animStart = now;
       state.animDuration = REFRESH_MS;
       state.data = ac;
+      state.lastSeenAt = aircraftLastSeenAt(ac);
       state.marker.setIcon(iconFor(ac));
       state.marker.setPopupContent(popupFor(ac));
     }
@@ -370,13 +381,15 @@
   }
 
   async function fetchAircraft() {
-    const serial = ++requestSerial;
+    clearTimeout(refreshTimer);
 
-    if (activeRequest) {
-      activeRequest.abort();
+    if (requestInFlight) {
+      pendingRefresh = true;
+      return;
     }
-    activeRequest = new AbortController();
 
+    requestInFlight = true;
+    const revision = viewRevision;
     const center = map.getCenter();
     const radius = radiusForView();
     const lat = center.lat.toFixed(4);
@@ -391,8 +404,7 @@
         {
           method: "GET",
           cache: "no-store",
-          headers: { "Accept": "application/json" },
-          signal: activeRequest.signal
+          headers: { "Accept": "application/json" }
         }
       );
 
@@ -406,9 +418,15 @@
         throw new Error("Beklenmeyen uçak verisi.");
       }
 
-      if (serial !== requestSerial) return;
+      // User moved/zoomed while this request was running.
+      // Do not paint the old area; immediately fetch the pending view afterwards.
+      if (revision !== viewRevision) {
+        pendingRefresh = true;
+        return;
+      }
 
       const now = performance.now();
+      const wallNow = Date.now();
       const freshIds = new Set();
 
       for (const ac of payload.ac) {
@@ -416,15 +434,29 @@
         if (id) freshIds.add(id);
       }
 
+      const queryCenter = L.latLng(Number(lat), Number(lon));
+      const queryRadiusMeters = radius * 1852;
+
       for (const [id, state] of aircraft) {
-        if (!freshIds.has(id)) {
+        if (freshIds.has(id)) continue;
+
+        const markerPos = state.marker.getLatLng();
+        const outsideCurrentArea = map.distance(queryCenter, markerPos) > queryRadiusMeters * 1.08;
+        const staleTooLong = wallNow - (state.lastSeenAt || 0) > ABSENT_GRACE_MS;
+
+        if (outsideCurrentArea || staleTooLong) {
           map.removeLayer(state.marker);
           aircraft.delete(id);
         }
       }
 
       countEl.textContent = aircraft.size + " uçak";
-      sourceEl.textContent = payload?._proxy?.source || "ADSB.lol";
+
+      const proxy = payload?._proxy || {};
+      sourceEl.textContent = proxy.stale
+        ? `ADSB.lol · cache ${proxy.cacheAgeSeconds || 0} sn`
+        : (proxy.source || "ADSB.lol");
+
       updateEl.textContent = new Intl.DateTimeFormat("tr-TR", {
         hour: "2-digit",
         minute: "2-digit",
@@ -434,17 +466,24 @@
       feedDot.classList.remove("bad");
       feedDot.classList.add("ok");
     } catch (error) {
-      if (serial !== requestSerial) return;
-      if (error?.name === "AbortError") return;
+      // A failed refresh must never erase the last good aircraft set.
+      if (revision === viewRevision) {
+        console.error("Uçak verisi alınamadı:", error);
+        feedDot.classList.remove("ok");
+        feedDot.classList.add("bad");
+        sourceEl.textContent = "ADSB.lol · son veri korunuyor";
+        updateEl.textContent = "Geçici bağlantı hatası";
+      }
+    } finally {
+      requestInFlight = false;
 
-      console.error("Uçak verisi alınamadı:", error);
-      feedDot.classList.remove("ok");
-      feedDot.classList.add("bad");
-      sourceEl.textContent = "Veri yok";
-      updateEl.textContent = "Bağlantı hatası";
+      if (pendingRefresh) {
+        pendingRefresh = false;
+        setTimeout(fetchAircraft, 0);
+      } else {
+        scheduleRefresh();
+      }
     }
-
-    scheduleRefresh();
   }
 
   function scheduleRefresh() {
@@ -552,6 +591,7 @@
   });
 
   map.on("moveend", () => {
+    viewRevision += 1;
     updateDetailMode();
     refreshForViewChange();
   });
