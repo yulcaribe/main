@@ -127,7 +127,26 @@ async function requestAirportWeather(icao){
     try{ data=await response.json(); }catch(e){}
 
     if(!response.ok || !data?.ok){
-      throw new Error(data?.error || "Veri alınamadı.");
+      const details=[];
+
+      const addAttempts=(label, attempts)=>{
+        if(!Array.isArray(attempts)) return;
+        attempts.forEach(item=>{
+          details.push(
+            label+" "+(item?.transport || "?")+" "+
+            (item?.status ? "HTTP "+item.status : "NO STATUS")+
+            (item?.error ? " · "+item.error : "")
+          );
+        });
+      };
+
+      addAttempts("METAR", data?.metarAttempts);
+      addAttempts("TAF", data?.tafAttempts);
+
+      throw new Error(
+        (data?.error || "Veri alınamadı.")+
+        (details.length ? " | "+details.join(" | ") : "")
+      );
     }
 
     renderWeatherResult(data);
