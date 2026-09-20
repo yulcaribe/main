@@ -13,10 +13,34 @@ function respond(int $status, array $payload): never {
     exit;
 }
 
-function fetchAwcProduct(string $product, string $icao): array {
+function findRawText(mixed $value): ?string {
+    if (is_array($value)) {
+        foreach (['rawText', 'raw_text', 'raw'] as $key) {
+            if (isset($value[$key]) && is_string($value[$key])) {
+                $raw = trim($value[$key]);
+                if ($raw !== '') {
+                    return $raw;
+                }
+            }
+        }
+
+        foreach ($value as $child) {
+            $raw = findRawText($child);
+            if ($raw !== null) {
+                return $raw;
+            }
+        }
+    }
+
+    return null;
+}
+
+function fetchMetarsEuProduct(string $product, string $icao): array {
+    $path = $product === 'metar' ? 'metars' : 'tafs';
+
     $url = sprintf(
-        'https://aviationweather.gov/api/data/%s?ids=%s&format=raw',
-        rawurlencode($product),
+        'https://metars.eu/api/%s/%s',
+        $path,
         rawurlencode($icao)
     );
 
@@ -26,9 +50,9 @@ function fetchAwcProduct(string $product, string $icao): array {
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 10,
-        CURLOPT_USERAGENT => 'YulCaribe/1.0 Aviation Weather Client',
+        CURLOPT_USERAGENT => 'YulCaribe/1.0 Weather Client',
         CURLOPT_HTTPHEADER => [
-            'Accept: text/plain, */*;q=0.8',
+            'Accept: application/json',
             'Cache-Control: no-cache'
         ],
         CURLOPT_ENCODING => '',
@@ -55,10 +79,10 @@ function fetchAwcProduct(string $product, string $icao): array {
         ];
     }
 
-    if ($status === 204) {
+    if ($status === 404) {
         return [
             'ok' => true,
-            'status' => 204,
+            'status' => 404,
             'error' => null,
             'raw' => null,
             'url' => $url,
@@ -70,23 +94,31 @@ function fetchAwcProduct(string $product, string $icao): array {
         return [
             'ok' => false,
             'status' => $status,
-            'error' => 'AviationWeather.gov HTTP ' . $status . ' yanıtı döndürdü.',
+            'error' => 'metars.eu HTTP ' . $status . ' yanıtı döndürdü.',
             'raw' => null,
             'url' => $url,
             'totalTime' => $totalTime
         ];
     }
 
-    $raw = trim((string)$body);
-    if ($raw === '') {
-        $raw = null;
+    $json = json_decode((string)$body, true);
+
+    if (!is_array($json)) {
+        return [
+            'ok' => false,
+            'status' => $status,
+            'error' => 'metars.eu geçersiz JSON döndürdü.',
+            'raw' => null,
+            'url' => $url,
+            'totalTime' => $totalTime
+        ];
     }
 
     return [
         'ok' => true,
         'status' => $status,
         'error' => null,
-        'raw' => $raw,
+        'raw' => findRawText($json),
         'url' => $url,
         'totalTime' => $totalTime
     ];
@@ -138,7 +170,7 @@ if (!function_exists('curl_init')) {
 
 $cacheDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
     . DIRECTORY_SEPARATOR
-    . 'yulcaribe_weather_cache';
+    . 'yulcaribe_weather_cache_v2';
 
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0700, true);
@@ -152,8 +184,8 @@ if ($cached !== null) {
     respond(200, $cached);
 }
 
-$metar = fetchAwcProduct('metar', $icao);
-$taf = fetchAwcProduct('taf', $icao);
+$metar = fetchMetarsEuProduct('metar', $icao);
+$taf = fetchMetarsEuProduct('taf', $icao);
 
 $hasMetar = $metar['ok'] === true && is_string($metar['raw']) && $metar['raw'] !== '';
 $hasTaf = $taf['ok'] === true && is_string($taf['raw']) && $taf['raw'] !== '';
@@ -163,15 +195,18 @@ if (!$hasMetar && !$hasTaf && (!$metar['ok'] || !$taf['ok'])) {
         'ok' => false,
         'icao' => $icao,
         'error' => 'Hava durumu kaynağına şu anda ulaşılamıyor.',
+        'source' => 'metars.eu',
         'metarStatus' => $metar['status'],
-        'tafStatus' => $taf['status']
+        'tafStatus' => $taf['status'],
+        'metarError' => $metar['error'],
+        'tafError' => $taf['error']
     ]);
 }
 
 $payload = [
     'ok' => true,
     'icao' => $icao,
-    'source' => 'AviationWeather.gov',
+    'source' => 'metars.eu',
     'fetchedAt' => gmdate('c'),
     'metar' => [
         'available' => $hasMetar,
