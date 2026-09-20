@@ -115,8 +115,8 @@ function decodeCloud(token){
   if(match[2]!== "///"){
     text+=" · "+(Number(match[2])*100).toLocaleString("en-US")+" ft";
   }
-  if(match[3]==="CB") text+=" · CB";
-  if(match[3]==="TCU") text+=" · TCU";
+  if(match[3]==="CB") text+=" · Cumulonimbus (CB)";
+  if(match[3]==="TCU") text+=" · Towering cumulus (TCU)";
   return text;
 }
 
@@ -257,7 +257,7 @@ function renderDecoded(container,sections){
       row.className="weather-decode-row";
 
       const key=document.createElement("span");
-      key.textContent=label;
+      key.textContent=label+":";
 
       const val=document.createElement("strong");
       val.textContent=value;
