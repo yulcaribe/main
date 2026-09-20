@@ -29,8 +29,13 @@
   const sizeButtons = [...document.querySelectorAll("[data-size-value]")];
   const hint = document.getElementById("map-hint");
 
-  const savedTheme = localStorage.getItem("aviation-map-theme");
-  document.body.dataset.theme = (savedTheme === "day" || savedTheme === "night") ? savedTheme : "night";
+  const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+  document.body.dataset.theme = systemTheme.matches ? "night" : "day";
+
+  systemTheme.addEventListener?.("change", event => {
+    document.body.dataset.theme = event.matches ? "night" : "day";
+    syncOptionsUi();
+  });
 
   const savedAircraftSize = localStorage.getItem("aviation-aircraft-size");
   document.body.dataset.aircraftSize = ["small","medium","large"].includes(savedAircraftSize)
@@ -566,7 +571,6 @@
 
   function setTheme(theme) {
     document.body.dataset.theme = theme;
-    localStorage.setItem("aviation-map-theme", theme);
     syncOptionsUi();
   }
 
