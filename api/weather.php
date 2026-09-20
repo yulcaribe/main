@@ -13,9 +13,12 @@ function respond(int $status, array $payload): never {
     exit;
 }
 
-function fetchAwcProduct(string $product, string $icao): array {
+function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'): array {
+    $scheme = $scheme === 'http' ? 'http' : 'https';
+
     $url = sprintf(
-        'http://aviationweather.gov/api/data/%s?ids=%s&format=raw',
+        '%s://aviationweather.gov/api/data/%s?ids=%s&format=raw',
+        $scheme,
         rawurlencode($product),
         rawurlencode($icao)
     );
@@ -23,7 +26,7 @@ function fetchAwcProduct(string $product, string $icao): array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_FOLLOWLOCATION => $scheme === 'https',
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 10,
         CURLOPT_USERAGENT => 'YulCaribe/1.0 Weather Client',
@@ -49,7 +52,7 @@ function fetchAwcProduct(string $product, string $icao): array {
             'error' => $error !== '' ? $error : 'Bağlantı kurulamadı.',
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTP',
+            'transport' => strtoupper($scheme),
             'url' => $url,
             'totalTime' => $totalTime
         ];
@@ -62,7 +65,7 @@ function fetchAwcProduct(string $product, string $icao): array {
             'error' => null,
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTP',
+            'transport' => strtoupper($scheme),
             'url' => $url,
             'totalTime' => $totalTime
         ];
@@ -75,7 +78,7 @@ function fetchAwcProduct(string $product, string $icao): array {
             'error' => 'AviationWeather.gov HTTP ' . $status . ' yanıtı döndürdü.',
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTP',
+            'transport' => strtoupper($scheme),
             'url' => $url,
             'totalTime' => $totalTime
         ];
@@ -155,8 +158,18 @@ if ($cached !== null) {
     respond(200, $cached);
 }
 
-$metar = fetchAwcProduct('metar', $icao);
-$taf = fetchAwcProduct('taf', $icao);
+function fetchAwcWithFallback(string $product, string $icao): array {
+    $https = fetchAwcProduct($product, $icao, 'https');
+
+    if ($https['ok']) {
+        return $https;
+    }
+
+    return fetchAwcProduct($product, $icao, 'http');
+}
+
+$metar = fetchAwcWithFallback('metar', $icao);
+$taf = fetchAwcWithFallback('taf', $icao);
 
 $hasMetar = $metar['ok'] === true && is_string($metar['raw']) && $metar['raw'] !== '';
 $hasTaf = $taf['ok'] === true && is_string($taf['raw']) && $taf['raw'] !== '';
@@ -165,7 +178,7 @@ if (!$hasMetar && !$hasTaf && (!$metar['ok'] || !$taf['ok'])) {
     respond(502, [
         'ok' => false,
         'icao' => $icao,
-        'error' => 'AviationWeather.gov kaynağına HTTP üzerinden ulaşılamıyor.',
+        'error' => 'AviationWeather.gov kaynağına HTTPS veya HTTP üzerinden ulaşılamıyor.',
         'metarStatus' => $metar['status'],
         'tafStatus' => $taf['status'],
         'metarError' => $metar['error'],
@@ -182,14 +195,14 @@ $payload = [
         'available' => $hasMetar,
         'raw' => $hasMetar ? $metar['raw'] : null,
         'source' => 'AviationWeather.gov',
-        'transport' => 'HTTP',
+        'transport' => $metar['transport'] ?? null,
         'upstreamStatus' => $metar['status']
     ],
     'taf' => [
         'available' => $hasTaf,
         'raw' => $hasTaf ? $taf['raw'] : null,
         'source' => 'AviationWeather.gov',
-        'transport' => 'HTTP',
+        'transport' => $taf['transport'] ?? null,
         'upstreamStatus' => $taf['status']
     ],
     'cache' => [
