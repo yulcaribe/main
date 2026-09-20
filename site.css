@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600&family=Sora:wght@500;600&display=swap');
 
 :root{
+  color-scheme:dark;
   --bg:#07090b;
   --surface:#0b0e11;
   --surface-2:#0e1215;
@@ -452,5 +453,127 @@ footer{
     animation-duration:.001ms!important;
     animation-iteration-count:1!important;
     transition:none!important;
+  }
+}
+
+
+/* Follow phone / PC system theme */
+@media (prefers-color-scheme: light){
+  :root{
+    color-scheme:light;
+    --bg:#f4f5f6;
+    --surface:#ffffff;
+    --surface-2:#eef0f1;
+    --text:#15191c;
+    --muted:#697278;
+    --line:rgba(18,24,28,.10);
+    --line-strong:rgba(18,24,28,.17);
+    --cyan:#0891b2;
+  }
+
+  body{
+    color:var(--text);
+    background:var(--bg);
+  }
+
+  .aviation-loader{
+    background:#f4f5f6;
+  }
+
+  .gateway-word{
+    color:#15191c;
+  }
+
+  .site-header{
+    background:rgba(244,245,246,.9);
+    border-bottom-color:var(--line);
+  }
+
+  .brand,
+  .top-nav a:hover,
+  .hero h1,
+  .weather-head h2,
+  .weather-type{
+    color:#15191c;
+  }
+
+  .top-nav a,
+  .secondary-button{
+    color:#687177;
+  }
+
+  .top-nav .map-nav{
+    color:#333a3f;
+  }
+
+  .primary-button{
+    color:#152126;
+    background:#ffffff;
+    border-color:rgba(8,145,178,.34);
+  }
+
+  .primary-button:hover{
+    background:#f7fbfc;
+    border-color:rgba(8,145,178,.58);
+  }
+
+  .secondary-button:hover{
+    color:#15191c;
+  }
+
+  .weather-search-field{
+    background:#ffffff;
+    border-color:var(--line-strong);
+  }
+
+  .weather-search-field input{
+    color:#171b1e;
+  }
+
+  .weather-search-field input::placeholder{
+    color:#9aa1a5;
+  }
+
+  .weather-search-field button{
+    color:#172126;
+    background:#f7fafb;
+    border-color:rgba(8,145,178,.32);
+  }
+
+  .weather-search-field button:hover{
+    border-color:rgba(8,145,178,.58);
+  }
+
+  .weather-quick button{
+    color:#788187;
+  }
+
+  .weather-feedback{
+    color:#70797e;
+  }
+
+  .weather-feedback-dot{
+    background:#a0a7ab;
+  }
+
+  .weather-result-card{
+    background:#ffffff;
+    border-color:var(--line);
+  }
+
+  .weather-result-card pre{
+    color:#465057;
+  }
+
+  .weather-result-card pre.is-empty{
+    color:#92999d;
+  }
+
+  .weather-copy{
+    color:#7d858a;
+  }
+
+  .footer-inner{
+    color:#737b80;
   }
 }
