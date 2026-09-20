@@ -379,6 +379,64 @@ input{font:inherit}
 
 .weather-result-card pre.is-empty{color:#505a60}
 
+
+.weather-decode{
+  margin-top:18px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+}
+
+.weather-decode[hidden]{display:none}
+
+.weather-decode-title{
+  margin-bottom:12px;
+  color:var(--cyan);
+  font:500 9px "IBM Plex Mono",monospace;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+
+.weather-decode-block + .weather-decode-block{
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid var(--line);
+}
+
+.weather-decode-heading{
+  margin-bottom:9px;
+  color:var(--muted);
+  font:500 9px "IBM Plex Mono",monospace;
+  letter-spacing:.04em;
+}
+
+.weather-decode-row{
+  display:grid;
+  grid-template-columns:120px 1fr;
+  gap:14px;
+  padding:4px 0;
+  align-items:start;
+}
+
+.weather-decode-row span{
+  color:var(--muted);
+  font-size:10px;
+}
+
+.weather-decode-row strong{
+  color:var(--text);
+  font-size:11px;
+  font-weight:500;
+  line-height:1.5;
+}
+
+@media(max-width:460px){
+  .weather-decode-row{
+    grid-template-columns:96px 1fr;
+    gap:10px;
+  }
+}
+
+
 .weather-source-line{
   grid-column:1/-1;
   margin-top:2px;
