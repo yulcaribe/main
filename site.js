@@ -50,6 +50,7 @@ function renderWeatherResult(data){
   const results=document.getElementById("weather-results");
   const metarEl=document.getElementById("weather-metar");
   const tafEl=document.getElementById("weather-taf");
+  const sourceEl=document.getElementById("weather-source-line");
 
   if(!results || !metarEl || !tafEl) return;
 
@@ -62,6 +63,28 @@ function renderWeatherResult(data){
   tafEl.classList.toggle("is-empty",!data?.taf?.raw);
 
   results.hidden=false;
+
+  if(sourceEl){
+    const sourceParts=[];
+
+    if(data?.metar?.available){
+      sourceParts.push(
+        "METAR: "+(data.metar.source || data.source || "—")+
+        (data.metar.transport ? " · "+data.metar.transport : "")
+      );
+    }
+
+    if(data?.taf?.available){
+      sourceParts.push(
+        "TAF: "+(data.taf.source || data.source || "—")+
+        (data.taf.transport ? " · "+data.taf.transport : "")
+      );
+    }
+
+    sourceEl.textContent=sourceParts.length
+      ? "Kaynak · "+sourceParts.join("  /  ")
+      : "";
+  }
 
   const found=[];
   if(data?.metar?.raw) found.push("METAR");
