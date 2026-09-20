@@ -13,15 +13,45 @@ function respond(int $status, array $payload): never {
     exit;
 }
 
-function fetchAwcHttps(string $product, string $icao): array {
+function resolveAwcIpv4(): array {
+    $ips = [];
+
+    if (function_exists('dns_get_record')) {
+        $records = @dns_get_record('aviationweather.gov', DNS_A);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                $ip = $record['ip'] ?? null;
+                if (is_string($ip) && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $ips[] = $ip;
+                }
+            }
+        }
+    }
+
+    $legacy = @gethostbynamel('aviationweather.gov');
+    if (is_array($legacy)) {
+        foreach ($legacy as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $ips[] = $ip;
+            }
+        }
+    }
+
+    return array_values(array_unique($ips));
+}
+
+function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null): array {
+    $host = 'aviationweather.gov';
     $url = sprintf(
-        'https://aviationweather.gov/api/data/%s?ids=%s&format=raw',
+        'https://%s/api/data/%s?ids=%s&format=raw',
+        $host,
         rawurlencode($product),
         rawurlencode($icao)
     );
 
     $ch = curl_init($url);
-    curl_setopt_array($ch, [
+
+    $options = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS => 3,
@@ -35,17 +65,29 @@ function fetchAwcHttps(string $product, string $icao): array {
         ],
         CURLOPT_ENCODING => '',
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+        CURLOPT_DNS_CACHE_TIMEOUT => 0,
+        CURLOPT_FRESH_CONNECT => true,
+        CURLOPT_FORBID_REUSE => true,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2
-    ]);
+    ];
+
+    // Keep the hostname/SNI as aviationweather.gov while testing each DNS edge.
+    if ($ip !== null) {
+        $options[CURLOPT_RESOLVE] = [$host . ':443:' . $ip];
+    }
+
+    curl_setopt_array($ch, $options);
 
     $body = curl_exec($ch);
     $errno = curl_errno($ch);
     $error = curl_error($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $primaryIp = (string)curl_getinfo($ch, CURLINFO_PRIMARY_IP);
     $effectiveUrl = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     curl_close($ch);
+
+    $edge = $primaryIp !== '' ? $primaryIp : ($ip ?? 'DNS');
 
     if ($errno !== 0 || $body === false) {
         return [
@@ -55,6 +97,7 @@ function fetchAwcHttps(string $product, string $icao): array {
             'raw' => null,
             'source' => 'AviationWeather.gov',
             'transport' => 'HTTPS',
+            'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
@@ -67,6 +110,7 @@ function fetchAwcHttps(string $product, string $icao): array {
             'raw' => null,
             'source' => 'AviationWeather.gov',
             'transport' => 'HTTPS',
+            'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
@@ -79,6 +123,7 @@ function fetchAwcHttps(string $product, string $icao): array {
             'raw' => null,
             'source' => 'AviationWeather.gov',
             'transport' => 'HTTPS',
+            'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
@@ -92,8 +137,53 @@ function fetchAwcHttps(string $product, string $icao): array {
         'raw' => $raw !== '' ? $raw : null,
         'source' => 'AviationWeather.gov',
         'transport' => 'HTTPS',
+        'edge' => $edge,
         'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
     ];
+}
+
+function fetchAwcHttps(string $product, string $icao): array {
+    $attempts = [];
+
+    // First let cURL use the server's normal DNS path.
+    $first = fetchAwcHttpsAttempt($product, $icao);
+    $attempts[] = [
+        'transport' => 'HTTPS',
+        'edge' => $first['edge'] ?? 'DNS',
+        'status' => $first['status'] ?? 0,
+        'error' => $first['error'] ?? null
+    ];
+
+    if ($first['ok']) {
+        $first['attempts'] = $attempts;
+        return $first;
+    }
+
+    // If one CDN edge still serves an expired cert, try the other A records
+    // while preserving the real hostname for SNI and certificate validation.
+    foreach (resolveAwcIpv4() as $ip) {
+        if (($first['edge'] ?? null) === $ip) {
+            continue;
+        }
+
+        $try = fetchAwcHttpsAttempt($product, $icao, $ip);
+        $attempts[] = [
+            'transport' => 'HTTPS',
+            'edge' => $try['edge'] ?? $ip,
+            'status' => $try['status'] ?? 0,
+            'error' => $try['error'] ?? null
+        ];
+
+        if ($try['ok']) {
+            $try['attempts'] = $attempts;
+            return $try;
+        }
+
+        $first = $try;
+    }
+
+    $first['attempts'] = $attempts;
+    return $first;
 }
 
 function decodeChunkedBody(string $body): string {
@@ -274,30 +364,20 @@ function fetchAwcWithFallback(string $product, string $icao): array {
     $https = fetchAwcHttps($product, $icao);
 
     if ($https['ok']) {
-        $https['attempts'] = [
-            [
-                'transport' => 'HTTPS',
-                'status' => $https['status'],
-                'error' => null
-            ]
-        ];
         return $https;
     }
 
     $http = fetchAwcHttpSocket($product, $icao);
-    $http['attempts'] = [
-        [
-            'transport' => 'HTTPS',
-            'status' => $https['status'],
-            'error' => $https['error']
-        ],
-        [
-            'transport' => 'HTTP',
-            'status' => $http['status'],
-            'error' => $http['error']
-        ]
+
+    $attempts = $https['attempts'] ?? [];
+    $attempts[] = [
+        'transport' => 'HTTP',
+        'edge' => null,
+        'status' => $http['status'] ?? 0,
+        'error' => $http['error'] ?? null
     ];
 
+    $http['attempts'] = $attempts;
     return $http;
 }
 
@@ -347,7 +427,7 @@ if (!function_exists('curl_init')) {
 
 $cacheDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
     . DIRECTORY_SEPARATOR
-    . 'yulcaribe_weather_cache_awc_v5';
+    . 'yulcaribe_weather_cache_awc_v6';
 
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0700, true);
