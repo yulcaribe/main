@@ -379,6 +379,15 @@ input{font:inherit}
 
 .weather-result-card pre.is-empty{color:#505a60}
 
+.weather-source-line{
+  grid-column:1/-1;
+  margin-top:2px;
+  color:var(--muted);
+  font:400 8px "IBM Plex Mono",monospace;
+  letter-spacing:.04em;
+  opacity:.72;
+}
+
 /* Footer */
 footer{
   padding:28px 0 34px;
