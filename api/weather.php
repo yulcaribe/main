@@ -26,7 +26,8 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => $scheme === 'https',
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 10,
         CURLOPT_USERAGENT => 'YulCaribe/1.0 Weather Client',
@@ -35,13 +36,15 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
             'Cache-Control: no-cache'
         ],
         CURLOPT_ENCODING => '',
-        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
     ]);
 
     $body = curl_exec($ch);
     $errno = curl_errno($ch);
     $error = curl_error($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $effectiveUrl = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     $totalTime = (float)curl_getinfo($ch, CURLINFO_TOTAL_TIME);
     curl_close($ch);
 
@@ -54,6 +57,7 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
             'source' => 'AviationWeather.gov',
             'transport' => strtoupper($scheme),
             'url' => $url,
+            'effectiveUrl' => $effectiveUrl,
             'totalTime' => $totalTime
         ];
     }
@@ -67,6 +71,7 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
             'source' => 'AviationWeather.gov',
             'transport' => strtoupper($scheme),
             'url' => $url,
+            'effectiveUrl' => $effectiveUrl,
             'totalTime' => $totalTime
         ];
     }
@@ -80,6 +85,7 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
             'source' => 'AviationWeather.gov',
             'transport' => strtoupper($scheme),
             'url' => $url,
+            'effectiveUrl' => $effectiveUrl,
             'totalTime' => $totalTime
         ];
     }
@@ -144,7 +150,7 @@ if (!function_exists('curl_init')) {
 
 $cacheDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
     . DIRECTORY_SEPARATOR
-    . 'yulcaribe_weather_cache_http_awc';
+    . 'yulcaribe_weather_cache_awc_v4';
 
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0700, true);
@@ -182,7 +188,11 @@ if (!$hasMetar && !$hasTaf && (!$metar['ok'] || !$taf['ok'])) {
         'metarStatus' => $metar['status'],
         'tafStatus' => $taf['status'],
         'metarError' => $metar['error'],
-        'tafError' => $taf['error']
+        'tafError' => $taf['error'],
+        'metarTransport' => $metar['transport'] ?? null,
+        'tafTransport' => $taf['transport'] ?? null,
+        'metarUrl' => $metar['effectiveUrl'] ?? $metar['url'] ?? null,
+        'tafUrl' => $taf['effectiveUrl'] ?? $taf['url'] ?? null
     ]);
 }
 
