@@ -13,12 +13,9 @@ function respond(int $status, array $payload): never {
     exit;
 }
 
-function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'): array {
-    $scheme = $scheme === 'http' ? 'http' : 'https';
-
+function fetchAwcHttps(string $product, string $icao): array {
     $url = sprintf(
-        '%s://aviationweather.gov/api/data/%s?ids=%s&format=raw',
-        $scheme,
+        'https://aviationweather.gov/api/data/%s?ids=%s&format=raw',
         rawurlencode($product),
         rawurlencode($icao)
     );
@@ -30,14 +27,17 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
         CURLOPT_MAXREDIRS => 3,
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 10,
-        CURLOPT_USERAGENT => 'YulCaribe/1.0 Weather Client',
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
         CURLOPT_HTTPHEADER => [
             'Accept: text/plain, */*;q=0.8',
+            'Accept-Language: en-US,en;q=0.9',
             'Cache-Control: no-cache'
         ],
         CURLOPT_ENCODING => '',
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
+        CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2
     ]);
 
     $body = curl_exec($ch);
@@ -45,20 +45,17 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
     $error = curl_error($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $effectiveUrl = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
-    $totalTime = (float)curl_getinfo($ch, CURLINFO_TOTAL_TIME);
     curl_close($ch);
 
     if ($errno !== 0 || $body === false) {
         return [
             'ok' => false,
             'status' => $status,
-            'error' => $error !== '' ? $error : 'Bağlantı kurulamadı.',
+            'error' => $error !== '' ? $error : 'HTTPS bağlantısı kurulamadı.',
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => strtoupper($scheme),
-            'url' => $url,
-            'effectiveUrl' => $effectiveUrl,
-            'totalTime' => $totalTime
+            'transport' => 'HTTPS',
+            'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
 
@@ -69,10 +66,8 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
             'error' => null,
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => strtoupper($scheme),
-            'url' => $url,
-            'effectiveUrl' => $effectiveUrl,
-            'totalTime' => $totalTime
+            'transport' => 'HTTPS',
+            'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
 
@@ -80,13 +75,11 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
         return [
             'ok' => false,
             'status' => $status,
-            'error' => 'AviationWeather.gov HTTP ' . $status . ' yanıtı döndürdü.',
+            'error' => 'HTTPS HTTP ' . $status,
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => strtoupper($scheme),
-            'url' => $url,
-            'effectiveUrl' => $effectiveUrl,
-            'totalTime' => $totalTime
+            'transport' => 'HTTPS',
+            'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
     }
 
@@ -98,10 +91,214 @@ function fetchAwcProduct(string $product, string $icao, string $scheme = 'https'
         'error' => null,
         'raw' => $raw !== '' ? $raw : null,
         'source' => 'AviationWeather.gov',
-        'transport' => 'HTTP',
-        'url' => $url,
-        'totalTime' => $totalTime
+        'transport' => 'HTTPS',
+        'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
     ];
+}
+
+function decodeChunkedBody(string $body): string {
+    $decoded = '';
+
+    while ($body !== '') {
+        $pos = strpos($body, "\r\n");
+        if ($pos === false) {
+            return $body;
+        }
+
+        $sizeLine = trim(substr($body, 0, $pos));
+        $semicolon = strpos($sizeLine, ';');
+        if ($semicolon !== false) {
+            $sizeLine = substr($sizeLine, 0, $semicolon);
+        }
+
+        if (!ctype_xdigit($sizeLine)) {
+            return $body;
+        }
+
+        $size = hexdec($sizeLine);
+        $body = substr($body, $pos + 2);
+
+        if ($size === 0) {
+            break;
+        }
+
+        if (strlen($body) < $size) {
+            return $body;
+        }
+
+        $decoded .= substr($body, 0, $size);
+        $body = substr($body, $size + 2);
+    }
+
+    return $decoded;
+}
+
+function fetchAwcHttpSocket(string $product, string $icao): array {
+    $host = 'aviationweather.gov';
+    $path = sprintf(
+        '/api/data/%s?ids=%s&format=raw',
+        rawurlencode($product),
+        rawurlencode($icao)
+    );
+    $url = 'http://' . $host . $path;
+
+    $errno = 0;
+    $errstr = '';
+
+    $socket = @stream_socket_client(
+        'tcp://' . $host . ':80',
+        $errno,
+        $errstr,
+        8,
+        STREAM_CLIENT_CONNECT
+    );
+
+    if ($socket === false) {
+        return [
+            'ok' => false,
+            'status' => 0,
+            'error' => 'HTTP socket: ' . ($errstr !== '' ? $errstr : 'bağlantı kurulamadı') . ' (' . $errno . ')',
+            'raw' => null,
+            'source' => 'AviationWeather.gov',
+            'transport' => 'HTTP',
+            'url' => $url
+        ];
+    }
+
+    stream_set_timeout($socket, 10);
+
+    $request =
+        "GET {$path} HTTP/1.1\r\n" .
+        "Host: {$host}\r\n" .
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36\r\n" .
+        "Accept: text/plain, */*;q=0.8\r\n" .
+        "Accept-Language: en-US,en;q=0.9\r\n" .
+        "Accept-Encoding: identity\r\n" .
+        "Cache-Control: no-cache\r\n" .
+        "Connection: close\r\n\r\n";
+
+    fwrite($socket, $request);
+
+    $response = '';
+    while (!feof($socket)) {
+        $chunk = fread($socket, 8192);
+        if ($chunk === false) {
+            break;
+        }
+        $response .= $chunk;
+    }
+
+    $meta = stream_get_meta_data($socket);
+    fclose($socket);
+
+    if (($meta['timed_out'] ?? false) === true) {
+        return [
+            'ok' => false,
+            'status' => 0,
+            'error' => 'HTTP socket zaman aşımı.',
+            'raw' => null,
+            'source' => 'AviationWeather.gov',
+            'transport' => 'HTTP',
+            'url' => $url
+        ];
+    }
+
+    $headerEnd = strpos($response, "\r\n\r\n");
+    if ($headerEnd === false) {
+        return [
+            'ok' => false,
+            'status' => 0,
+            'error' => 'HTTP socket geçersiz yanıt döndürdü.',
+            'raw' => null,
+            'source' => 'AviationWeather.gov',
+            'transport' => 'HTTP',
+            'url' => $url
+        ];
+    }
+
+    $headerText = substr($response, 0, $headerEnd);
+    $body = substr($response, $headerEnd + 4);
+
+    $status = 0;
+    if (preg_match('/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i', $headerText, $match)) {
+        $status = (int)$match[1];
+    }
+
+    if (preg_match('/^Transfer-Encoding:\s*chunked\s*$/im', $headerText)) {
+        $body = decodeChunkedBody($body);
+    }
+
+    if ($status === 204) {
+        return [
+            'ok' => true,
+            'status' => 204,
+            'error' => null,
+            'raw' => null,
+            'source' => 'AviationWeather.gov',
+            'transport' => 'HTTP',
+            'url' => $url
+        ];
+    }
+
+    if ($status < 200 || $status >= 300) {
+        $location = null;
+        if (preg_match('/^Location:\s*(.+)$/im', $headerText, $locationMatch)) {
+            $location = trim($locationMatch[1]);
+        }
+
+        return [
+            'ok' => false,
+            'status' => $status,
+            'error' => 'HTTP socket status ' . $status . ($location ? ' → ' . $location : ''),
+            'raw' => null,
+            'source' => 'AviationWeather.gov',
+            'transport' => 'HTTP',
+            'url' => $url
+        ];
+    }
+
+    $raw = trim($body);
+
+    return [
+        'ok' => true,
+        'status' => $status,
+        'error' => null,
+        'raw' => $raw !== '' ? $raw : null,
+        'source' => 'AviationWeather.gov',
+        'transport' => 'HTTP',
+        'url' => $url
+    ];
+}
+
+function fetchAwcWithFallback(string $product, string $icao): array {
+    $https = fetchAwcHttps($product, $icao);
+
+    if ($https['ok']) {
+        $https['attempts'] = [
+            [
+                'transport' => 'HTTPS',
+                'status' => $https['status'],
+                'error' => null
+            ]
+        ];
+        return $https;
+    }
+
+    $http = fetchAwcHttpSocket($product, $icao);
+    $http['attempts'] = [
+        [
+            'transport' => 'HTTPS',
+            'status' => $https['status'],
+            'error' => $https['error']
+        ],
+        [
+            'transport' => 'HTTP',
+            'status' => $http['status'],
+            'error' => $http['error']
+        ]
+    ];
+
+    return $http;
 }
 
 function loadCache(string $file, int $maxAge): ?array {
@@ -150,7 +347,7 @@ if (!function_exists('curl_init')) {
 
 $cacheDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
     . DIRECTORY_SEPARATOR
-    . 'yulcaribe_weather_cache_awc_v4';
+    . 'yulcaribe_weather_cache_awc_v5';
 
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0700, true);
@@ -164,16 +361,6 @@ if ($cached !== null) {
     respond(200, $cached);
 }
 
-function fetchAwcWithFallback(string $product, string $icao): array {
-    $https = fetchAwcProduct($product, $icao, 'https');
-
-    if ($https['ok']) {
-        return $https;
-    }
-
-    return fetchAwcProduct($product, $icao, 'http');
-}
-
 $metar = fetchAwcWithFallback('metar', $icao);
 $taf = fetchAwcWithFallback('taf', $icao);
 
@@ -184,15 +371,9 @@ if (!$hasMetar && !$hasTaf && (!$metar['ok'] || !$taf['ok'])) {
     respond(502, [
         'ok' => false,
         'icao' => $icao,
-        'error' => 'AviationWeather.gov kaynağına HTTPS veya HTTP üzerinden ulaşılamıyor.',
-        'metarStatus' => $metar['status'],
-        'tafStatus' => $taf['status'],
-        'metarError' => $metar['error'],
-        'tafError' => $taf['error'],
-        'metarTransport' => $metar['transport'] ?? null,
-        'tafTransport' => $taf['transport'] ?? null,
-        'metarUrl' => $metar['effectiveUrl'] ?? $metar['url'] ?? null,
-        'tafUrl' => $taf['effectiveUrl'] ?? $taf['url'] ?? null
+        'error' => 'AviationWeather.gov isteği başarısız.',
+        'metarAttempts' => $metar['attempts'] ?? [],
+        'tafAttempts' => $taf['attempts'] ?? []
     ]);
 }
 
@@ -206,14 +387,14 @@ $payload = [
         'raw' => $hasMetar ? $metar['raw'] : null,
         'source' => 'AviationWeather.gov',
         'transport' => $metar['transport'] ?? null,
-        'upstreamStatus' => $metar['status']
+        'upstreamStatus' => $metar['status'] ?? null
     ],
     'taf' => [
         'available' => $hasTaf,
         'raw' => $hasTaf ? $taf['raw'] : null,
         'source' => 'AviationWeather.gov',
         'transport' => $taf['transport'] ?? null,
-        'upstreamStatus' => $taf['status']
+        'upstreamStatus' => $taf['status'] ?? null
     ],
     'cache' => [
         'hit' => false,
