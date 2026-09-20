@@ -40,7 +40,7 @@ function resolveAwcIpv4(): array {
     return array_values(array_unique($ips));
 }
 
-function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null): array {
+function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null, bool $allowExpired = false): array {
     $host = 'aviationweather.gov';
     $url = sprintf(
         'https://%s/api/data/%s?ids=%s&format=raw',
@@ -68,7 +68,7 @@ function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null)
         CURLOPT_DNS_CACHE_TIMEOUT => 0,
         CURLOPT_FRESH_CONNECT => true,
         CURLOPT_FORBID_REUSE => true,
-        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYPEER => !$allowExpired,
         CURLOPT_SSL_VERIFYHOST => 2
     ];
 
@@ -96,7 +96,7 @@ function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null)
             'error' => $error !== '' ? $error : 'HTTPS bağlantısı kurulamadı.',
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTPS',
+            'transport' => $allowExpired ? 'HTTPS (CERT BYPASS)' : 'HTTPS',
             'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
@@ -109,7 +109,7 @@ function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null)
             'error' => null,
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTPS',
+            'transport' => $allowExpired ? 'HTTPS (CERT BYPASS)' : 'HTTPS',
             'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
@@ -122,7 +122,7 @@ function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null)
             'error' => 'HTTPS HTTP ' . $status,
             'raw' => null,
             'source' => 'AviationWeather.gov',
-            'transport' => 'HTTPS',
+            'transport' => $allowExpired ? 'HTTPS (CERT BYPASS)' : 'HTTPS',
             'edge' => $edge,
             'url' => $effectiveUrl !== '' ? $effectiveUrl : $url
         ];
@@ -142,8 +142,22 @@ function fetchAwcHttpsAttempt(string $product, string $icao, ?string $ip = null)
     ];
 }
 
+function isExpiredCertificateError(?string $error): bool {
+    return is_string($error)
+        && stripos($error, 'certificate has expired') !== false;
+}
+
+function rawLooksLikeRequestedStation(?string $raw, string $icao): bool {
+    if (!is_string($raw) || trim($raw) === '') {
+        return false;
+    }
+
+    return preg_match('/\\b' . preg_quote($icao, '/') . '\\b/i', $raw) === 1;
+}
+
 function fetchAwcHttps(string $product, string $icao): array {
     $attempts = [];
+    $sawExpiredCertificate = false;
 
     // First let cURL use the server's normal DNS path.
     $first = fetchAwcHttpsAttempt($product, $icao);
@@ -153,6 +167,7 @@ function fetchAwcHttps(string $product, string $icao): array {
         'status' => $first['status'] ?? 0,
         'error' => $first['error'] ?? null
     ];
+    $sawExpiredCertificate = $sawExpiredCertificate || isExpiredCertificateError($first['error'] ?? null);
 
     if ($first['ok']) {
         $first['attempts'] = $attempts;
@@ -173,6 +188,7 @@ function fetchAwcHttps(string $product, string $icao): array {
             'status' => $try['status'] ?? 0,
             'error' => $try['error'] ?? null
         ];
+        $sawExpiredCertificate = $sawExpiredCertificate || isExpiredCertificateError($try['error'] ?? null);
 
         if ($try['ok']) {
             $try['attempts'] = $attempts;
@@ -180,6 +196,36 @@ function fetchAwcHttps(string $product, string $icao): array {
         }
 
         $first = $try;
+    }
+
+    // Browser equivalent of "proceed anyway": only after we proved the
+    // failure is specifically an expired certificate. Hostname validation
+    // remains enabled, and we reject a body that does not contain the station.
+    if ($sawExpiredCertificate) {
+        $bypass = fetchAwcHttpsAttempt($product, $icao, null, true);
+
+        $attempts[] = [
+            'transport' => 'HTTPS (CERT BYPASS)',
+            'edge' => $bypass['edge'] ?? 'DNS',
+            'status' => $bypass['status'] ?? 0,
+            'error' => $bypass['error'] ?? null
+        ];
+
+        if ($bypass['ok'] && (
+            $bypass['status'] === 204
+            || $bypass['raw'] === null
+            || rawLooksLikeRequestedStation($bypass['raw'], $icao)
+        )) {
+            $bypass['attempts'] = $attempts;
+            return $bypass;
+        }
+
+        if ($bypass['ok']) {
+            $bypass['ok'] = false;
+            $bypass['error'] = 'Yanıt istenen ICAO kodunu içermiyor.';
+        }
+
+        $first = $bypass;
     }
 
     $first['attempts'] = $attempts;
@@ -427,7 +473,7 @@ if (!function_exists('curl_init')) {
 
 $cacheDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
     . DIRECTORY_SEPARATOR
-    . 'yulcaribe_weather_cache_awc_v6';
+    . 'yulcaribe_weather_cache_awc_v7';
 
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0700, true);
