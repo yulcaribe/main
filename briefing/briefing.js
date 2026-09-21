@@ -181,9 +181,17 @@
 
   function render(data){
     current=data; workspace.hidden=false; hazardSection.hidden=false; stationSection.hidden=false;
-    renderRouteMeta(data); renderMap(data); renderSimpleBrief(data); renderHazards(data.hazards||[]); renderStations(data.stations||[]);
-    setTimeout(()=>map.invalidateSize(),50);
-    if(window.YCModelWX?.load) window.YCModelWX.load(data);
+    renderRouteMeta(data); renderSimpleBrief(data); renderHazards(data.hazards||[]); renderStations(data.stations||[]);
+    requestAnimationFrame(()=>{
+      try{
+        map.invalidateSize({pan:false});
+        renderMap(data);
+        setTimeout(()=>map.invalidateSize({pan:false}),80);
+      }catch(e){
+        console.error("Map render error",e);
+      }
+    });
+    if(window.YCModelWX?.load) window.YCModelWX.load(data).catch(e=>console.error("Model WX error",e));
   }
 
   async function load(){
