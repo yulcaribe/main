@@ -44,7 +44,14 @@
   function recordCount(h){return ctx(h).records.length;}
   function section4(h,i){
     const r=rec(h,i);
-    return {parameterCategory:-1,parameterNumber:-1,ycName:r.name};
+    const dt=r.file?.dataTemplate;
+    const category=Number(dt?.[4]?.[4]?.content);
+    const number=Number(dt?.[4]?.[5]?.content);
+    return {
+      parameterCategory:Number.isFinite(category)?category:-1,
+      parameterNumber:Number.isFinite(number)?number:-1,
+      ycName:r.name
+    };
   }
   function section3(h,i){
     const g=rec(h,i).data?.grid||{};
