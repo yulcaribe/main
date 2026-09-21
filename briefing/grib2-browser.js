@@ -1,61 +1,122 @@
 (() => {
   "use strict";
-  let wasmInstance = null;
-  let wasmPromise = null;
-  const DEFAULT_WASM = "https://cdn.jsdelivr.net/npm/@trkbt10/grib2-wasm@0.1.0/grib2.wasm";
 
-  function bytesToLatin1(bytes) {
-    const chunks=[]; const CHUNK=8192;
-    for(let i=0;i<bytes.length;i+=CHUNK){
-      const part=bytes.subarray(i,i+CHUNK);
-      let s="";
-      for(let j=0;j<part.length;j++) s+=String.fromCharCode(part[j]);
-      chunks.push(s);
-    }
-    return chunks.join("");
+  const MODULE_URLS = [
+    "https://cdn.jsdelivr.net/npm/@azohra/meteo.grib@0.1.4/dist/index.js",
+    "https://esm.sh/@azohra/meteo.grib@0.1.4?bundle"
+  ];
+
+  let mod = null;
+  let initPromise = null;
+  let nextHandle = 1;
+  const contexts = new Map();
+
+  async function init() {
+    if (mod) return;
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
+      let last = null;
+      for (const url of MODULE_URLS) {
+        try {
+          const m = await import(url);
+          if (typeof m.splitMessages !== "function" || typeof m.parseFields !== "function" || typeof m.decodeFieldValues !== "function") {
+            throw new Error("GRIB2 modülü beklenen API'yi sunmuyor.");
+          }
+          mod = m;
+          return;
+        } catch (e) {
+          last = e;
+        }
+      }
+      throw new Error("GRIB2 decoder yüklenemedi: " + (last?.message || String(last)));
+    })();
+    return initPromise;
   }
-  function latin1ToFloat32Array(str) {
-    const bytes=new Uint8Array(str.length);
-    for(let i=0;i<str.length;i++) bytes[i]=str.charCodeAt(i)&255;
-    return new Float32Array(bytes.buffer);
+
+  function ctx(handle) {
+    const c = contexts.get(handle);
+    if (!c) throw new Error("Geçersiz GRIB2 handle.");
+    return c;
   }
-  async function instantiate(url){
-    const opts={builtins:["js-string"],importedStringConstants:"_"};
-    const res=await fetch(url,{cache:"force-cache"});
-    if(!res.ok) throw new Error(`GRIB decoder WASM indirilemedi: HTTP ${res.status}`);
-    try{
-      const result=await WebAssembly.instantiateStreaming(res.clone(),{},opts);
-      return result.instance;
-    }catch(first){
-      const bytes=await res.arrayBuffer();
-      try{
-        const mod=await WebAssembly.compile(bytes,opts);
-        return await WebAssembly.instantiate(mod,{});
-      }catch(second){
-        throw new Error(`Tarayıcı GRIB2 Wasm-GC decoder'ı başlatamadı: ${second?.message||first?.message||second}`);
+
+  function rec(handle, index) {
+    const c = ctx(handle);
+    const r = c.records[index - 1];
+    if (!r) throw new Error(`GRIB2 record ${index} bulunamadı.`);
+    return r;
+  }
+
+  function parse(bytes) {
+    if (!mod) throw new Error("GRIB2 decoder başlatılmadı.");
+    const records = [];
+    for (const message of mod.splitMessages(bytes)) {
+      for (const field of mod.parseFields(message)) {
+        const product = mod.parseProduct(field.section4);
+        const grid = mod.parseGrid(field.section3);
+        records.push({ field, product, grid, decoded: null });
       }
     }
-  }
-  async function init(url=DEFAULT_WASM){
-    if(wasmInstance) return;
-    if(!wasmPromise) wasmPromise=instantiate(url).then(x=>{wasmInstance=x;return x;});
-    await wasmPromise;
-  }
-  function ex(){if(!wasmInstance)throw new Error("GRIB2 decoder başlatılmadı.");return wasmInstance.exports;}
-  function jsonCall(name,...args){const s=ex()[name](...args);if(!s)throw new Error(`${name} boş döndü`);const p=JSON.parse(s);if(p?.error)throw new Error(p.error);return p;}
-  function parse(bytes){
-    const handle=ex().parseGrib2(bytesToLatin1(bytes));
-    if(handle<0)throw new Error("GRIB2 parse başarısız.");
+    if (!records.length) throw new Error("GRIB2 içinde çözülebilir kayıt bulunamadı.");
+    const handle = nextHandle++;
+    contexts.set(handle, { records });
+    if (contexts.size > 12) {
+      const oldest = contexts.keys().next().value;
+      contexts.delete(oldest);
+    }
     return handle;
   }
-  function recordCount(handle){return ex().getRecordCount(handle);}
-  function section1(handle,i=0){return jsonCall("getSection1",handle,i);}
-  function section3(handle,i){return jsonCall("getSection3",handle,i);}
-  function section4(handle,i){return jsonCall("getSection4",handle,i);}
-  function section5(handle,i){return jsonCall("getSection5",handle,i);}
-  function values(handle,i){const s=ex().getGridData(handle,i);if(!s)throw new Error("GRIB grid boş");return latin1ToFloat32Array(s);}
-  function lats(handle,i){const s=ex().getLatitudes(handle,i);if(!s)throw new Error("GRIB lat boş");return latin1ToFloat32Array(s);}
-  function lons(handle,i){const s=ex().getLongitudes(handle,i);if(!s)throw new Error("GRIB lon boş");return latin1ToFloat32Array(s);}
 
-  window.YCGrib2={init,parse,recordCount,section1,section3,section4,section5,values,lats,lons,decoder:"@trkbt10/grib2-wasm 0.1.0"};
+  function recordCount(handle) {
+    return ctx(handle).records.length;
+  }
+
+  function section4(handle, index) {
+    const p = rec(handle, index).product;
+    return {
+      template: p.productDefinitionTemplateNumber,
+      parameterCategory: p.parameterCategory,
+      parameterNumber: p.parameterNumber,
+      forecastTime: p.forecastTime ?? 0,
+      indicatorOfUnitOfTimeRange: p.indicatorOfUnitOfTimeRange,
+      typeOfFirstFixedSurface: p.typeOfFirstFixedSurface,
+      scaleFactorOfFirstFixedSurface: p.scaleFactorOfFirstFixedSurface,
+      scaledValueOfFirstFixedSurface: p.scaledValueOfFirstFixedSurface,
+      typeOfSecondFixedSurface: p.typeOfSecondFixedSurface,
+      scaleFactorOfSecondFixedSurface: p.scaleFactorOfSecondFixedSurface,
+      scaledValueOfSecondFixedSurface: p.scaledValueOfSecondFixedSurface
+    };
+  }
+
+  function values(handle, index) {
+    const r = rec(handle, index);
+    if (!r.decoded) r.decoded = mod.decodeFieldValues(r.field);
+    return r.decoded.values;
+  }
+
+  function nearest(handle, index, lat, lon) {
+    const r = rec(handle, index);
+    return mod.nearestGridpoint(r.grid, lat, lon);
+  }
+
+  function section3(handle, index) {
+    const g = rec(handle, index).grid;
+    return {
+      template: g.gridDefinitionTemplateNumber,
+      numberOfPoints: g.numberOfDataPoints,
+      ni: g.ni,
+      nj: g.nj,
+      scanMode: g.scanningMode
+    };
+  }
+
+  window.YCGrib2 = {
+    init,
+    parse,
+    recordCount,
+    section3,
+    section4,
+    values,
+    nearest,
+    decoder: "@azohra/meteo.grib 0.1.4"
+  };
 })();
