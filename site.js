@@ -29,18 +29,20 @@ let lastWeatherData=null;
 
 let airportTimezoneData={exact:{},prefix:{}};
 
-let weatherInterpretationData={locales:null,rules:null};
+let weatherInterpretationData={locales:null,rules:null,codes:null};
 
 async function loadWeatherInterpretationData(){
   try{
-    const [localesResponse,rulesResponse]=await Promise.all([
-      fetch("/main/assets/data/weather-locales.json?v=4",{cache:"no-cache"}),
-      fetch("/main/assets/data/weather-rules.json?v=2",{cache:"no-cache"})
+    const [localesResponse,rulesResponse,codesResponse]=await Promise.all([
+      fetch("/main/assets/data/weather-locales.json?v=5",{cache:"no-cache"}),
+      fetch("/main/assets/data/weather-rules.json?v=2",{cache:"no-cache"}),
+      fetch("/main/assets/data/weather-codes.json?v=1",{cache:"no-cache"})
     ]);
 
     weatherInterpretationData={
       locales:localesResponse.ok ? await localesResponse.json() : null,
-      rules:rulesResponse.ok ? await rulesResponse.json() : null
+      rules:rulesResponse.ok ? await rulesResponse.json() : null,
+      codes:codesResponse.ok ? await codesResponse.json() : null
     };
   }catch(error){
     console.warn("Weather interpretation verisi yüklenemedi:",error);
@@ -56,6 +58,17 @@ function getWeatherLocale(language="tr"){
     : (locales.defaultLanguage || "tr");
 
   return locales[selected] || null;
+}
+
+function getWeatherCodeLanguage(language="tr"){
+  const codes=weatherInterpretationData.codes;
+  if(!codes) return null;
+
+  const selected=codes.supportedLanguages?.includes(language)
+    ? language
+    : "tr";
+
+  return codes[selected] || codes.en || null;
 }
 
 function fillWeatherTemplate(template,values={}){
@@ -86,7 +99,7 @@ function setWeatherLanguage(language){
     button.setAttribute("aria-pressed",active ? "true" : "false");
   });
 
-  if(lastWeatherData) renderWeatherInterpretation(lastWeatherData);
+  if(lastWeatherData) renderWeatherResult(lastWeatherData);
 }
 
 function parseInterpretationWind(token){
@@ -107,14 +120,22 @@ function parseInterpretationVisibility(token){
   return null;
 }
 
-function weatherTermFromToken(token,locale){
+function weatherTermFromToken(token,language=currentWeatherLanguage){
+  const dict=getWeatherCodeLanguage(language);
+  if(!dict) return null;
+
   const code=String(token || "").toUpperCase()
     .replace(/^[+-]/,"")
     .replace(/^VC/,"");
 
   const ordered=["TSRA","SHRA","FZRA","TS","SN","FG","BR","RA","DZ"];
   const key=ordered.find(item=>code.includes(item));
-  return key ? (locale?.terms?.[key] || key) : null;
+  if(!key) return null;
+
+  return dict.combinations?.[key]
+    || dict.phenomena?.[key]
+    || dict.descriptors?.[key]
+    || key;
 }
 
 function formatInterpretationClock(date,timeZone){
@@ -334,9 +355,9 @@ function buildWeatherInterpretation(data,language){
     });
   }
 
-  const metarWeatherToken=metarTokens.find(token=>weatherTermFromToken(token,locale));
+  const metarWeatherToken=metarTokens.find(token=>weatherTermFromToken(token,language));
   if(metarWeatherToken){
-    const weather=weatherTermFromToken(metarWeatherToken,locale);
+    const weather=weatherTermFromToken(metarWeatherToken,language);
     const raw=metarWeatherToken.toUpperCase();
     current.push({
       text:fillWeatherTemplate(locale.templates.currentWeather,{weather}),
@@ -439,9 +460,9 @@ function buildWeatherInterpretation(data,language){
       });
     }
 
-    const weatherToken=group.tokens.find(token=>weatherTermFromToken(token,locale));
+    const weatherToken=group.tokens.find(token=>weatherTermFromToken(token,language));
     if(weatherToken){
-      const weather=weatherTermFromToken(weatherToken,locale);
+      const weather=weatherTermFromToken(weatherToken,language);
       const values={
         ...range,
         station:taf.station || data?.icao || "Airport",
@@ -679,70 +700,71 @@ function decodePeriod(value){
   return match[1]+" "+match[2]+":00–"+match[3]+" "+match[4]+":00 UTC";
 }
 
-function decodeWeatherCode(token){
+function decodeWeatherCode(token,language=currentWeatherLanguage){
+  const dict=getWeatherCodeLanguage(language);
   let code=String(token || "").toUpperCase();
-  if(!code) return null;
+  if(!code || !dict) return null;
 
   let intensity="";
-  if(code.startsWith("-")){ intensity="Light "; code=code.slice(1); }
-  else if(code.startsWith("+")){ intensity="Heavy "; code=code.slice(1); }
+  if(code.startsWith("-")){
+    intensity=dict.phrases?.light || "Light";
+    code=code.slice(1);
+  }else if(code.startsWith("+")){
+    intensity=dict.phrases?.heavy || "Heavy";
+    code=code.slice(1);
+  }
 
   let vicinity="";
-  if(code.startsWith("VC")){ vicinity="In the vicinity: "; code=code.slice(2); }
+  if(code.startsWith("VC")){
+    vicinity=dict.phrases?.vicinity || "In the vicinity";
+    code=code.slice(2);
+  }
 
-  const descriptors={
-    MI:"shallow",BC:"patches",PR:"partial",DR:"low drifting",
-    BL:"blowing",SH:"showers",TS:"thunderstorm",FZ:"freezing"
-  };
-  const phenomena={
-    DZ:"drizzle",RA:"rain",SN:"snow",SG:"snow grains",IC:"ice crystals",
-    PL:"ice pellets",GR:"hail",GS:"small hail",UP:"unknown precipitation",
-    BR:"mist",FG:"fog",FU:"smoke",VA:"volcanic ash",DU:"dust",SA:"sand",
-    HZ:"haze",PY:"spray",PO:"dust/sand whirls",SQ:"squalls",FC:"funnel cloud",
-    SS:"sandstorm",DS:"duststorm"
-  };
+  if(dict.combinations?.[code]){
+    return [vicinity,intensity,dict.combinations[code]].filter(Boolean).join(" ");
+  }
 
   let descriptor="";
   const first2=code.slice(0,2);
-  if(descriptors[first2]){
-    descriptor=descriptors[first2]+" ";
+  if(dict.descriptors?.[first2]){
+    descriptor=dict.descriptors[first2];
     code=code.slice(2);
   }
 
   const parts=[];
   for(let i=0;i<code.length;i+=2){
-    const p=phenomena[code.slice(i,i+2)];
-    if(p) parts.push(p);
+    const value=dict.phenomena?.[code.slice(i,i+2)];
+    if(value) parts.push(value);
   }
 
   if(!parts.length) return null;
-  return intensity+vicinity+descriptor+parts.join(" + ");
+  return [vicinity,intensity,descriptor,parts.join(" + ")].filter(Boolean).join(" ");
 }
 
-function decodeCloud(token){
+function decodeCloud(token,language=currentWeatherLanguage){
+  const dict=getWeatherCodeLanguage(language);
   const code=String(token || "").toUpperCase();
-  if(code==="NSC") return "No significant cloud";
-  if(code==="NCD") return "No cloud detected";
-  if(code==="SKC" || code==="CLR") return "Sky clear";
+  if(!dict) return null;
+
+  if(code==="NSC") return dict.phrases?.noSignificantCloud || "No significant cloud";
+  if(code==="NCD") return dict.phrases?.noCloudDetected || "No cloud detected";
+  if(code==="SKC" || code==="CLR") return dict.phrases?.skyClear || "Sky clear";
 
   const match=code.match(/^(FEW|SCT|BKN|OVC|VV)(\d{3}|\/\/\/)(CB|TCU)?$/);
   if(!match) return null;
 
-  const names={
-    FEW:"Few clouds",SCT:"Scattered clouds",BKN:"Broken clouds",
-    OVC:"Overcast",VV:"Vertical visibility"
-  };
-
-  let text=names[match[1]];
-  if(match[2]!== "///"){
-    text+=" · "+(Number(match[2])*100).toLocaleString("en-US")+" ft";
+  let text=dict.clouds?.[match[1]] || match[1];
+  if(match[2]!=="///"){
+    text+=" · "+(Number(match[2])*100).toLocaleString(language==="tr" ? "tr-TR" : "en-US")+" ft";
   }
-  if(match[3]==="CB") text+=" · Cumulonimbus (CB)";
-  if(match[3]==="TCU") text+=" · Towering cumulus (TCU)";
+  if(match[3]) text+=" · "+(dict.clouds?.[match[3]] || match[3]);
   return text;
 }
 
-function decodeConditions(tokens){
+function decodeConditions(tokens,language=currentWeatherLanguage){
+  const dict=getWeatherCodeLanguage(language);
+  const ui=dict?.ui || {};
+  const phrases=dict?.phrases || {};
   const rows=[];
   const clouds=[];
   const weather=[];
@@ -755,11 +777,11 @@ function decodeConditions(tokens){
     if(m){
       const speed=Number(m[2]);
       if(m[1]==="000" && speed===0){
-        rows.push(["Wind","Calm"]);
+        rows.push([ui.wind || "Wind",phrases.calm || "Calm"]);
       }else{
-        let value=(m[1]==="VRB" ? "Variable direction" : Number(m[1])+"°")+" · "+speed+" kt";
-        if(m[3]) value+=" · gust "+Number(m[3].slice(1))+" kt";
-        rows.push(["Wind",value]);
+        let value=(m[1]==="VRB" ? (phrases.variableDirection || "Variable direction") : Number(m[1])+"°")+" · "+speed+" kt";
+        if(m[3]) value+=" · "+(phrases.gust || "gust")+" "+Number(m[3].slice(1))+" kt";
+        rows.push([ui.wind || "Wind",value]);
       }
       continue;
     }
@@ -771,38 +793,44 @@ function decodeConditions(tokens){
     }
 
     if(token==="CAVOK"){
-      rows.push(["Visibility","10 km or more · no significant weather/cloud"]);
+      rows.push([
+        ui.visibility || "Visibility",
+        (phrases.visibility10km || "10 km or more")+" · "+(phrases.noSignificantWeatherCloud || "no significant weather/cloud")
+      ]);
       continue;
     }
 
     if(token==="9999"){
-      rows.push(["Visibility","10 km or more"]);
+      rows.push([ui.visibility || "Visibility",phrases.visibility10km || "10 km or more"]);
       continue;
     }
 
     if(/^\d{4}$/.test(token)){
-      rows.push(["Visibility",Number(token).toLocaleString("en-US")+" m"]);
+      rows.push([ui.visibility || "Visibility",Number(token).toLocaleString(language==="tr" ? "tr-TR" : "en-US")+" m"]);
       continue;
     }
 
     m=token.match(/^(P?)(\d+(?:\/\d+)?)SM$/);
     if(m){
-      rows.push(["Visibility",(m[1] ? "More than " : "")+m[2]+" statute miles"]);
+      rows.push([
+        ui.visibility || "Visibility",
+        (m[1] ? (phrases.moreThan || "More than")+" " : "")+m[2]+" "+(phrases.statuteMiles || "statute miles")
+      ]);
       continue;
     }
 
-    const cloud=decodeCloud(token);
+    const cloud=decodeCloud(token,language);
     if(cloud){
       clouds.push(cloud);
       continue;
     }
 
     if(token==="NSW"){
-      weather.push("No significant weather");
+      weather.push(phrases.noSignificantWeather || "No significant weather");
       continue;
     }
 
-    const wx=decodeWeatherCode(token);
+    const wx=decodeWeatherCode(token,language);
     if(wx){
       weather.push(wx);
       continue;
@@ -812,41 +840,41 @@ function decodeConditions(tokens){
     if(m){
       const temp=decodeSignedTemp(m[1]);
       const dew=decodeSignedTemp(m[2]);
-      rows.push(["Temperature",temp+" °C"]);
-      rows.push(["Dew point",dew+" °C"]);
+      rows.push([ui.temperature || "Temperature",temp+" °C"]);
+      rows.push([ui.dewPoint || "Dew point",dew+" °C"]);
       continue;
     }
 
     m=token.match(/^Q(\d{4})$/);
     if(m){
-      rows.push(["QNH",Number(m[1])+" hPa"]);
+      rows.push([ui.qnh || "QNH",Number(m[1])+" hPa"]);
       continue;
     }
 
     m=token.match(/^A(\d{4})$/);
     if(m){
-      rows.push(["Altimeter",(Number(m[1])/100).toFixed(2)+" inHg"]);
+      rows.push([ui.altimeter || "Altimeter",(Number(m[1])/100).toFixed(2)+" inHg"]);
       continue;
     }
 
     if(token==="NOSIG"){
-      rows.push(["Trend","No significant change expected"]);
+      rows.push([ui.trend || "Trend",phrases.noSignificantChangeExpected || "No significant change expected"]);
     }
   }
 
   if(windVariation){
-    const wind=rows.find(row=>row[0]==="Wind");
-    if(wind) wind[1]+=" · varying "+windVariation;
-    else rows.push(["Wind direction",windVariation]);
+    const wind=rows.find(row=>row[0]===(ui.wind || "Wind"));
+    if(wind) wind[1]+=" · "+(phrases.varying || "varying")+" "+windVariation;
+    else rows.push([ui.windDirection || "Wind direction",windVariation]);
   }
 
-  if(weather.length) rows.push(["Weather",weather.join(" · ")]);
-  if(clouds.length) rows.push(["Cloud",clouds.join(" / ")]);
+  if(weather.length) rows.push([ui.weather || "Weather",weather.join(" · ")]);
+  if(clouds.length) rows.push([ui.cloud || "Cloud",clouds.join(" / ")]);
 
   return rows;
 }
 
-function renderDecoded(container,sections){
+function renderDecoded(container,sections,language=currentWeatherLanguage){
   if(!container) return;
 
   if(!sections?.length){
@@ -860,7 +888,7 @@ function renderDecoded(container,sections){
 
   const title=document.createElement("div");
   title.className="weather-decode-title";
-  title.textContent="Decoded";
+  title.textContent=getWeatherCodeLanguage(language)?.ui?.decoded || "Decoded";
   container.appendChild(title);
 
   for(const section of sections){
@@ -896,7 +924,8 @@ function renderDecoded(container,sections){
   }
 }
 
-function decodeMetar(raw){
+function decodeMetar(raw,language=currentWeatherLanguage){
+  const ui=getWeatherCodeLanguage(language)?.ui || {};
   const clean=String(raw || "").replace(/\s+/g," ").trim();
   if(!clean) return [];
 
@@ -907,12 +936,12 @@ function decodeMetar(raw){
   const station=stationIndex>=0 ? tokens[stationIndex] : "";
   const timeZone=getAirportTimezone(station);
 
-  if(station) rows.push(["Station",station]);
+  if(station) rows.push([ui.station || "Station",station]);
 
   const time=tokens.find(token=>/^\d{6}Z$/.test(token));
   if(time){
     rows.push([
-      "Observation",
+      ui.observation || "Observation",
       time.slice(0,2)+" "+time.slice(2,4)+":"+time.slice(4,6)+" UTC"
     ]);
 
@@ -922,15 +951,16 @@ function decodeMetar(raw){
       time.slice(4,6)
     );
     const local=formatAirportLocalTime(observationDate,timeZone);
-    if(local) rows.push(["Local",local]);
+    if(local) rows.push([ui.local || "Local",local]);
   }
 
-  rows.push(...decodeConditions(tokens));
+  rows.push(...decodeConditions(tokens,language));
 
   return [{title:"METAR",rows}];
 }
 
-function decodeTaf(raw){
+function decodeTaf(raw,language=currentWeatherLanguage){
+  const ui=getWeatherCodeLanguage(language)?.ui || {};
   const clean=String(raw || "").replace(/\s+/g," ").trim();
   if(!clean) return [];
 
@@ -941,14 +971,14 @@ function decodeTaf(raw){
   const stationIndex=tokens.findIndex(token=>/^[A-Z]{4}$/.test(token));
   const station=stationIndex>=0 ? tokens[stationIndex] : "";
   const timeZone=getAirportTimezone(station);
-  if(station) headerRows.push(["Station",station]);
+  if(station) headerRows.push([ui.station || "Station",station]);
 
   let issueDate=null;
   const issueIndex=tokens.findIndex(token=>/^\d{6}Z$/.test(token));
   if(issueIndex>=0){
     const issue=tokens[issueIndex];
     headerRows.push([
-      "Issued",
+      ui.issued || "Issued",
       issue.slice(0,2)+" "+issue.slice(2,4)+":"+issue.slice(4,6)+" UTC"
     ]);
 
@@ -958,20 +988,20 @@ function decodeTaf(raw){
       issue.slice(4,6)
     );
     const issueLocal=formatAirportLocalTime(issueDate,timeZone);
-    if(issueLocal) headerRows.push(["Local",issueLocal]);
+    if(issueLocal) headerRows.push([ui.local || "Local",issueLocal]);
   }
 
   const validityIndex=tokens.findIndex(token=>/^\d{4}\/\d{4}$/.test(token));
   if(validityIndex>=0){
     const validity=tokens[validityIndex];
-    headerRows.push(["Validity",decodePeriod(validity)]);
+    headerRows.push([ui.validity || "Validity",decodePeriod(validity)]);
 
     const validityLocal=formatAirportLocalPeriod(validity,timeZone,issueDate || new Date());
-    if(validityLocal) headerRows.push(["Local validity",validityLocal]);
+    if(validityLocal) headerRows.push([ui.localValidity || "Local validity",validityLocal]);
   }
 
   const start=Math.max(validityIndex+1,0);
-  let current={title:"Initial conditions",tokens:[],localPeriod:null};
+  let current={title:ui.initialConditions || "Initial conditions",tokens:[],localPeriod:null};
   const groups=[];
 
   function pushCurrent(){
@@ -987,7 +1017,7 @@ function decodeTaf(raw){
       if(token==="BECMG" || token==="TEMPO"){
         const range=/^\d{4}\/\d{4}$/.test(tokens[i+1] || "") ? tokens[++i] : "";
         current={
-          title:(token==="BECMG" ? "BECMG · Becoming" : "TEMPO · Temporary")+
+          title:(token==="BECMG" ? (ui.becoming || "BECMG · Becoming") : (ui.temporary || "TEMPO · Temporary"))+
             (range ? " · "+decodePeriod(range) : ""),
           tokens:[],
           localPeriod:range ? formatAirportLocalPeriod(range,timeZone,issueDate || new Date()) : null
@@ -1001,12 +1031,12 @@ function decodeTaf(raw){
           issueDate || new Date()
         );
         current={
-          title:"FM · From "+time.slice(0,2)+" "+time.slice(2,4)+":"+time.slice(4,6)+" UTC",
+          title:(ui.from || "FM · From")+" "+time.slice(0,2)+" "+time.slice(2,4)+":"+time.slice(4,6)+" UTC",
           tokens:[],
           localPeriod:formatAirportLocalTime(fromDate,timeZone)
         };
       }else{
-        let title=token.replace("PROB","")+"% probability";
+        let title=fillWeatherTemplate(ui.probability || "%{probability} probability",{probability:token.replace("PROB","")});
         if(tokens[i+1]==="TEMPO"){
           title+=" · TEMPO";
           i++;
@@ -1029,8 +1059,8 @@ function decodeTaf(raw){
   if(headerRows.length) sections.push({title:"TAF",rows:headerRows});
 
   for(const group of groups){
-    const rows=decodeConditions(group.tokens);
-    if(group.localPeriod) rows.unshift(["Local",group.localPeriod]);
+    const rows=decodeConditions(group.tokens,language);
+    if(group.localPeriod) rows.unshift([ui.local || "Local",group.localPeriod]);
     if(rows.length) sections.push({title:group.title,rows});
   }
 
@@ -1058,11 +1088,13 @@ function renderWeatherResult(data){
 
   renderDecoded(
     metarDecodeEl,
-    data?.metar?.raw ? decodeMetar(data.metar.raw) : []
+    data?.metar?.raw ? decodeMetar(data.metar.raw,currentWeatherLanguage) : [],
+    currentWeatherLanguage
   );
   renderDecoded(
     tafDecodeEl,
-    data?.taf?.raw ? decodeTaf(data.taf.raw) : []
+    data?.taf?.raw ? decodeTaf(data.taf.raw,currentWeatherLanguage) : [],
+    currentWeatherLanguage
   );
 
   renderWeatherInterpretation(data);
