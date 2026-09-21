@@ -1,0 +1,101 @@
+{
+  "defaultLanguage": "tr",
+  "supportedLanguages": [
+    "tr",
+    "en"
+  ],
+  "tr": {
+    "ui": {
+      "title": "Hava Durumu Yorumu",
+      "current": "Şu an",
+      "forecast": "Tahmin",
+      "attention": "Dikkat",
+      "noSignificantHazard": "Belirgin bir meteorolojik risk tespit edilmedi.",
+      "localTime": "Yerel saat"
+    },
+    "terms": {
+      "CAVOK": "CAVOK",
+      "BECMG": "kademeli değişim",
+      "TEMPO": "geçici değişim",
+      "PROB30": "%30 olasılık",
+      "PROB40": "%40 olasılık",
+      "TS": "gök gürültülü hava",
+      "TSRA": "gök gürültülü yağmur",
+      "RA": "yağmur",
+      "SHRA": "sağanak yağmur",
+      "DZ": "çisenti",
+      "SN": "kar",
+      "FZRA": "donan yağmur",
+      "FG": "sis",
+      "BR": "pus",
+      "CB": "cumulonimbus",
+      "TCU": "towering cumulus"
+    },
+    "templates": {
+      "currentCavok": "Mevcut koşullar CAVOK.",
+      "currentWind": "Rüzgar {direction} yönünden {speed} kt.",
+      "currentVariableWind": "Rüzgar değişken yönlü, {speed} kt.",
+      "windShift": "{start}–{end} arasında rüzgar {from} yönünden {to} yönüne dönecek ve {speed} kt olacak.",
+      "windChange": "{start}–{end} arasında rüzgar {direction} yönünden {speed} kt olacak.",
+      "variableWindChange": "{start}–{end} arasında rüzgar değişken yönlü ve {speed} kt olacak.",
+      "gust": "Rüzgar hamleleri {gust} kt seviyesine çıkabilir.",
+      "probabilityWeather": "{start}–{end} arasında %{probability} olasılıkla {weather} bekleniyor.",
+      "temporaryWeather": "{start}–{end} arasında geçici olarak {weather} bekleniyor.",
+      "weather": "{start}–{end} arasında {weather} bekleniyor.",
+      "cb": "{start}–{end} arasında {height} ft seviyesinde CB bekleniyor.",
+      "tcu": "{start}–{end} arasında {height} ft seviyesinde TCU bekleniyor.",
+      "lowVisibility": "Görüş {visibility} seviyesine düşüyor.",
+      "lowCeiling": "Bulut tavanı {height} ft seviyesine düşüyor.",
+      "becoming": "{start}–{end} arasında koşullar kademeli olarak değişecek.",
+      "temporary": "{start}–{end} arasında geçici değişiklikler bekleniyor.",
+      "nosig": "Yakın vadede önemli bir değişiklik beklenmiyor."
+    }
+  },
+  "en": {
+    "ui": {
+      "title": "Weather Interpretation",
+      "current": "Current",
+      "forecast": "Forecast",
+      "attention": "Attention",
+      "noSignificantHazard": "No significant meteorological hazard detected.",
+      "localTime": "Local time"
+    },
+    "terms": {
+      "CAVOK": "CAVOK",
+      "BECMG": "gradual change",
+      "TEMPO": "temporary change",
+      "PROB30": "30% probability",
+      "PROB40": "40% probability",
+      "TS": "thunderstorm",
+      "TSRA": "thunderstorm rain",
+      "RA": "rain",
+      "SHRA": "rain showers",
+      "DZ": "drizzle",
+      "SN": "snow",
+      "FZRA": "freezing rain",
+      "FG": "fog",
+      "BR": "mist",
+      "CB": "cumulonimbus",
+      "TCU": "towering cumulus"
+    },
+    "templates": {
+      "currentCavok": "Current conditions are CAVOK.",
+      "currentWind": "Wind is from {direction} at {speed} kt.",
+      "currentVariableWind": "Wind is variable at {speed} kt.",
+      "windShift": "Between {start}–{end}, wind will shift from {from} to {to} at {speed} kt.",
+      "windChange": "Between {start}–{end}, wind will be from {direction} at {speed} kt.",
+      "variableWindChange": "Between {start}–{end}, wind will be variable at {speed} kt.",
+      "gust": "Wind gusts may reach {gust} kt.",
+      "probabilityWeather": "Between {start}–{end}, there is a {probability}% probability of {weather}.",
+      "temporaryWeather": "Between {start}–{end}, temporary {weather} is expected.",
+      "weather": "Between {start}–{end}, {weather} is expected.",
+      "cb": "Between {start}–{end}, CB is expected at {height} ft.",
+      "tcu": "Between {start}–{end}, TCU is expected at {height} ft.",
+      "lowVisibility": "Visibility is expected to fall to {visibility}.",
+      "lowCeiling": "Ceiling is expected to fall to {height} ft.",
+      "becoming": "Conditions will gradually change between {start}–{end}.",
+      "temporary": "Temporary changes are expected between {start}–{end}.",
+      "nosig": "No significant change is expected in the near term."
+    }
+  }
+}
