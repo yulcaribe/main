@@ -25,6 +25,103 @@ async function finishLoader(){
 
 let weatherRequestController=null;
 
+let airportTimezoneData={exact:{},prefix:{}};
+
+async function loadAirportTimezones(){
+  try{
+    const response=await fetch("/main/assets/airport-timezones.json",{cache:"force-cache"});
+    if(!response.ok) return;
+
+    const data=await response.json();
+    airportTimezoneData={
+      exact:data?.exact || {},
+      prefix:data?.prefix || {}
+    };
+  }catch(error){
+    console.warn("Airport timezone verisi yüklenemedi:",error);
+  }
+}
+
+function getAirportTimezone(icao){
+  const code=String(icao || "").trim().toUpperCase();
+  if(!code) return null;
+
+  return airportTimezoneData.exact?.[code]
+    || airportTimezoneData.prefix?.[code.slice(0,2)]
+    || null;
+}
+
+function resolveUtcDate(day,hour,minute=0,reference=new Date()){
+  day=Number(day);
+  hour=Number(hour);
+  minute=Number(minute);
+
+  if(!Number.isFinite(day) || !Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+  const ref=reference instanceof Date && !Number.isNaN(reference.getTime())
+    ? reference
+    : new Date();
+
+  let best=null;
+  let bestDistance=Infinity;
+
+  for(const monthOffset of [-1,0,1]){
+    const anchor=new Date(Date.UTC(ref.getUTCFullYear(),ref.getUTCMonth()+monthOffset,1));
+    const candidate=new Date(Date.UTC(
+      anchor.getUTCFullYear(),
+      anchor.getUTCMonth(),
+      day,
+      hour,
+      minute
+    ));
+
+    const distance=Math.abs(candidate.getTime()-ref.getTime());
+    if(distance<bestDistance){
+      best=candidate;
+      bestDistance=distance;
+    }
+  }
+
+  return best;
+}
+
+function formatAirportLocalTime(date,timeZone){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime()) || !timeZone) return null;
+
+  try{
+    const parts=new Intl.DateTimeFormat("en-GB",{
+      timeZone,
+      day:"2-digit",
+      hour:"2-digit",
+      minute:"2-digit",
+      hour12:false
+    }).formatToParts(date);
+
+    const get=type=>parts.find(part=>part.type===type)?.value || "";
+    return get("day")+" "+get("hour")+":"+get("minute")+" Local";
+  }catch(error){
+    return null;
+  }
+}
+
+function formatAirportLocalPeriod(value,timeZone,reference=new Date()){
+  const match=String(value || "").match(/^(\d{2})(\d{2})\/(\d{2})(\d{2})$/);
+  if(!match || !timeZone) return null;
+
+  const start=resolveUtcDate(match[1],match[2],0,reference);
+  if(!start) return null;
+
+  const end=resolveUtcDate(match[3],match[4],0,start);
+  if(!end) return null;
+
+  const startText=formatAirportLocalTime(start,timeZone);
+  const endText=formatAirportLocalTime(end,timeZone);
+  if(!startText || !endText) return null;
+
+  return startText.replace(" Local","")+"–"+endText.replace(" Local","")+" Local";
+}
+
+
 function setWeatherFeedback(message,state="idle"){
   const feedback=document.getElementById("weather-feedback");
   if(!feedback) return;
@@ -282,7 +379,10 @@ function decodeMetar(raw){
   const rows=[];
 
   const stationIndex=tokens.findIndex(token=>/^[A-Z]{4}$/.test(token));
-  if(stationIndex>=0) rows.push(["Station",tokens[stationIndex]]);
+  const station=stationIndex>=0 ? tokens[stationIndex] : "";
+  const timeZone=getAirportTimezone(station);
+
+  if(station) rows.push(["Station",station]);
 
   const time=tokens.find(token=>/^\d{6}Z$/.test(token));
   if(time){
@@ -290,6 +390,14 @@ function decodeMetar(raw){
       "Observation",
       time.slice(0,2)+" "+time.slice(2,4)+":"+time.slice(4,6)+" UTC"
     ]);
+
+    const observationDate=resolveUtcDate(
+      time.slice(0,2),
+      time.slice(2,4),
+      time.slice(4,6)
+    );
+    const local=formatAirportLocalTime(observationDate,timeZone);
+    if(local) rows.push(["Local",local]);
   }
 
   rows.push(...decodeConditions(tokens));
@@ -306,8 +414,11 @@ function decodeTaf(raw){
   const headerRows=[];
 
   const stationIndex=tokens.findIndex(token=>/^[A-Z]{4}$/.test(token));
-  if(stationIndex>=0) headerRows.push(["Station",tokens[stationIndex]]);
+  const station=stationIndex>=0 ? tokens[stationIndex] : "";
+  const timeZone=getAirportTimezone(station);
+  if(station) headerRows.push(["Station",station]);
 
+  let issueDate=null;
   const issueIndex=tokens.findIndex(token=>/^\d{6}Z$/.test(token));
   if(issueIndex>=0){
     const issue=tokens[issueIndex];
@@ -315,15 +426,27 @@ function decodeTaf(raw){
       "Issued",
       issue.slice(0,2)+" "+issue.slice(2,4)+":"+issue.slice(4,6)+" UTC"
     ]);
+
+    issueDate=resolveUtcDate(
+      issue.slice(0,2),
+      issue.slice(2,4),
+      issue.slice(4,6)
+    );
+    const issueLocal=formatAirportLocalTime(issueDate,timeZone);
+    if(issueLocal) headerRows.push(["Local",issueLocal]);
   }
 
   const validityIndex=tokens.findIndex(token=>/^\d{4}\/\d{4}$/.test(token));
   if(validityIndex>=0){
-    headerRows.push(["Validity",decodePeriod(tokens[validityIndex])]);
+    const validity=tokens[validityIndex];
+    headerRows.push(["Validity",decodePeriod(validity)]);
+
+    const validityLocal=formatAirportLocalPeriod(validity,timeZone,issueDate || new Date());
+    if(validityLocal) headerRows.push(["Local validity",validityLocal]);
   }
 
   const start=Math.max(validityIndex+1,0);
-  let current={title:"Initial conditions",tokens:[]};
+  let current={title:"Initial conditions",tokens:[],localPeriod:null};
   const groups=[];
 
   function pushCurrent(){
@@ -341,13 +464,21 @@ function decodeTaf(raw){
         current={
           title:(token==="BECMG" ? "BECMG · Becoming" : "TEMPO · Temporary")+
             (range ? " · "+decodePeriod(range) : ""),
-          tokens:[]
+          tokens:[],
+          localPeriod:range ? formatAirportLocalPeriod(range,timeZone,issueDate || new Date()) : null
         };
       }else if(/^FM\d{6}$/.test(token)){
         const time=token.slice(2);
+        const fromDate=resolveUtcDate(
+          time.slice(0,2),
+          time.slice(2,4),
+          time.slice(4,6),
+          issueDate || new Date()
+        );
         current={
           title:"FM · From "+time.slice(0,2)+" "+time.slice(2,4)+":"+time.slice(4,6)+" UTC",
-          tokens:[]
+          tokens:[],
+          localPeriod:formatAirportLocalTime(fromDate,timeZone)
         };
       }else{
         let title=token.replace("PROB","")+"% probability";
@@ -357,7 +488,11 @@ function decodeTaf(raw){
         }
         const range=/^\d{4}\/\d{4}$/.test(tokens[i+1] || "") ? tokens[++i] : "";
         if(range) title+=" · "+decodePeriod(range);
-        current={title,tokens:[]};
+        current={
+          title,
+          tokens:[],
+          localPeriod:range ? formatAirportLocalPeriod(range,timeZone,issueDate || new Date()) : null
+        };
       }
     }else{
       current.tokens.push(token);
@@ -370,6 +505,7 @@ function decodeTaf(raw){
 
   for(const group of groups){
     const rows=decodeConditions(group.tokens);
+    if(group.localPeriod) rows.unshift(["Local",group.localPeriod]);
     if(rows.length) sections.push({title:group.title,rows});
   }
 
@@ -558,10 +694,12 @@ async function loadHome(){
   const minimumGatewayTime=delay(700);
 
   try{
+    const timezonePromise=loadAirportTimezones();
     const response=await fetch("/main/home.html",{cache:"no-cache"});
     if(!response.ok) throw new Error("HTTP "+response.status);
 
     const html=await response.text();
+    await timezonePromise;
 
     if(root){
       root.classList.remove("site-loading");
