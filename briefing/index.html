@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=3">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=4">
 </head>
 <body>
   <header class="pb-header">
@@ -166,10 +166,12 @@
         let ok=false;
         for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
         if(!ok){text.textContent="Leaflet yüklenemedi.";return;}
-        try{await load("/main/briefing/grib2-browser.js?v=3");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
-        try{await load("/main/briefing/modelwx.js?v=3");}catch(e){console.warn("Model WX yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2.js?v=4");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2utils.js?v=4");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
+        try{await load("/main/briefing/grib2-browser.js?v=4");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
+        try{await load("/main/briefing/modelwx.js?v=4");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=3");
+          await load("/main/briefing/briefing.js?v=4");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
