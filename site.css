@@ -203,6 +203,10 @@ input{font:inherit}
 
 .weather-head{
   margin-bottom:28px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
 }
 
 .weather-head h2{
@@ -210,6 +214,94 @@ input{font:inherit}
   color:#edf1f3;
   font:500 clamp(30px,4vw,44px)/1.1 "Sora",sans-serif;
   letter-spacing:-.04em;
+}
+
+.weather-language{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:3px;
+  border:1px solid var(--line);
+  background:var(--surface);
+}
+
+.weather-language button{
+  min-width:34px;
+  height:28px;
+  padding:0 8px;
+  border:0;
+  color:var(--muted);
+  background:transparent;
+  cursor:pointer;
+  font:500 9px "IBM Plex Mono",monospace;
+  letter-spacing:.08em;
+}
+
+.weather-language button[aria-pressed="true"]{
+  color:#061014;
+  background:var(--cyan);
+}
+
+.weather-interpretation{
+  grid-column:1/-1;
+  margin-top:2px;
+  padding:20px;
+  border:1px solid var(--line);
+  background:var(--surface-2);
+}
+
+.weather-interpretation[hidden]{display:none}
+
+.weather-interpretation-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--line);
+}
+
+.weather-interpretation-head > span:first-child{
+  color:var(--cyan);
+  font:500 10px "IBM Plex Mono",monospace;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+
+.weather-interpretation-mode{
+  color:var(--muted);
+  font:500 8px "IBM Plex Mono",monospace;
+  letter-spacing:.1em;
+}
+
+.weather-summary-section + .weather-summary-section{
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid var(--line);
+}
+
+.weather-summary-label{
+  margin-bottom:7px;
+  color:var(--muted);
+  font:500 9px "IBM Plex Mono",monospace;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+
+.weather-summary-list{
+  display:grid;
+  gap:7px;
+}
+
+.weather-summary-item{
+  color:var(--text);
+  font-size:12px;
+  line-height:1.6;
+}
+
+.weather-summary-item.is-attention{
+  color:#f0c98d;
 }
 
 .weather-search{
@@ -626,6 +718,23 @@ footer{
   .weather-result-card{
     background:#ffffff;
     border-color:var(--line);
+  }
+
+  .weather-language{
+    background:#ffffff;
+  }
+
+  .weather-language button[aria-pressed="true"]{
+    color:#ffffff;
+  }
+
+  .weather-interpretation{
+    background:#eef0f1;
+    border-color:var(--line);
+  }
+
+  .weather-summary-item.is-attention{
+    color:#9a5d16;
   }
 
   .weather-result-card pre{
