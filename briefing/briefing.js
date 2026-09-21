@@ -160,7 +160,6 @@
     rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} fix/navaid çözüldü${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
     rows.push(briefLine("SIGMET",hit?hit+" HIT":near?near+" NEAR":"CLEAR",hit?"bad":near?"warn":"ok",hit?"En az bir aktif SIGMET geometrisi rota çizgisini kesiyor.":near?"Aktif SIGMET rota çizgisine 50 NM içinde yaklaşıyor.":"100 NM içinde rota ile ilişkili aktif SIGMET görünmüyor."));
     rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
-    rows.push(briefLine("WAFS","NOT CONNECTED","warn","Turbulence, icing, CB ve wind gridleri için WIFS API erişimi gerekiyor; burada sahte veya tahmini WAFS verisi gösterilmiyor."));
     $("#simple-brief").innerHTML=rows.join("");
   }
 
@@ -183,8 +182,8 @@
   function render(data){
     current=data; workspace.hidden=false; hazardSection.hidden=false; stationSection.hidden=false;
     renderRouteMeta(data); renderMap(data); renderSimpleBrief(data); renderHazards(data.hazards||[]); renderStations(data.stations||[]);
-    $("#wafs-status").textContent=data.wafs?.connected?"CONNECTED":"NOT CONNECTED";
     setTimeout(()=>map.invalidateSize(),50);
+    if(window.YCModelWX?.load) window.YCModelWX.load(data);
   }
 
   async function load(){
