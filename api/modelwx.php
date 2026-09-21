@@ -148,7 +148,15 @@ function fetchRanges(string $base,array $all,array $sel): ?string {
 }
 function tryIndexedProduct(array $urls, callable $selector): ?array {
     foreach($urls as $u){
-        $idx=httpFetch($u.'.idx',null,3,1000000);if(!$idx['ok']||trim($idx['body'])==='')continue;$all=idxEntries($idx['body']);if(!$all)continue;$sel=$selector($all);if(!$sel)continue;
+        $all=null;
+        foreach(['.idx','.grb2.inv'] as $suffix){
+            $idx=httpFetch($u.$suffix,null,2,1000000);
+            if(!$idx['ok']||trim($idx['body'])==='')continue;
+            $parsed=idxEntries($idx['body']);
+            if($parsed){$all=$parsed;break;}
+        }
+        if(!$all)continue;
+        $sel=$selector($all);if(!$sel)continue;
         $cacheKey='range|'.$u.'|'.sha1(implode('|',array_column($sel,'line')));
         if($cached=cacheRead($cacheKey,1800))return ['body'=>$cached,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];
         $body=fetchRanges($u,$all,$sel);if($body!==null){cacheWrite($cacheKey,$body);return ['body'=>$body,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];}
