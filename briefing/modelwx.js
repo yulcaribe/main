@@ -37,29 +37,28 @@
     return out;
   }
 
-  function recMeta(handle){
+  function recordNamesFromHeader(text){
+    if(!text)return [];
+    return text.split(";").map(line=>{
+      const m=line.match(/(?:^|:)(TMP|RH|UGRD|VGRD|HGT|ICESEV|ICSEV|EDPARM|CATEDR|MWTURB|CBHE|ICAHT)(?=:|$)/i);
+      return m?m[1].toUpperCase():null;
+    });
+  }
+
+  function recMeta(handle,recordsHeader=""){
     const out=[];
+    const names=recordNamesFromHeader(recordsHeader);
     const n=window.YCGrib2.recordCount(handle);
     for(let i=1;i<=n;i++){
       const s4=window.YCGrib2.section4(handle,i);
       const key=`${s4.parameterCategory}:${s4.parameterNumber}`;
-      out.push({i,key,name:paramNames.get(key)||key,s4});
+      out.push({i,key,name:names[i-1]||paramNames.get(key)||key,s4});
     }
     return out;
   }
 
   function nearestIndices(handle,recordIndex,points){
-    const lats=window.YCGrib2.lats(handle,recordIndex), lons=window.YCGrib2.lons(handle,recordIndex);
-    const best=points.map(()=>({d:Infinity,i:-1}));
-    for(let i=0;i<lats.length;i++){
-      const la=lats[i],lo=normLon(lons[i]); if(!Number.isFinite(la)||!Number.isFinite(lo))continue;
-      const cos=Math.cos(la*Math.PI/180);
-      for(let j=0;j<points.length;j++){
-        const dy=la-points[j].lat, dx=lonDiff(lo,points[j].lon)*Math.max(.15,Math.abs(cos));
-        const d=dy*dy+dx*dx; if(d<best[j].d)best[j]={d,i};
-      }
-    }
-    return best.map(x=>x.i);
+    return points.map(p=>window.YCGrib2.nearest(handle,recordIndex,p.lat,p.lon).index);
   }
 
   function samplesFor(handle,record,indices){
@@ -88,11 +87,11 @@
     return {bytes,meta:{source:r.headers.get("x-yc-model-source")||action,cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",records:r.headers.get("x-yc-records")||""}};
   }
 
-  function decode(bytes){const h=window.YCGrib2.parse(bytes);return {handle:h,records:recMeta(h)};}
+  function decode(bytes,recordsHeader=""){const h=window.YCGrib2.parse(bytes);return {handle:h,records:recMeta(h,recordsHeader)};}
   function find(records,name){return records.find(r=>r.name===name);}
 
   function renderGfs(product,data,points){
-    const d=decode(product.bytes), first=d.records[0]; if(!first)throw new Error("GFS GRIB içinde kayıt yok.");
+    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("GFS GRIB içinde kayıt yok.");
     const ix=nearestIndices(d.handle,first.i,points);
     const u=samplesFor(d.handle,find(d.records,"UGRD"),ix),v=samplesFor(d.handle,find(d.records,"VGRD"),ix),t=samplesFor(d.handle,find(d.records,"TMP"),ix),rh=samplesFor(d.handle,find(d.records,"RH"),ix),hgt=samplesFor(d.handle,find(d.records,"HGT"),ix);
     const rows=points.map((p,i)=>{const w=wind(u?.[i],v?.[i]);return `<tr><td>${Math.round(p.progress*100)}%</td><td>${w?`${String(Math.round(w.dir)).padStart(3,"0")}° / ${Math.round(w.kt)} kt`:"—"}</td><td>${Number.isFinite(t?.[i])?fmt(t[i]-273.15,0)+" °C":"—"}</td><td>${Number.isFinite(rh?.[i])?fmt(rh[i],0)+"%":"—"}</td><td>${Number.isFinite(hgt?.[i])?fmt(hgt[i],0)+" m":"—"}</td></tr>`;}).join("");
@@ -103,7 +102,7 @@
   }
 
   function renderWafs025(product,points){
-    const d=decode(product.bytes), first=d.records[0]; if(!first)throw new Error("WAFS 0.25 kayıt yok.");
+    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("WAFS 0.25 kayıt yok.");
     const ix=nearestIndices(d.handle,first.i,points);
     const edrRec=find(d.records,"EDPARM")||find(d.records,"CATEDR")||find(d.records,"MWTURB");
     const iceRec=find(d.records,"ICESEV")||find(d.records,"ICSEV");
@@ -120,7 +119,7 @@
   }
 
   function renderWafs125(product,points,gfs){
-    const d=decode(product.bytes), first=d.records[0]; if(!first)throw new Error("WAFS 1.25 kayıt yok.");
+    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("WAFS 1.25 kayıt yok.");
     const ix=nearestIndices(d.handle,first.i,[points[Math.floor(points.length/2)]]);
     const u=samplesFor(d.handle,find(d.records,"UGRD"),ix)?.[0],v=samplesFor(d.handle,find(d.records,"VGRD"),ix)?.[0],t=samplesFor(d.handle,find(d.records,"TMP"),ix)?.[0];
     const w=wind(u,v); const tc=Number.isFinite(t)?t-273.15:null;
@@ -141,7 +140,10 @@
     try{await window.YCGrib2.init();}catch(e){
       if(my!==generation)return;
       const msg=e?.message||String(e);["#model-source-gfs","#model-source-wafs025","#model-source-wafs125"].forEach(id=>setSource(id,"DECODER","UNAVAILABLE","bad"));
-      $("#model-route-table").innerHTML=`<div class="empty">${esc(msg)}</div>`;return;
+      $("#model-route-table").innerHTML=`<div class="empty">${esc(msg)}</div>`;
+      $("#model-hazard-grid").innerHTML='<div class="empty">Decoder yüklenemediği için hazard gridleri çözülemedi.</div>';
+      $("#model-wafs125").innerHTML='<strong>N/A</strong><span>Decoder yüklenemedi.</span>';
+      return;
     }
     if(my!==generation)return;
     const bbox=routeBBox(data.route),points=routeSamples(data.route,5);
