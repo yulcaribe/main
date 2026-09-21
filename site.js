@@ -34,7 +34,7 @@ let weatherInterpretationData={locales:null,rules:null,codes:null};
 async function loadWeatherInterpretationData(){
   try{
     const [localesResponse,rulesResponse,codesResponse]=await Promise.all([
-      fetch("/main/assets/data/weather-locales.json?v=5",{cache:"no-cache"}),
+      fetch("/main/assets/data/weather-locales.json?v=6",{cache:"no-cache"}),
       fetch("/main/assets/data/weather-rules.json?v=2",{cache:"no-cache"}),
       fetch("/main/assets/data/weather-codes.json?v=1",{cache:"no-cache"})
     ]);
@@ -631,7 +631,7 @@ function resolveUtcDate(day,hour,minute=0,reference=new Date()){
   return best;
 }
 
-function formatAirportLocalTime(date,timeZone){
+function formatAirportLocalTime(date,timeZone,language=currentWeatherLanguage){
   if(!(date instanceof Date) || Number.isNaN(date.getTime()) || !timeZone) return null;
 
   try{
@@ -644,7 +644,8 @@ function formatAirportLocalTime(date,timeZone){
     }).formatToParts(date);
 
     const get=type=>parts.find(part=>part.type===type)?.value || "";
-    return get("day")+" "+get("hour")+":"+get("minute")+" Local";
+    const localLabel=getWeatherCodeLanguage(language)?.ui?.local || "Local";
+    return get("day")+" "+get("hour")+":"+get("minute")+" "+localLabel;
   }catch(error){
     return null;
   }
@@ -664,7 +665,9 @@ function formatAirportLocalPeriod(value,timeZone,reference=new Date()){
   const endText=formatAirportLocalTime(end,timeZone);
   if(!startText || !endText) return null;
 
-  return startText.replace(" Local","")+"–"+endText.replace(" Local","")+" Local";
+  const localLabel=getWeatherCodeLanguage(currentWeatherLanguage)?.ui?.local || "Local";
+  return startText.replace(new RegExp(" "+localLabel+"$"),"")+"–"+
+    endText.replace(new RegExp(" "+localLabel+"$"),"")+" "+localLabel;
 }
 
 
