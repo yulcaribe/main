@@ -141,16 +141,65 @@ function formatInterpretationClock(date,timeZone){
   }
 }
 
+function formatInterpretationDate(date,timeZone="UTC"){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+
+  try{
+    const parts=new Intl.DateTimeFormat("en-GB",{
+      timeZone:timeZone || "UTC",
+      day:"2-digit",
+      month:"2-digit",
+      year:"numeric"
+    }).formatToParts(date);
+
+    const get=type=>parts.find(part=>part.type===type)?.value || "";
+    return get("day")+"."+get("month")+"."+get("year");
+  }catch(error){
+    return "";
+  }
+}
+
+function formatInterpretationTime(date,timeZone="UTC"){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+
+  try{
+    const parts=new Intl.DateTimeFormat("en-GB",{
+      timeZone:timeZone || "UTC",
+      hour:"2-digit",
+      minute:"2-digit",
+      hour12:false
+    }).formatToParts(date);
+
+    const get=type=>parts.find(part=>part.type===type)?.value || "";
+    return get("hour")+"."+get("minute");
+  }catch(error){
+    return "";
+  }
+}
+
 function interpretationRangeParts(range,timeZone,reference){
   const match=String(range || "").match(/^(\d{2})(\d{2})\/(\d{2})(\d{2})$/);
-  if(!match) return {start:"",end:""};
+  if(!match){
+    return {
+      utcStartDate:"",utcStartTime:"",
+      utcEndDate:"",utcEndTime:"",
+      localStartDate:"",localStartTime:"",
+      localEndDate:"",localEndTime:""
+    };
+  }
 
   const startDate=resolveUtcDate(match[1],match[2],0,reference);
   const endDate=resolveUtcDate(match[3],match[4],0,startDate || reference);
 
   return {
-    start:formatInterpretationClock(startDate,timeZone) || "",
-    end:formatInterpretationClock(endDate,timeZone) || ""
+    utcStartDate:formatInterpretationDate(startDate,"UTC"),
+    utcStartTime:formatInterpretationTime(startDate,"UTC"),
+    utcEndDate:formatInterpretationDate(endDate,"UTC"),
+    utcEndTime:formatInterpretationTime(endDate,"UTC"),
+    localStartDate:formatInterpretationDate(startDate,timeZone || "UTC"),
+    localStartTime:formatInterpretationTime(startDate,timeZone || "UTC"),
+    localEndDate:formatInterpretationDate(endDate,timeZone || "UTC"),
+    localEndTime:formatInterpretationTime(endDate,timeZone || "UTC")
   };
 }
 
@@ -311,16 +360,24 @@ function buildWeatherInterpretation(data,language){
         group.from.slice(4,6),
         taf.issueDate
       );
-      const fromText=formatInterpretationClock(fromDate,timeZone) || "";
-      range={start:fromText,end:fromText};
+      range={
+        utcStartDate:formatInterpretationDate(fromDate,"UTC"),
+        utcStartTime:formatInterpretationTime(fromDate,"UTC"),
+        utcEndDate:formatInterpretationDate(fromDate,"UTC"),
+        utcEndTime:formatInterpretationTime(fromDate,"UTC"),
+        localStartDate:formatInterpretationDate(fromDate,timeZone || "UTC"),
+        localStartTime:formatInterpretationTime(fromDate,timeZone || "UTC"),
+        localEndDate:formatInterpretationDate(fromDate,timeZone || "UTC"),
+        localEndTime:formatInterpretationTime(fromDate,timeZone || "UTC")
+      };
     }
 
     const wind=group.tokens.map(parseInterpretationWind).find(Boolean);
     if(wind){
       let template;
       const values={
-        start:range.start,
-        end:range.end,
+        ...range,
+        station:taf.station || data?.icao || "Airport",
         direction:wind.direction==="VRB" ? "VRB" : Number(wind.direction)+"°",
         speed:wind.speed,
         from:prevailingWind?.direction==="VRB" ? "VRB" : (prevailingWind ? Number(prevailingWind.direction)+"°" : ""),
@@ -342,7 +399,11 @@ function buildWeatherInterpretation(data,language){
 
       if(wind.gust){
         forecast.push({
-          text:fillWeatherTemplate(locale.templates.gust,{gust:wind.gust}),
+          text:fillWeatherTemplate(locale.templates.forecastGust || locale.templates.gust,{
+            ...range,
+            station:taf.station || data?.icao || "Airport",
+            gust:wind.gust
+          }),
           attention:wind.gust >= (rules.wind?.gustCautionAtKt ?? 25)
         });
       }
@@ -352,7 +413,10 @@ function buildWeatherInterpretation(data,language){
 
     if(group.tokens.includes("CAVOK")){
       forecast.push({
-        text:fillWeatherTemplate(locale.templates.forecastCavok,range),
+        text:fillWeatherTemplate(locale.templates.forecastCavok,{
+          ...range,
+          station:taf.station || data?.icao || "Airport"
+        }),
         attention:false
       });
     }
@@ -360,7 +424,12 @@ function buildWeatherInterpretation(data,language){
     const weatherToken=group.tokens.find(token=>weatherTermFromToken(token,locale));
     if(weatherToken){
       const weather=weatherTermFromToken(weatherToken,locale);
-      const values={...range,weather,probability:group.probability};
+      const values={
+        ...range,
+        station:taf.station || data?.icao || "Airport",
+        weather,
+        probability:group.probability
+      };
 
       let template=locale.templates.weather;
       if(group.probability) template=locale.templates.probabilityWeather;
@@ -381,13 +450,15 @@ function buildWeatherInterpretation(data,language){
         forecast.push({
           text:fillWeatherTemplate(
             cloud[3]==="CB" ? locale.templates.cb : locale.templates.tcu,
-            {...range,height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")}
+            {...range,station:taf.station || data?.icao || "Airport",height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")}
           ),
           attention:true
         });
       }else if((cloud[1]==="BKN" || cloud[1]==="OVC") && height < (rules.ceiling?.cautionBelowFeet ?? 3000)){
         forecast.push({
           text:fillWeatherTemplate(locale.templates.lowCeiling,{
+            ...range,
+            station:taf.station || data?.icao || "Airport",
             height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")
           }),
           attention:true
@@ -399,6 +470,8 @@ function buildWeatherInterpretation(data,language){
     if(visibility!==undefined && visibility!==null && visibility < (rules.visibility?.cautionBelowMeters ?? 5000)){
       forecast.push({
         text:fillWeatherTemplate(locale.templates.lowVisibility,{
+          ...range,
+          station:taf.station || data?.icao || "Airport",
           visibility:visibility.toLocaleString(language==="tr" ? "tr-TR" : "en-US")+" m"
         }),
         attention:true
