@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05090e">
+  <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
+  <title>Pilot Briefing | YulCaribe Aviation</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=1">
+</head>
+<body>
+  <header class="pb-header">
+    <a class="pb-back" href="/">←</a>
+    <div class="pb-brand">
+      <strong>YulCaribe Aviation</strong>
+      <span>Pilot Briefing</span>
+    </div>
+    <nav class="mode-nav">
+      <a href="/main/enroute/">Classic</a>
+      <a class="active" href="/main/briefing/">Pilot Brief</a>
+    </nav>
+    <div class="live"><i></i>AWC LIVE</div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">ROUTE / TIME / LEVEL</span>
+        <h1>Pilot Briefing</h1>
+        <p>Rota boyunca temsilci METAR/TAF'lar ve rotaya gerçekten yakın aktif SIGMET'ler. Cruise seviyesi ve zaman bağlamı ayrıca değerlendirilir.</p>
+      </div>
+      <div class="utc"><small>UTC</small><strong id="utc-clock">--:--:--</strong></div>
+    </section>
+
+    <section class="query-card">
+      <form id="brief-form" autocomplete="off">
+        <div class="query-grid">
+          <label><span>FROM</span><input id="from" maxlength="4" value="LTAI" required spellcheck="false"></label>
+          <button id="swap" class="swap" type="button">⇄</button>
+          <label><span>TO</span><input id="to" maxlength="4" value="EDDB" required spellcheck="false"></label>
+          <label><span>ETD (UTC)</span><input id="etd" type="datetime-local" required></label>
+          <label><span>CRUISE FL</span><input id="fl" type="number" min="50" max="600" step="10" value="360" required></label>
+          <button class="brief-btn" type="submit">PILOT BRIEF <span>→</span></button>
+        </div>
+
+        <div class="route-entry">
+          <div class="route-head">
+            <div><strong>OFP / ROUTE</strong><small>İsteğe bağlı. Boşsa great-circle tahmini.</small></div>
+            <div><button id="paste-route" type="button">Yapıştır</button><button id="clear-route" type="button">Temizle</button></div>
+          </div>
+          <textarea id="route-text" maxlength="2000" rows="3" spellcheck="false" placeholder="Örn: KUMRU N131 TUMBO UL620 NISVA DCT BUDOP TAGAS"></textarea>
+        </div>
+      </form>
+      <div class="query-note">Bu sayfa operasyonel dispatch/OFP/şirket briefing kaynaklarının yerine geçmez. Ama “rota ile gerçekten ilgili olan ne?” sorusunu klasik sayfadan daha iyi süzer.</div>
+    </section>
+
+    <div class="feedback" id="feedback"><i></i><span id="feedback-text">Hazır.</span></div>
+
+    <section id="workspace" class="workspace" hidden>
+      <div class="map-card">
+        <div id="map"></div>
+        <div class="map-badges">
+          <button id="route-toggle" type="button">ROUTE <strong id="route-label">—</strong></button>
+          <button id="layers-toggle" type="button">LAYERS <strong>WX</strong></button>
+        </div>
+
+        <div class="map-panel" id="route-panel" hidden>
+          <div class="panel-head"><strong>ROUTE INFO</strong><button data-close="route-panel">×</button></div>
+          <div class="info-grid">
+            <div><small>DIST</small><strong id="distance">—</strong></div>
+            <div><small>ETD</small><strong id="etd-out">—</strong></div>
+            <div><small>CRUISE</small><strong id="fl-out">—</strong></div>
+            <div><small>ROUTE</small><strong id="route-type">—</strong></div>
+          </div>
+          <div id="resolved-route" class="route-text-out"></div>
+        </div>
+
+        <div class="map-panel layers-panel" id="layers-panel" hidden>
+          <div class="panel-head"><strong>LAYERS</strong><button data-close="layers-panel">×</button></div>
+          <label><span>Route</span><input type="checkbox" checked data-layer="route"></label>
+          <label><span>METAR / TAF</span><input type="checkbox" checked data-layer="stations"></label>
+          <label><span>Relevant SIGMET</span><input type="checkbox" checked data-layer="hazards"></label>
+        </div>
+      </div>
+
+      <aside class="brief-card">
+        <div class="brief-title">
+          <div><small>PILOT BRIEF</small><strong id="brief-route">—</strong></div>
+          <span>AWC</span>
+        </div>
+
+        <div class="stats">
+          <div><small>STATIONS</small><strong id="station-count">0</strong></div>
+          <div><small>SIGMET HIT</small><strong id="hit-count">0</strong></div>
+          <div><small>NEAR</small><strong id="near-count">0</strong></div>
+          <div><small>EST. EET</small><strong id="eet">—</strong></div>
+        </div>
+
+        <div class="simple-brief" id="simple-brief"></div>
+
+        <div class="wafs-card">
+          <div><strong>WAFS</strong><span id="wafs-status">NOT CONNECTED</span></div>
+          <p>Wind, turbulence, icing ve CB gridleri için gerçek WIFS/WAFS API erişimi gerekir. Bu bölüm veri varmış gibi uydurmuyor.</p>
+          <a href="https://aviationweather.gov/wafs/" target="_blank" rel="noopener">Official WAFS Viewer ↗</a>
+        </div>
+      </aside>
+    </section>
+
+    <section id="hazard-section" class="section" hidden>
+      <div class="section-head">
+        <div><span class="eyebrow">ROUTE RELEVANCE</span><h2>SIGMET</h2></div>
+        <p>Sadece rota çizgisine kesişen veya 100 NM içinde kalan aktif SIGMET'ler.</p>
+      </div>
+      <div id="hazard-list" class="hazard-list"></div>
+    </section>
+
+    <section id="station-section" class="section" hidden>
+      <div class="section-head">
+        <div><span class="eyebrow">REPRESENTATIVE POINTS</span><h2>METAR / TAF</h2></div>
+        <p>Kalkış, varış ve rota boyunca dengeli seçilen temsilci meydanlar.</p>
+      </div>
+      <div id="station-list" class="station-list"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Data: NOAA / NWS Aviation Weather Center</span>
+    <span>WAFS: official viewer only until WIFS API is connected</span>
+  </footer>
+
+  <div class="boot" id="boot"><strong>PB</strong><span id="boot-text">Pilot briefing hazırlanıyor…</span></div>
+
+  <script>
+    (function(){
+      const sources=[
+        "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
+        "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      ];
+      const boot=document.getElementById("boot"), text=document.getElementById("boot-text");
+      function load(src){return new Promise((resolve,reject)=>{const s=document.createElement("script");s.src=src;s.async=true;s.onload=resolve;s.onerror=reject;document.head.appendChild(s);});}
+      (async()=>{
+        let ok=false;
+        for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
+        if(!ok){text.textContent="Leaflet yüklenemedi.";return;}
+        try{await load("/main/briefing/briefing.js?v=1");boot.classList.add("hide");setTimeout(()=>boot.remove(),350);}
+        catch(e){text.textContent="Briefing kodu yüklenemedi.";}
+      })();
+    })();
+  </script>
+</body>
+</html>
