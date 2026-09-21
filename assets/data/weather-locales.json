@@ -48,7 +48,13 @@
       "lowCeiling": "Bulut tavanı {height} ft seviyesine düşüyor.",
       "becoming": "{start}–{end} arasında koşullar kademeli olarak değişecek.",
       "temporary": "{start}–{end} arasında geçici değişiklikler bekleniyor.",
-      "nosig": "Yakın vadede önemli bir değişiklik beklenmiyor."
+      "nosig": "Yakın vadede önemli bir değişiklik beklenmiyor.",
+      "currentWeather": "Şu anda {weather} gözleniyor.",
+      "currentCb": "Şu anda {height} ft seviyesinde CB mevcut.",
+      "currentTcu": "Şu anda {height} ft seviyesinde TCU mevcut.",
+      "currentVisibility": "Mevcut görüş {visibility}.",
+      "currentLowVisibility": "Mevcut görüş düşük: {visibility}.",
+      "forecastCavok": "{start}–{end} arasında CAVOK bekleniyor."
     }
   },
   "en": {
@@ -95,7 +101,13 @@
       "lowCeiling": "Ceiling is expected to fall to {height} ft.",
       "becoming": "Conditions will gradually change between {start}–{end}.",
       "temporary": "Temporary changes are expected between {start}–{end}.",
-      "nosig": "No significant change is expected in the near term."
+      "nosig": "No significant change is expected in the near term.",
+      "currentWeather": "Current weather: {weather}.",
+      "currentCb": "CB is currently reported at {height} ft.",
+      "currentTcu": "TCU is currently reported at {height} ft.",
+      "currentVisibility": "Current visibility is {visibility}.",
+      "currentLowVisibility": "Current visibility is low: {visibility}.",
+      "forecastCavok": "CAVOK is expected between {start}–{end}."
     }
   }
 }
