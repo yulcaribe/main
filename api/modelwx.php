@@ -70,7 +70,7 @@ function cycleFor(int $valid): array {
 }
 function cycleCandidates(int $valid): array {
     [$base,$fh]=cycleFor($valid); $out=[];
-    for($i=0;$i<4;$i++){
+    for($i=0;$i<2;$i++){
         $cycle=$base-$i*21600; $f=(int)round(($valid-$cycle)/10800)*3;
         $out[]=['epoch'=>$cycle,'date'=>gmdate('Ymd',$cycle),'cc'=>gmdate('H',$cycle),'fh'=>max(0,min(120,$f))];
     }
@@ -97,7 +97,7 @@ function fetchGfs025(int $valid,int $pressure,array $bbox): array {
             'subregion'=>'','leftlon'=>$left,'rightlon'=>$right,'toplat'=>$top,'bottomlat'=>$bottom,'dir'=>"/gfs.{$c['date']}/{$c['cc']}/atmos"];
         $url=NOAA_FILTER.'?'.http_build_query($q,'','&',PHP_QUERY_RFC3986); $key='gfs025|'.$url;
         if($cached=cacheRead($key,1200)) return ['body'=>$cached,'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb']];
-        $r=httpFetch($url,null,24,8000000); $last=$r;
+        $r=httpFetch($url,null,12,8000000); $last=$r;
         if($r['ok']&&isGrib($r['body'])){cacheWrite($key,$r['body']);return ['body'=>$r['body'],'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb']];}
     }
     throw new RuntimeException('NOAA GFS 0.25 GRIB Filter yanıt vermedi'.($last?(' (HTTP '.$last['status'].')'):''));
@@ -134,13 +134,13 @@ function fetchRanges(string $base,array $all,array $sel): ?string {
     if(!$sel)return null;$pos=[];foreach($all as $i=>$e)$pos[$e['offset']]=$i;$out='';
     foreach($sel as $e){
         $i=$pos[$e['offset']]??null;if($i===null)continue;$start=$e['offset'];$end=isset($all[$i+1])?$all[$i+1]['offset']-1:null;$range=$end!==null?($start.'-'.$end):($start.'-');
-        $r=httpFetch($base,$range,20,5000000);if(!$r['ok']||!isGrib($r['body']))return null;if($r['status']===200&&$start>0)return null;$out.=$r['body'];if(strlen($out)>MAX_BINARY_BYTES)return null;
+        $r=httpFetch($base,$range,7,5000000);if(!$r['ok']||!isGrib($r['body']))return null;if($r['status']===200&&$start>0)return null;$out.=$r['body'];if(strlen($out)>MAX_BINARY_BYTES)return null;
     }
     return $out!==''?$out:null;
 }
 function tryIndexedProduct(array $urls, callable $selector): ?array {
     foreach($urls as $u){
-        $idx=httpFetch($u.'.idx',null,10,1000000);if(!$idx['ok']||trim($idx['body'])==='')continue;$all=idxEntries($idx['body']);if(!$all)continue;$sel=$selector($all);if(!$sel)continue;
+        $idx=httpFetch($u.'.idx',null,4,1000000);if(!$idx['ok']||trim($idx['body'])==='')continue;$all=idxEntries($idx['body']);if(!$all)continue;$sel=$selector($all);if(!$sel)continue;
         $cacheKey='range|'.$u.'|'.sha1(implode('|',array_column($sel,'line')));
         if($cached=cacheRead($cacheKey,1800))return ['body'=>$cached,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];
         $body=fetchRanges($u,$all,$sel);if($body!==null){cacheWrite($cacheKey,$body);return ['body'=>$body,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];}
