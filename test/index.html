@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#030608">
+  <meta name="description" content="YulCaribe aviation interface concept test.">
+  <title>YulCaribe // Flight Interface Test</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+  <link rel="stylesheet" href="./test.css">
+</head>
+<body>
+  <div class="boot" id="boot" aria-hidden="true">
+    <div class="boot-grid"></div>
+    <div class="boot-core">
+      <div class="boot-mark">
+        <span></span><span></span><span></span>
+      </div>
+      <p class="boot-kicker">YULCARIBE / AVIATION SYSTEM</p>
+      <div class="boot-word" aria-label="YulCaribe">
+        <span>Y</span><span>U</span><span>L</span><span>C</span><span>A</span><span>R</span><span>I</span><span>B</span><span>E</span>
+      </div>
+      <div class="boot-line"><i></i></div>
+      <div class="boot-meta">
+        <span>LINK ESTABLISHED</span>
+        <span>36.89°N / 30.70°E</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
+
+  <header class="nav">
+    <a class="brand" href="../home.html" aria-label="YulCaribe ana sayfa">
+      <span class="brand-dot"></span>
+      YULCARIBE
+    </a>
+    <nav class="nav-links" aria-label="Test menüsü">
+      <a href="#systems">Systems</a>
+      <a href="../map/">Live Map</a>
+      <a class="nav-live" href="#status"><i></i> Online</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="top">
+      <div class="hero-noise"></div>
+      <div class="hero-grid"></div>
+
+      <div class="radar" aria-hidden="true">
+        <div class="radar-ring r1"></div>
+        <div class="radar-ring r2"></div>
+        <div class="radar-ring r3"></div>
+        <div class="radar-cross radar-cross-x"></div>
+        <div class="radar-cross radar-cross-y"></div>
+        <div class="radar-sweep"></div>
+        <span class="radar-blip b1"></span>
+        <span class="radar-blip b2"></span>
+        <span class="radar-blip b3"></span>
+      </div>
+
+      <div class="hero-copy">
+        <div class="eyebrow reveal">REAL-TIME AVIATION INTERFACE / TEST BUILD 01</div>
+        <h1 class="hero-title" id="heroTitle">
+          <span class="line">TAKE CONTROL</span>
+          <span class="line ghost">OF THE SKIES</span>
+        </h1>
+        <p class="hero-text reveal">
+          Canlı uçuş verisi, meteoroloji ve operasyon araçlarını tek bir yüksek hızlı arayüzde birleştiren deneysel YulCaribe tasarımı.
+        </p>
+        <div class="hero-actions reveal">
+          <a class="button primary" href="../map/">
+            <span>LIVE MAP</span>
+            <b>↗</b>
+          </a>
+          <a class="button secondary" href="#systems">
+            <span>EXPLORE SYSTEM</span>
+            <b>↓</b>
+          </a>
+        </div>
+      </div>
+
+      <div class="aircraft-stage" aria-hidden="true">
+        <div class="flight-path"></div>
+        <div class="aircraft-halo"></div>
+        <img class="aircraft" src="../assets/yulcaribe-aircraft.svg" alt="">
+        <div class="aircraft-data data-a">
+          <small>TRACK</small>
+          <strong>184°</strong>
+        </div>
+        <div class="aircraft-data data-b">
+          <small>ALTITUDE</small>
+          <strong>34,000 FT</strong>
+        </div>
+      </div>
+
+      <div class="hero-footer reveal">
+        <div><small>MODE</small><strong>ADS-B / WX</strong></div>
+        <div><small>LATENCY</small><strong>&lt; 1.0 SEC</strong></div>
+        <div><small>REGION</small><strong>EU / TR</strong></div>
+        <a href="#systems">SCROLL TO DESCEND <span>↓</span></a>
+      </div>
+    </section>
+
+    <section class="systems" id="systems">
+      <div class="section-head">
+        <div>
+          <span class="section-index">01 / SYSTEMS</span>
+          <h2>One interface.<br><em>Everything airborne.</em></h2>
+        </div>
+        <p>Havacılık verisini gereksiz süs yerine okunabilir, hızlı ve canlı bir operasyon yüzeyine dönüştüren modüller.</p>
+      </div>
+
+      <div class="system-grid">
+        <a class="system-card card-large" href="../map/">
+          <div class="card-top">
+            <span>01</span>
+            <span class="status-pill"><i></i> LIVE</span>
+          </div>
+          <div class="mini-radar" aria-hidden="true">
+            <i></i>
+            <span class="mini-plane">✦</span>
+          </div>
+          <div class="card-bottom">
+            <small>ADS-B NETWORK</small>
+            <h3>Live Flight Map</h3>
+            <p>Yakındaki uçakları, rota bilgisini, irtifayı ve hareketi canlı takip et.</p>
+            <b>OPEN MAP ↗</b>
+          </div>
+        </a>
+
+        <a class="system-card" href="../home.html#weather">
+          <div class="card-top">
+            <span>02</span>
+            <span>WX</span>
+          </div>
+          <div class="wx-display" aria-hidden="true">
+            <strong>25°</strong>
+            <span>LTAI</span>
+            <div>24012KT · CAVOK</div>
+          </div>
+          <div class="card-bottom">
+            <small>WEATHER ENGINE</small>
+            <h3>METAR / TAF</h3>
+            <p>Ham havacılık meteoroloji verisini hızlıca görüntüle.</p>
+            <b>CHECK WEATHER ↗</b>
+          </div>
+        </a>
+
+        <article class="system-card">
+          <div class="card-top">
+            <span>03</span>
+            <span>LAB</span>
+          </div>
+          <div class="telemetry" aria-hidden="true">
+            <div style="--v:42%"></div>
+            <div style="--v:68%"></div>
+            <div style="--v:54%"></div>
+            <div style="--v:82%"></div>
+            <div style="--v:63%"></div>
+            <div style="--v:91%"></div>
+            <div style="--v:72%"></div>
+          </div>
+          <div class="card-bottom">
+            <small>EXPERIMENTAL</small>
+            <h3>Flight Intelligence</h3>
+            <p>Yeni araçlar ve operasyon modülleri için deney alanı.</p>
+            <b>IN DEVELOPMENT</b>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="status-section" id="status">
+      <div class="status-orbit" aria-hidden="true">
+        <span class="orbit orbit-a"></span>
+        <span class="orbit orbit-b"></span>
+        <span class="orbit-core"></span>
+      </div>
+      <div class="status-copy">
+        <span class="section-index">02 / STATUS</span>
+        <h2>Built for the sky.<br><em>Not for boring dashboards.</em></h2>
+        <div class="status-row">
+          <div><small>SYSTEM</small><strong>OPERATIONAL</strong></div>
+          <div><small>THEME</small><strong>CYAN / VOID</strong></div>
+          <div><small>BUILD</small><strong>CONCEPT 01</strong></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>YULCARIBE / 2026</span>
+    <a href="#top">BACK TO TOP ↑</a>
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js" defer></script>
+  <script src="./test.js" defer></script>
+</body>
+</html>
