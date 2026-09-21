@@ -27,9 +27,45 @@ let weatherRequestController=null;
 
 let airportTimezoneData={exact:{},prefix:{}};
 
+let weatherInterpretationData={locales:null,rules:null};
+
+async function loadWeatherInterpretationData(){
+  try{
+    const [localesResponse,rulesResponse]=await Promise.all([
+      fetch("/main/assets/data/weather-locales.json",{cache:"force-cache"}),
+      fetch("/main/assets/data/weather-rules.json",{cache:"force-cache"})
+    ]);
+
+    weatherInterpretationData={
+      locales:localesResponse.ok ? await localesResponse.json() : null,
+      rules:rulesResponse.ok ? await rulesResponse.json() : null
+    };
+  }catch(error){
+    console.warn("Weather interpretation verisi yüklenemedi:",error);
+  }
+}
+
+function getWeatherLocale(language="tr"){
+  const locales=weatherInterpretationData.locales;
+  if(!locales) return null;
+
+  const selected=locales.supportedLanguages?.includes(language)
+    ? language
+    : (locales.defaultLanguage || "tr");
+
+  return locales[selected] || null;
+}
+
+function fillWeatherTemplate(template,values={}){
+  return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g,(match,key)=>{
+    return values[key] ?? match;
+  });
+}
+
+
 async function loadAirportTimezones(){
   try{
-    const response=await fetch("/main/assets/airport-timezones.json",{cache:"force-cache"});
+    const response=await fetch("/main/assets/data/airport-timezones.json",{cache:"force-cache"});
     if(!response.ok) return;
 
     const data=await response.json();
@@ -694,12 +730,15 @@ async function loadHome(){
   const minimumGatewayTime=delay(700);
 
   try{
-    const timezonePromise=loadAirportTimezones();
+    const weatherDataPromise=Promise.all([
+      loadAirportTimezones(),
+      loadWeatherInterpretationData()
+    ]);
     const response=await fetch("/main/home.html",{cache:"no-cache"});
     if(!response.ok) throw new Error("HTTP "+response.status);
 
     const html=await response.text();
-    await timezonePromise;
+    await weatherDataPromise;
 
     if(root){
       root.classList.remove("site-loading");
