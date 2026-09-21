@@ -157,7 +157,7 @@ function fetchWafs025(int $valid,int $fl,int $pressure): array {
 }
 function fetchWafs125(int $valid,int $pressure): array {
     foreach(cycleCandidates($valid) as $c){
-        $fh=str_pad((string)$c['fh'],2,'0',STR_PAD_LEFT);
+        $fh=str_pad((string)$c['fh'],3,'0',STR_PAD_LEFT);
         foreach(['40','44'] as $grid){
             $name="wafsgfs{$grid}.t{$c['cc']}z.gribf{$fh}.grib2";$r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectWafs125($rows,$pressure));
             if($r)return ['body'=>$r['body'],'meta'=>['source'=>'NOAA legacy WAFS 1.25 grid '.$grid,'cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb','records'=>$r['records']]];
