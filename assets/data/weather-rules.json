@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "visibility": {
+    "cautionBelowMeters": 5000,
+    "warningBelowMeters": 1500
+  },
+  "ceiling": {
+    "cautionBelowFeet": 3000,
+    "warningBelowFeet": 1500
+  },
+  "wind": {
+    "cautionAtKt": 20,
+    "warningAtKt": 30,
+    "gustCautionAtKt": 25,
+    "gustWarningAtKt": 35
+  },
+  "hazards": {
+    "high": [
+      "TS",
+      "TSRA",
+      "FZRA",
+      "FC",
+      "SQ"
+    ],
+    "medium": [
+      "CB",
+      "TCU",
+      "SN",
+      "FG",
+      "GR",
+      "GS"
+    ],
+    "low": [
+      "RA",
+      "SHRA",
+      "DZ",
+      "BR"
+    ]
+  },
+  "probability": {
+    "PROB30": 30,
+    "PROB40": 40
+  }
+}
