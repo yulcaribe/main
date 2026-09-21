@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=5">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=6">
 </head>
 <body>
   <header class="pb-header">
@@ -20,7 +20,7 @@
       <a href="/main/enroute/">Classic</a>
       <a class="active" href="/main/briefing/">Pilot Brief</a>
     </nav>
-    <div class="live"><i></i>AWC LIVE</div>
+    <div class="live">MODEL GUIDANCE</div>
   </header>
 
   <main class="shell">
@@ -80,7 +80,14 @@
           <div class="panel-head"><strong>LAYERS</strong><button data-close="layers-panel">×</button></div>
           <label><span>Route</span><input type="checkbox" checked data-layer="route"></label>
           <label><span>METAR / TAF</span><input type="checkbox" checked data-layer="stations"></label>
-          <label><span>Relevant SIGMET</span><input type="checkbox" checked data-layer="hazards"></label>
+          <label><span>SIGMET · uçuş aralığı / zamanı belirsiz</span><input type="checkbox" checked data-layer="hazards"></label>
+          <label><span>SIGMET · uçuş saati dışında</span><input type="checkbox" data-layer="outside"></label>
+          <label><span>GFS · rüzgâr / rota noktaları</span><input type="checkbox" checked data-layer="model"></label>
+        </div>
+        <div class="map-wx-legend" aria-live="polite">
+          <strong id="map-model-status">MODEL WIND · bekleniyor</strong>
+          <span>Oklar rüzgârın gittiği yönü gösterir · Noktaya tıkla</span>
+          <span id="map-sigmet-status">SIGMET · bekleniyor</span>
         </div>
       </div>
 
@@ -101,7 +108,7 @@
 
         <div class="wafs-card model-status-card">
           <div><strong>MODEL WX</strong><span>NOAA / NCEP</span></div>
-          <p>Üst seviye wind/temp, aviation hazard gridleri ve legacy WAFS karşılaştırması. Her kaynak ayrı ayrı doğrulanır.</p>
+          <p>Rota üzerinde GFS rüzgâr, sıcaklık, nem ve yükseklik. Türbülans / CB / icing kaynağının erişim durumu ayrıca gösterilir.</p>
           <div class="model-source-list">
             <div id="model-source-gfs"><div class="model-source-head"><strong>GFS 0.25°</strong><span class="info">WAITING</span></div></div>
             <div id="model-source-wafs025"><div class="model-source-head"><strong>AVIATION GFS 0.25°</strong><span class="info">WAITING</span></div></div>
@@ -114,13 +121,15 @@
     <section id="modelwx-section" class="section" hidden>
       <div class="section-head">
         <div><span class="eyebrow">ENROUTE MODEL WEATHER</span><h2>MODEL WX</h2></div>
-        <p>Rota orta zamanı ve seçilen cruise FL için model gridleri. Operasyonel karar ürünü değildir.</p>
+        <p>Rota orta zamanına en yakın model tahmini ve cruise FL’ye en yakın basınç seviyesi. MODEL GUIDANCE.</p>
       </div>
       <div class="model-meta">
         <div><small>GFS 0.25°</small><span id="model-gfs-meta">—</span></div>
-        <div><small>AVIATION GFS 0.25° AVIATION</small><span id="model-wafs025-meta">—</span></div>
+        <div><small>AVIATION GFS 0.25° / ERİŞİM</small><span id="model-wafs025-meta">—</span></div>
       </div>
       <div id="model-route-table" class="model-route-table"></div>
+      <p id="model-sampling-note" class="model-caveat"></p>
+      <details class="model-debug"><summary>Veri doğrulama ayrıntıları</summary><pre id="model-diagnostics"></pre></details>
       <div id="model-hazard-grid" class="model-hazard-grid"></div>
       <div class="model-legacy">
         <div><small>LEGACY WAFS 1.25° / MID-ROUTE CHECK</small><span id="model-wafs125-meta">—</span></div>
@@ -132,7 +141,7 @@
     <section id="hazard-section" class="section" hidden>
       <div class="section-head">
         <div><span class="eyebrow">ROUTE RELEVANCE</span><h2>SIGMET</h2></div>
-        <p>Sadece rota çizgisine kesişen veya 100 NM içinde kalan aktif SIGMET'ler.</p>
+        <p>Rota/100 NM içindeki alınmış uyarılar. Uçuş saati dışında kalanlar ayrıca işaretlenir; zaman eşleşmesi tüm uçuş aralığına göredir.</p>
       </div>
       <div id="hazard-list" class="hazard-list"></div>
     </section>
@@ -147,8 +156,9 @@
   </main>
 
   <footer class="footer">
+    <span id="data-status">Kaynaklar bekleniyor.</span>
     <span>Data: NOAA / NWS Aviation Weather Center + NOAA/NCEP GFS</span>
-    <span>Model WX: GFS 0.25° · NOAA Aviation GFS 0.25° · legacy WAFS 1.25°</span>
+    <span>GFS: model guidance · Resmî WAFS bağlı değil</span>
   </footer>
 
   <div class="boot" id="boot"><strong>PB</strong><span id="boot-text">Pilot briefing hazırlanıyor…</span></div>
@@ -166,12 +176,12 @@
         let ok=false;
         for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
         if(!ok){text.textContent="Leaflet yüklenemedi.";return;}
-        try{await load("/main/briefing/vendor/grib2.js?v=5");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
-        try{await load("/main/briefing/vendor/grib2utils.js?v=5");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
-        try{await load("/main/briefing/grib2-browser.js?v=5");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
-        try{await load("/main/briefing/modelwx.js?v=5");}catch(e){console.warn("Model WX yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2.js?v=6");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2utils.js?v=6");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
+        try{await load("/main/briefing/grib2-browser.js?v=6");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
+        try{await load("/main/briefing/modelwx.js?v=6");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=5");
+          await load("/main/briefing/briefing.js?v=6");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);

@@ -14,7 +14,7 @@ function respond(int $status, array $payload): never {
 }
 
 function cacheDir(): string {
-    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_pilotbrief_v1';
+    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_pilotbrief_v2';
     if (!is_dir($dir)) @mkdir($dir, 0700, true);
     return $dir;
 }
@@ -489,9 +489,12 @@ function parseVertical(string $raw): array {
     $u=strtoupper($raw);
     $lo=null; $hi=null; $source='unknown';
 
-    if (preg_match('/BTN\s+FL(\d{2,3})\s+(?:AND|/)\s+FL?(\d{2,3})/', $u,$m)) {
+    if (preg_match('/TOP\s+ABV\s+FL(\d{2,3})/', $u,$m)) {
+        return ['bottomFL'=>null,'topFL'=>null,'topAboveFL'=>(int)$m[1],'source'=>'top-above'];
+    }
+    if (preg_match('/BTN\s+FL(\d{2,3})\s+(?:AND|\/)\s+(?:FL)?(\d{2,3})/', $u,$m)) {
         $lo=min((int)$m[1],(int)$m[2]); $hi=max((int)$m[1],(int)$m[2]); $source='range';
-    } elseif (preg_match('/FL(\d{2,3})\s*\/\s*FL?(\d{2,3})/', $u,$m)) {
+    } elseif (preg_match('/FL(\d{2,3})\s*\/\s*(?:FL)?(\d{2,3})/', $u,$m)) {
         $lo=min((int)$m[1],(int)$m[2]); $hi=max((int)$m[1],(int)$m[2]); $source='range';
     } elseif (preg_match('/SFC\s*\/\s*FL(\d{2,3})/', $u,$m)) {
         $lo=0; $hi=(int)$m[1]; $source='sfc-top';
@@ -511,6 +514,7 @@ function cruiseRelation(array $vertical,int $cruiseFL): string {
     if ($lo===null && $hi===null) return 'unknown';
     if ($lo!==null && $cruiseFL<$lo) return 'below_hazard_layer';
     if ($hi!==null && $cruiseFL>$hi) return 'above_hazard_layer';
+    if ($lo===null || ($hi===null && $vertical['source']!=='above')) return 'unknown';
     return 'at_cruise_level';
 }
 
@@ -544,7 +548,7 @@ function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,
         $validFrom=firstTimestamp($props,['validTimeFrom','validFrom','startTime','validStart','issueTime']);
         $validTo=firstTimestamp($props,['validTimeTo','validTo','endTime','validEnd','expireTime']);
         $timeRelation='unknown';
-        if ($validFrom!==null || $validTo!==null) {
+        if ($validFrom!==null && $validTo!==null) {
             $vf=$validFrom ?? PHP_INT_MIN;
             $vt=$validTo ?? PHP_INT_MAX;
             $timeRelation = ($vf <= $flightEndEpoch && $vt >= $etdEpoch) ? 'overlaps_flight_window' : 'outside_flight_window';
@@ -699,13 +703,17 @@ foreach ($stations as &$s) {
 unset($s);
 
 $sigmetRes=awcGet('isigmet',['format'=>'geojson'],15);
-$sigmets=$sigmetRes['ok'] && is_array($sigmetRes['data']) ? $sigmetRes['data'] : ['type'=>'FeatureCollection','features'=>[]];
-if (($sigmets['type']??'')!=='FeatureCollection') $sigmets=['type'=>'FeatureCollection','features'=>[]];
+$sigmetAvailable=$sigmetRes['ok'] && (
+    ($sigmetRes['status']??0)===204 ||
+    (is_array($sigmetRes['data']??null) && ($sigmetRes['data']['type']??'')==='FeatureCollection' && is_array($sigmetRes['data']['features']??null))
+);
+$sigmets=$sigmetAvailable && ($sigmetRes['status']??0)!==204 ? $sigmetRes['data'] : ['type'=>'FeatureCollection','features'=>[]];
 $hazards=analyzeSigmets($sigmets,$route,$cruiseFL,$etdEpoch,$flightEndEpoch);
 
-$intersectCount=count(array_filter($hazards,fn($h)=>$h['proximity']==='INTERSECTS'));
-$nearCount=count(array_filter($hazards,fn($h)=>$h['proximity']==='NEAR_ROUTE'));
-$cruiseCount=count(array_filter($hazards,fn($h)=>$h['cruiseRelation']==='at_cruise_level'));
+$timeRelevant=array_values(array_filter($hazards,fn($h)=>$h['timeRelation']!=='outside_flight_window'));
+$intersectCount=count(array_filter($timeRelevant,fn($h)=>$h['proximity']==='INTERSECTS'));
+$nearCount=count(array_filter($timeRelevant,fn($h)=>$h['proximity']==='NEAR_ROUTE'));
+$cruiseCount=count(array_filter($timeRelevant,fn($h)=>$h['cruiseRelation']==='at_cruise_level'));
 
 $payload=[
     'ok'=>true,
@@ -726,11 +734,20 @@ $payload=[
         'estimatedArrivalUtc'=>gmdate('c',$flightEndEpoch),
         'eetIsEstimate'=>true
     ],
+    'sourceStatus'=>[
+        'metar'=>['ok'=>$metarRes['ok'],'httpStatus'=>$metarRes['status'],'error'=>$metarRes['error']??null],
+        'taf'=>['ok'=>$tafRes['ok'],'httpStatus'=>$tafRes['status'],'error'=>$tafRes['error']??null],
+        'sigmet'=>['ok'=>$sigmetAvailable,'httpStatus'=>$sigmetRes['status'],'error'=>$sigmetAvailable?null:($sigmetRes['error']??'Beklenmeyen SIGMET yanıtı.')]
+    ],
     'hazards'=>$hazards,
     'hazardSummary'=>[
         'intersects'=>$intersectCount,
         'nearRoute'=>$nearCount,
         'atCruiseLevel'=>$cruiseCount,
+        'available'=>$sigmetAvailable,
+        'within100nm'=>count($timeRelevant),
+        'outsideFlightWindow'=>count($hazards)-count($timeRelevant),
+        'unknownTime'=>count(array_filter($timeRelevant,fn($h)=>$h['timeRelation']==='unknown')),
         'shown'=>count($hazards)
     ],
     'wafs'=>[

@@ -4,6 +4,9 @@ declare(strict_types=1);
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: public, max-age=600');
 
+const REQUEST_BUDGET_SECONDS = 13;
+$ycRequestStarted = microtime(true);
+
 const YC_UA = 'YulCaribe-ModelWX/1.0 (+https://yulcaribe.com)';
 const NOAA_FILTER = 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl';
 const MAX_BINARY_BYTES = 12000000;
@@ -22,6 +25,8 @@ function binOut(string $body, array $meta=[]): never {
     header('X-YC-Cycle: '.($meta['cycle'] ?? ''));
     header('X-YC-Forecast-Hour: '.($meta['fh'] ?? ''));
     header('X-YC-Level: '.($meta['level'] ?? ''));
+    header('X-YC-Valid-UTC: '.($meta['validUtc'] ?? ''));
+    header('X-YC-Requested-UTC: '.($meta['requestedUtc'] ?? ''));
     if (!empty($meta['records'])) header('X-YC-Records: '.substr(preg_replace('/[^A-Za-z0-9_.,;:+ -]/','',(string)$meta['records']),0,1500));
     echo $body;
     exit;
@@ -43,10 +48,13 @@ function cacheWrite(string $key,string $body): void {
     @file_put_contents(cacheDir().DIRECTORY_SEPARATOR.sha1($key).'.bin',$body,LOCK_EX);
 }
 function httpFetch(string $url, ?string $range=null, int $timeout=22, int $maxBytes=MAX_BINARY_BYTES): array {
+    global $ycRequestStarted;
+    $remaining=REQUEST_BUDGET_SECONDS-(microtime(true)-$ycRequestStarted);
+    if($remaining<=0)throw new RuntimeException('NOAA toplam istek süresi doldu.');
     $ch=curl_init($url); $body='';
     curl_setopt_array($ch,[
         CURLOPT_RETURNTRANSFER=>false,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,
-        CURLOPT_CONNECTTIMEOUT=>6,CURLOPT_TIMEOUT=>$timeout,CURLOPT_USERAGENT=>YC_UA,
+        CURLOPT_CONNECTTIMEOUT_MS=>min(6000,(int)($remaining*1000)),CURLOPT_TIMEOUT_MS=>(int)(min($timeout,$remaining)*1000),CURLOPT_USERAGENT=>YC_UA,
         CURLOPT_ENCODING=>'',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,
         CURLOPT_HTTPHEADER=>['Accept: */*'],
         CURLOPT_WRITEFUNCTION=>function($ch,string $chunk) use (&$body,$maxBytes): int {
@@ -61,17 +69,20 @@ function httpFetch(string $url, ?string $range=null, int $timeout=22, int $maxBy
     return ['ok'=>$ok!==false&&$errno===0&&$status>=200&&$status<300,'status'=>$status,'body'=>$body,'error'=>$err,'ctype'=>$ctype];
 }
 function parseUtc(string $s): int {
-    $t=$s!==''?strtotime($s.' UTC'):time(); return $t===false?time():$t;
+    $t=$s!==''?strtotime($s.' UTC'):time();
+    if($t===false)jsonOut(400,['ok'=>false,'error'=>'Geçersiz UTC zamanı.']);
+    return $t;
 }
 function cycleFor(int $valid): array {
     $available=min($valid,time()-4*3600); $h=(int)gmdate('G',$available); $cycleHour=(int)(floor($h/6)*6);
     $cycle=gmmktime($cycleHour,0,0,(int)gmdate('n',$available),(int)gmdate('j',$available),(int)gmdate('Y',$available));
-    $fh=(int)round(($valid-$cycle)/10800)*3; $fh=max(0,min(120,$fh)); return [$cycle,$fh];
+    $fh=(int)round(($valid-$cycle)/3600); $fh=max(0,min(120,$fh)); return [$cycle,$fh];
 }
 function cycleCandidates(int $valid): array {
     [$base,$fh]=cycleFor($valid); $out=[];
     for($i=0;$i<2;$i++){
-        $cycle=$base-$i*21600; $f=(int)round(($valid-$cycle)/10800)*3;
+        $cycle=$base-$i*21600; $f=(int)round(($valid-$cycle)/3600);
+        if($f<0||$f>120)continue;
         $out[]=['epoch'=>$cycle,'date'=>gmdate('Ymd',$cycle),'cc'=>gmdate('H',$cycle),'fh'=>max(0,min(120,$f))];
     }
     return $out;
@@ -98,107 +109,36 @@ function fetchGfs025(int $valid,int $pressure,array $bbox): array {
         $q=['file'=>$file,'lev_'.$pressure.'_mb'=>'on','var_HGT'=>'on','var_TMP'=>'on','var_RH'=>'on','var_UGRD'=>'on','var_VGRD'=>'on',
             'subregion'=>'','leftlon'=>$left,'rightlon'=>$right,'toplat'=>$top,'bottomlat'=>$bottom,'dir'=>"/gfs.{$c['date']}/{$c['cc']}/atmos"];
         $url=NOAA_FILTER.'?'.http_build_query($q,'','&',PHP_QUERY_RFC3986); $key='gfs025|'.$url;
-        if($cached=cacheRead($key,1200)) return ['body'=>$cached,'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb']];
+        if($cached=cacheRead($key,1200)) return ['body'=>$cached,'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' hPa','validUtc'=>gmdate('c',$c['epoch']+$c['fh']*3600),'requestedUtc'=>gmdate('c',$valid)]];
         $r=httpFetch($url,null,12,8000000); $last=$r;
-        if($r['ok']&&isGrib($r['body'])){cacheWrite($key,$r['body']);return ['body'=>$r['body'],'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb']];}
+        if($r['ok']&&isGrib($r['body'])){cacheWrite($key,$r['body']);return ['body'=>$r['body'],'meta'=>['source'=>'NOAA GFS 0.25','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' hPa','validUtc'=>gmdate('c',$c['epoch']+$c['fh']*3600),'requestedUtc'=>gmdate('c',$valid)]];}
     }
     throw new RuntimeException('NOAA GFS 0.25 GRIB Filter yanıt vermedi'.($last?(' (HTTP '.$last['status'].')'):''));
 }
-function baseCandidates(string $date,string $cc,string $filename): array {
-    $rel="gfs.{$date}/{$cc}/atmos/{$filename}";
-    return [
-        'https://noaa-gfs-bdp-pds.s3.amazonaws.com/'.$rel,
-        'https://storage.googleapis.com/global-forecast-system/'.$rel,
-        'https://noaagfs.blob.core.windows.net/gfs/'.$rel,
-        'https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/'.$rel,
-        'https://www.ftp.ncep.noaa.gov/data/nccf/com/gfs/prod/'.$rel
-    ];
-}
-function idxEntries(string $txt): array {
-    $rows=[]; foreach(preg_split('/\r?\n/',$txt)?:[] as $line){if(!preg_match('/^(\d+):(\d+):(.*)$/',$line,$m))continue;$rows[]=['n'=>(int)$m[1],'offset'=>(int)$m[2],'rest'=>$m[3],'line'=>$line];} return $rows;
-}
-function linePressure(string $line): ?int { return preg_match('/:(\d{2,4}) mb:/i',$line,$m)?(int)$m[1]:null; }
-function lineFL(string $line): ?int {
-    if(preg_match('/FL\s?(\d{2,3})/i',$line,$m))return (int)$m[1];
-    if(preg_match('/(\d{2,3})00 ft/i',$line,$m))return (int)$m[1]; return null;
-}
-function selectAviation025(array $entries,int $fl,int $pressure): array {
-    $wanted=['ICESEV','ICSEV','EDPARM','CATEDR','MWTURB','CBHE','ICAHT']; $groups=[];
-    foreach($entries as $i=>$e){
-        $var=null; foreach($wanted as $w){if(stripos(':'.$e['rest'].':',':'.$w.':')!==false){$var=$w;break;}} if(!$var)continue;
-        $score=5000; $lf=lineFL($e['line']); $lp=linePressure($e['line']);
-        if($lf!==null)$score=abs($lf-$fl); elseif($lp!==null)$score=abs($lp-$pressure)*0.5; elseif(in_array($var,['CBHE','ICAHT'],true))$score=0;
-        $groups[$var][]=[$score,$i,$e];
-    }
-    $selected=[]; foreach($groups as $var=>$rows){usort($rows,fn($a,$b)=>$a[0]<=>$b[0]);$take=$var==='ICAHT'?2:1;for($j=0;$j<min($take,count($rows));$j++)$selected[]=$rows[$j][2];}
-    usort($selected,fn($a,$b)=>$a['offset']<=>$b['offset']); return array_slice($selected,0,9);
-}
-function selectWafs125(array $entries,int $pressure): array {
-    $vars=['TMP','UGRD','VGRD','HGT','RH'];$best=[];
-    foreach($entries as $e){foreach($vars as $v){if(stripos(':'.$e['rest'].':',':'.$v.':')===false)continue;$p=linePressure($e['line']);if($p===null)continue;$s=abs($p-$pressure);if(!isset($best[$v])||$s<$best[$v][0])$best[$v]=[$s,$e];}}
-    $out=[];foreach($best as $b)$out[]=$b[1];usort($out,fn($a,$b)=>$a['offset']<=>$b['offset']);return $out;
-}
-function fetchRanges(string $base,array $all,array $sel): ?string {
-    if(!$sel)return null;$pos=[];foreach($all as $i=>$e)$pos[$e['offset']]=$i;$out='';
-    foreach($sel as $e){
-        $i=$pos[$e['offset']]??null;if($i===null)continue;$start=$e['offset'];$end=isset($all[$i+1])?$all[$i+1]['offset']-1:null;$range=$end!==null?($start.'-'.$end):($start.'-');
-        $r=httpFetch($base,$range,6,5000000);if(!$r['ok']||!isGrib($r['body']))return null;if($r['status']===200&&$start>0)return null;$out.=$r['body'];if(strlen($out)>MAX_BINARY_BYTES)return null;
-    }
-    return $out!==''?$out:null;
-}
-function tryIndexedProduct(array $urls, callable $selector): ?array {
-    foreach($urls as $u){
-        $all=null;
-        foreach(['.idx','.grb2.inv'] as $suffix){
-            $idx=httpFetch($u.$suffix,null,2,1000000);
-            if(!$idx['ok']||trim($idx['body'])==='')continue;
-            $parsed=idxEntries($idx['body']);
-            if($parsed){$all=$parsed;break;}
-        }
-        if(!$all)continue;
-        $sel=$selector($all);if(!$sel)continue;
-        $cacheKey='range|'.$u.'|'.sha1(implode('|',array_column($sel,'line')));
-        if($cached=cacheRead($cacheKey,1800))return ['body'=>$cached,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];
-        $body=fetchRanges($u,$all,$sel);if($body!==null){cacheWrite($cacheKey,$body);return ['body'=>$body,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];}
-    }
-    return null;
-}
-function fetchAviation025(int $valid,int $fl,int $pressure): array {
-    foreach(cycleCandidates($valid) as $c){
-        $fh=str_pad((string)$c['fh'],3,'0',STR_PAD_LEFT);
-        $name="gfs.t{$c['cc']}z.awf_0p25.f{$fh}.grib2";
-        $r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectAviation025($rows,$fl,$pressure));
-        if($r)return ['body'=>$r['body'],'meta'=>[
-            'source'=>'NOAA Aviation GFS 0.25',
-            'cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),
-            'fh'=>$c['fh'],
-            'level'=>$pressure.' mb / FL'.$fl,
-            'records'=>$r['records']
-        ]];
-    }
-    throw new RuntimeException('NOAA Aviation GFS 0.25 AWF dosyası public HTTP kaynaklarında bulunamadı.');
-}
-function fetchWafs125(int $valid,int $pressure): array {
-    foreach(cycleCandidates($valid) as $c){
-        $fh=str_pad((string)$c['fh'],2,'0',STR_PAD_LEFT);
-        foreach(['40','44'] as $grid){
-            $name="wafsgfs{$grid}.t{$c['cc']}z.gribf{$fh}.grib2";$r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectWafs125($rows,$pressure));
-            if($r)return ['body'=>$r['body'],'meta'=>['source'=>'NOAA legacy WAFS 1.25 grid '.$grid,'cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb','records'=>$r['records']]];
-        }
-    }
-    throw new RuntimeException('NOAA legacy WAFS 1.25 upper-air dosyası public HTTP kaynaklarında bulunamadı.');
-}
-
+// AWF open distribution was withdrawn on 2024-01-17 (NOAA SCN 23-111).
+// Do not probe retired URLs on every briefing or relabel GFS diagnostics as EDR/icing.
+const AWF_NOTICE = 'https://www.weather.gov/media/notification/pdf_2023_24/scn23-111_wafs_products_change.pdf';
+const WIFS_URL = 'https://aviationweather.gov/wifs/';
+$action=strtolower(trim((string)($_GET['action']??'status')));
+if($action==='aviation025'||$action==='wafs025')jsonOut(410,[
+    'ok'=>false,'source'=>'aviation025','code'=>'PUBLIC_FEED_RETIRED',
+    'error'=>'NOAA AWF açık dağıtımı 17 Ocak 2024 tarihinde kaldırıldı. EDR / CAT / MWT / CB verisi için yetkili WIFS veya başka doğrulanmış kaynak gerekli.',
+    'noticeUrl'=>AWF_NOTICE,'accessUrl'=>WIFS_URL
+]);
+if($action==='wafs125')jsonOut(503,[
+    'ok'=>false,'source'=>'wafs125','code'=>'REFERENCE_UNAVAILABLE',
+    'error'=>'Legacy WAFS 1.25° için doğrulanmış güncel public dosya/inventory bağlantısı yok. Ana GFS bundan bağımsız çalışır.'
+]);
+if(!in_array($action,['status','gfs025'],true))jsonOut(400,['ok'=>false,'error'=>'Bilinmeyen action.']);
+$fl=max(50,min(600,(int)($_GET['fl']??360)));
+$valid=parseUtc(trim((string)($_GET['valid']??'')));$pressure=pressureFromFL($fl);$bb=bbox();[$cycle,$fh]=cycleFor($valid);
+if($action==='status')jsonOut(200,['ok'=>true,'validUtc'=>gmdate('c',$valid),'cycleUtc'=>gmdate('c',$cycle),'forecastHour'=>$fh,'cruiseFL'=>$fl,'nearestPressureMb'=>$pressure,'levelMethod'=>'nearest primary GFS pressure level; not exact flight level','bbox'=>['left'=>$bb[0],'right'=>$bb[1],'bottom'=>$bb[2],'top'=>$bb[3]],'products'=>[
+    ['id'=>'gfs025','label'=>'NOAA GFS 0.25°','purpose'=>'upper wind / temperature / RH / height','mode'=>'NOMADS GRIB Filter','availability'=>'request_required'],
+    ['id'=>'aviation025','label'=>'NOAA Aviation GFS 0.25°','availability'=>'PUBLIC_FEED_RETIRED','noticeUrl'=>AWF_NOTICE,'accessUrl'=>WIFS_URL],
+    ['id'=>'wafs125','label'=>'Legacy WAFS 1.25°','availability'=>'REFERENCE_UNAVAILABLE']
+],'note'=>'MODEL GUIDANCE. Eksik aviation hazard verisi, tehlike olmadığı anlamına gelmez.']);
 if(!function_exists('curl_init'))jsonOut(500,['ok'=>false,'error'=>'PHP cURL aktif değil.']);
-$action=strtolower(trim((string)($_GET['action']??'status')));$fl=max(50,min(600,(int)($_GET['fl']??360)));$valid=parseUtc(trim((string)($_GET['valid']??'')));$pressure=pressureFromFL($fl);$bb=bbox();[$cycle,$fh]=cycleFor($valid);
-if($action==='status')jsonOut(200,['ok'=>true,'validUtc'=>gmdate('c',$valid),'cycleUtc'=>gmdate('c',$cycle),'forecastHour'=>$fh,'cruiseFL'=>$fl,'nearestPressureMb'=>$pressure,'bbox'=>['left'=>$bb[0],'right'=>$bb[1],'bottom'=>$bb[2],'top'=>$bb[3]],'products'=>[
-    ['id'=>'gfs025','label'=>'NOAA GFS 0.25°','purpose'=>'upper wind / temperature / RH / height','mode'=>'NOMADS GRIB Filter (primary pressure levels)'],
-    ['id'=>'aviation025','label'=>'NOAA Aviation GFS 0.25°','purpose'=>'EDPARM / CATEDR / MWTURB / CB extent-base-top','mode'=>'AWF indexed GRIB2'],
-    ['id'=>'wafs125','label'=>'NOAA legacy WAFS 1.25°','purpose'=>'upper-air comparison','mode'=>'indexed GRIB2']
-],'note'=>'Old WAFS_blended 1.25 hazard product was retired; current hazard target is WAFS 0.25.']);
+if($valid<time()-7*86400||!cycleCandidates($valid))jsonOut(400,['ok'=>false,'error'=>'Model zamanı son 7 gün ile yaklaşık 4 gün sonrası arasında olmalı.']);
 try{
-    if($action==='gfs025'){$r=fetchGfs025($valid,$pressure,$bb);binOut($r['body'],$r['meta']);}
-    if($action==='aviation025' || $action==='wafs025'){$r=fetchAviation025($valid,$fl,$pressure);binOut($r['body'],$r['meta']);}
-    if($action==='wafs125'){$r=fetchWafs125($valid,$pressure);binOut($r['body'],$r['meta']);}
-    jsonOut(400,['ok'=>false,'error'=>'Bilinmeyen action.']);
+    $r=fetchGfs025($valid,$pressure,$bb);binOut($r['body'],$r['meta']);
 }catch(Throwable $e){jsonOut(502,['ok'=>false,'source'=>$action,'error'=>$e->getMessage(),'validUtc'=>gmdate('c',$valid),'cruiseFL'=>$fl,'pressureMb'=>$pressure]);}

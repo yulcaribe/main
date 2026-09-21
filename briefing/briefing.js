@@ -6,6 +6,7 @@
   const workspace=$("#workspace"), hazardSection=$("#hazard-section"), stationSection=$("#station-section");
   const hazardList=$("#hazard-list"), stationList=$("#station-list");
   let controller=null, current=null;
+  let modelMarkers=[],modelResult=null,modelZoom=null;
 
   const map=L.map("map",{zoomControl:false,worldCopyJump:true,preferCanvas:true}).setView([44,22],5);
   L.control.zoom({position:"bottomright"}).addTo(map);
@@ -14,7 +15,9 @@
   const groups={
     route:L.layerGroup().addTo(map),
     stations:L.layerGroup().addTo(map),
-    hazards:L.layerGroup().addTo(map)
+    hazards:L.layerGroup().addTo(map),
+    outside:L.layerGroup(),
+    model:L.layerGroup().addTo(map)
   };
 
   function esc(v){return String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));}
@@ -71,8 +74,44 @@
     return "#ff7a86";
   }
 
+  const utc=value=>{
+    const d=new Date(typeof value==="number"?value*1000:value);
+    return value!=null&&Number.isFinite(d.getTime())?d.toISOString().slice(0,16).replace("T"," ")+"Z":"—";
+  };
+  const sigmetAvailable=data=>data.sourceStatus?.sigmet?.ok===true;
+  function timeText(h){
+    return ({overlaps_flight_window:"Uçuş zaman aralığıyla örtüşüyor",outside_flight_window:"Uçuş zaman aralığı dışında",unknown:"Geçerlilik zamanı bilinmiyor"})[h.timeRelation]||"Zaman bilinmiyor";
+  }
+  function updateModelMap(result){
+    groups.model.clearLayers();modelMarkers=[];modelResult=result;modelZoom=map.getZoom();
+    const status=$("#map-model-status");
+    if(!["ready","partial"].includes(result.state)){
+      status.textContent=result.state==="loading"?"MODEL WIND · yükleniyor…":"MODEL WIND · veri alınamadı";return;
+    }
+    const points=result.samples,meta=result.meta;
+    let previousArrow=map.latLngToLayerPoint([points[0].lat,points[0].lon]);
+    for(let i=0;i<points.length;i++){
+      const p=points[i],w=p.wind;if(!w)continue;
+      const pixel=map.latLngToLayerPoint([p.lat,p.lon]);
+      const prominent=i>0 && i<points.length-1 && pixel.distanceTo(previousArrow)>=50;
+      if(prominent)previousArrow=pixel;
+      const flow=(w.dir+180)%360;
+      const marker=prominent?L.marker([p.lat,p.lon],{icon:L.divIcon({className:"model-wind-icon",iconSize:[48,42],iconAnchor:[24,21],html:`<span class="wind-arrow" style="transform:rotate(${flow}deg)">↑</span><strong>${Math.round(w.kt)}<small>kt</small></strong>`})}):L.circleMarker([p.lat,p.lon],{radius:3,color:"#31e4ff",weight:1,fillColor:"#070c11",fillOpacity:1});
+      marker.bindPopup(`<div class="model-popup"><strong>GFS · MODEL GUIDANCE</strong><br>${Math.round(p.progress*100)}% rota · ${Math.round(p.distanceNm)} NM<br>Rüzgâr <b>${String(Math.round(w.dir)%360).padStart(3,"0")}° / ${Math.round(w.kt)} kt</b> (geldiği yön, true)<br>${w.tailKt>=0?"Arka":"Karşı"} ${Math.round(Math.abs(w.tailKt))} kt · çapraz ${Math.round(w.crossKt)} kt<br>Sıcaklık ${Number.isFinite(p.tempC)?p.tempC.toFixed(1):"—"} °C · RH ${Number.isFinite(p.rh)?Math.round(p.rh):"—"}%<br>Geopotansiyel yükseklik ${Number.isFinite(p.heightM)?Math.round(p.heightM):"—"} gpm<br><br>${esc(meta.pressureMb)} hPa · FL${esc(current.flight.cruiseFL)} için yaklaşık seviye<br>Model geçerli: ${esc(utc(meta.validUtc))}<br>Geçiş tahmini: ${esc(utc(p.etaUtc))}<br><small>Grid: ${p.gridPoint.latitude.toFixed(2)}, ${p.gridPoint.longitude.toFixed(2)} · ok akış yönünü gösterir</small></div>`,{maxWidth:280,minWidth:200,maxHeight:190,autoPanPaddingTopLeft:[12,56],autoPanPaddingBottomRight:[12,86]});
+      marker.addTo(groups.model);modelMarkers[i]=marker;
+    }
+    status.textContent=`MODEL WIND · ${meta.pressureMb} hPa · ${utc(meta.validUtc)} · ${points.length} nokta${result.state==="partial"?" · EKSİK ALAN":""}`;
+  }
+  map.on("zoomend",()=>{if(modelResult&&modelZoom!==map.getZoom())updateModelMap(modelResult);});
+  function focusModelPoint(i){
+    const marker=modelMarkers[i];if(!marker)return;
+    if(!map.hasLayer(groups.model)){groups.model.addTo(map);$('[data-layer="model"]').checked=true;}
+    map.panTo(marker.getLatLng(),{animate:false});marker.openPopup();$("#map").scrollIntoView({behavior:"instant",block:"center"});
+  }
+
   function renderMap(data){
     Object.values(groups).forEach(g=>g.clearLayers());
+    modelMarkers=[];modelResult=null;
     const line=L.polyline(data.route,{color:"#31e4ff",weight:3.5,opacity:.95}).addTo(groups.route);
     L.polyline(data.route,{color:"#31e4ff",weight:15,opacity:.05}).addTo(groups.route);
 
@@ -87,13 +126,15 @@
     }
     for(const h of data.hazards||[]){
       try{
-        const col=hazardColor(h);
-        const l=L.geoJSON(h.feature,{style:()=>({color:col,weight:1.6,fillColor:col,fillOpacity:.12,dashArray:"6 5"})});
-        l.bindPopup(`<strong>${esc(h.hazard)}</strong><br>${esc(h.proximity)} · ${esc(h.distanceNm)} NM<br><span style="color:#8297a6">${esc(h.cruiseRelation)}</span><br><br><code style="font-size:9px">${esc(h.raw||"SIGMET")}</code>`);
-        l.addTo(groups.hazards);
+        const outside=h.timeRelation==="outside_flight_window",col=outside?"#8195a4":hazardColor(h);
+        const l=L.geoJSON(h.feature,{style:()=>({color:col,weight:1.6,fillColor:col,fillOpacity:outside?.035:.12,dashArray:outside?"3 9":"6 5"})});
+        l.bindPopup(`<strong>${esc(h.hazard)}</strong><br>${esc(h.proximity)} · ${esc(h.distanceNm)} NM<br><span style="color:#8297a6">${esc(relationText(h.cruiseRelation))}</span><br>${esc(timeText(h))}<br>${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}<br><br><code style="font-size:9px">${esc(h.raw||"SIGMET")}</code>`);
+        l.addTo(outside?groups.outside:groups.hazards);
       }catch(e){}
     }
-    map.fitBounds(line.getBounds(),{padding:[45,45]});
+    const summary=data.hazardSummary||{};
+    $("#map-sigmet-status").textContent=sigmetAvailable(data)?`SIGMET · ${summary.intersects||0} kesişim · ${summary.within100nm||0} kayıt / 100 NM · ${summary.outsideFlightWindow||0} uçuş saati dışında` : "SIGMET · kaynak alınamadı; durum bilinmiyor";
+    map.fitBounds(line.getBounds(),{paddingTopLeft:[45,55],paddingBottomRight:[45,95],animate:false});
   }
 
   function roleLabel(r){return r==="departure"?"DEPARTURE":r==="arrival"?"ARRIVAL":"ENROUTE";}
@@ -110,8 +151,8 @@
           <span class="fc fc-${esc(fc)}">${esc(fc)}</span>
         </div>
         <div class="wx-lines">
-          <div class="wx-block"><small>METAR</small><div class="wx-raw">${esc(s.metar?.raw||"METAR mevcut değil")}</div></div>
-          <div class="wx-block"><small>TAF</small><div class="wx-raw">${esc(s.taf?.raw||"TAF mevcut değil")}</div></div>
+          <div class="wx-block"><small>OBSERVATION · METAR · ${esc(utc(s.metar?.obsTime))}</small><div class="wx-raw">${esc(s.metar?.raw||"METAR mevcut değil")}</div></div>
+          <div class="wx-block"><small>TERMINAL FORECAST · TAF · ${esc(utc(s.taf?.validFrom))} → ${esc(utc(s.taf?.validTo))}</small><div class="wx-raw">${esc(s.taf?.raw||"TAF mevcut değil")}</div></div>
         </div>`;
       stationList.appendChild(a);
     }
@@ -119,6 +160,7 @@
 
   function verticalText(h){
     const v=h.vertical||{}, lo=v.bottomFL, hi=v.topFL;
+    if(v.topAboveFL!=null)return `TOP ABV FL${v.topAboveFL} · kesin üst sınır bilinmiyor`;
     if(lo===null&&hi===null) return "Vertical: unknown";
     if(lo===0&&hi!==null) return `SFC–FL${hi}`;
     if(lo!==null&&hi!==null) return `FL${lo}–FL${hi}`;
@@ -128,11 +170,13 @@
   function relationText(r){
     return ({at_cruise_level:"Cruise seviyesi içinde",above_hazard_layer:"Hazard cruise altında",below_hazard_layer:"Hazard cruise üstünde",unknown:"Seviye bilgisi belirsiz"})[r]||r;
   }
-  function renderHazards(hazards){
+  function renderHazards(hazards,data){
     hazardList.innerHTML="";
-    if(!hazards.length){hazardList.innerHTML='<div class="empty">Rota çizgisi üzerinde veya 100 NM yakınında aktif SIGMET bulunmadı.</div>';return;}
+    if(!sigmetAvailable(data)){hazardList.innerHTML='<div class="empty">SIGMET kaynağı alınamadı. Uyarı bulunup bulunmadığı bilinmiyor.</div>';return;}
+    if(!hazards.length){hazardList.innerHTML='<div class="empty">Alınan SIGMET verisinde rota/100 NM için kayıt bulunmadı. Bu, hava tehlikesi olmadığı anlamına gelmez.</div>';return;}
     for(const h of hazards){
       const a=document.createElement("article"); a.className="hazard-card";
+      if(h.timeRelation==="outside_flight_window")a.classList.add("outside-window");
       const cls=h.proximity==="INTERSECTS"?"bad":h.proximity==="NEAR_ROUTE"?"warn":"info";
       a.innerHTML=`
         <div class="head"><strong>${esc(h.hazard)}</strong><span class="tag ${cls}">${esc(h.proximity)}</span></div>
@@ -140,6 +184,8 @@
           <span>${h.distanceNm<0.5?"ROUTE HIT":esc(h.distanceNm+" NM")}</span>
           <span>${esc(verticalText(h))}</span>
           <span>${esc(relationText(h.cruiseRelation))}</span>
+          <span>${esc(timeText(h))}</span>
+          <span>${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}</span>
         </div>
         <pre>${esc(h.raw||"SIGMET")}</pre>`;
       hazardList.appendChild(a);
@@ -158,8 +204,9 @@
     rows.push(briefLine("KALKIŞ",depCat,catClass(depCat),`${esc(dep?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     rows.push(briefLine("VARIŞ",arrCat,catClass(arrCat),`${esc(arr?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} fix/navaid çözüldü${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
-    rows.push(briefLine("SIGMET",hit?hit+" HIT":near?near+" NEAR":"CLEAR",hit?"bad":near?"warn":"ok",hit?"En az bir aktif SIGMET geometrisi rota çizgisini kesiyor.":near?"Aktif SIGMET rota çizgisine 50 NM içinde yaklaşıyor.":"100 NM içinde rota ile ilişkili aktif SIGMET görünmüyor."));
-    rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
+    const available=sigmetAvailable(data),summary=data.hazardSummary||{},relevant=summary.within100nm||0;
+    rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" YAKIN":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı uçuş aralığı dışında değil. ${summary.outsideFlightWindow||0} kayıt uçuş saati dışında; haritada ayrı katman. ${summary.unknownTime||0} kaydın zamanı belirsiz. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
+    rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",!available?"SIGMET kaynağı alınamadığı için seviye karşılaştırması yapılamadı.":cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
     $("#simple-brief").innerHTML=rows.join("");
   }
 
@@ -171,8 +218,8 @@
     $("#route-type").textContent=data.routeMode==="user_route"?"USER ROUTE":"GREAT CIRCLE";
     $("#etd-out").textContent=new Date(data.flight.etdUtc).toLocaleTimeString("en-GB",{timeZone:"UTC",hour:"2-digit",minute:"2-digit"})+"Z";
     $("#station-count").textContent=data.stations.length;
-    $("#hit-count").textContent=data.hazardSummary.intersects;
-    $("#near-count").textContent=data.hazardSummary.nearRoute;
+    $("#hit-count").textContent=sigmetAvailable(data)?data.hazardSummary.intersects:"—";
+    $("#near-count").textContent=sigmetAvailable(data)?data.hazardSummary.nearRoute:"—";
     const m=data.flight.estimatedEetMinutes; $("#eet").textContent=`${Math.floor(m/60)}h ${m%60}m*`;
     const resolved=(data.routeInput?.resolved||[]).filter(p=>!["departure","arrival"].includes(p.type)).map(p=>p.id);
     const unr=data.routeInput?.unresolved||[];
@@ -180,18 +227,19 @@
   }
 
   function render(data){
-    current=data; workspace.hidden=false; hazardSection.hidden=false; stationSection.hidden=false;
-    renderRouteMeta(data); renderSimpleBrief(data); renderHazards(data.hazards||[]); renderStations(data.stations||[]);
+    current=data; $("#data-status").textContent=`AWC alındı: ${utc(data.fetchedAt)} · METAR ${data.sourceStatus?.metar?.ok?"OK":"VERİ YOK"} · TAF ${data.sourceStatus?.taf?.ok?"OK":"VERİ YOK"} · SIGMET ${sigmetAvailable(data)?"OK":"VERİ YOK"}`; workspace.hidden=false; hazardSection.hidden=false; stationSection.hidden=false;
+    renderRouteMeta(data); renderSimpleBrief(data); renderHazards(data.hazards||[],data); renderStations(data.stations||[]);
     requestAnimationFrame(()=>{
       try{
         map.invalidateSize({pan:false});
         renderMap(data);
+        if(window.YCModelWX?.load)window.YCModelWX.load(data,{onUpdate:updateModelMap,onFocus:focusModelPoint}).catch(e=>console.error("Model WX error",e));
         setTimeout(()=>map.invalidateSize({pan:false}),80);
       }catch(e){
         console.error("Map render error",e);
       }
     });
-    if(window.YCModelWX?.load) window.YCModelWX.load(data).catch(e=>console.error("Model WX error",e));
+
   }
 
   async function load(){
@@ -199,7 +247,7 @@
     const fl=$("#fl").value, etd=$("#etd").value, route=$("#route-text").value.trim().toUpperCase();
     if(!/^[A-Z0-9]{4}$/.test(from)||!/^[A-Z0-9]{4}$/.test(to)||from===to){setFeedback("Geçerli ve farklı iki ICAO kodu gir.","error");return;}
     if(!etd){setFeedback("ETD UTC gir.","error");return;}
-    if(controller) controller.abort(); controller=new AbortController(); submit.disabled=true;
+    if(controller) controller.abort(); window.YCModelWX?.cancel(); controller=new AbortController(); submit.disabled=true;
     setFeedback(`${from} → ${to} pilot briefing hazırlanıyor…`,"loading");
     try{
       const q=new URLSearchParams({from,to,fl,etd}); if(route) q.set("route",route);
@@ -207,7 +255,7 @@
       const data=await res.json().catch(()=>null);
       if(!res.ok||!data?.ok) throw new Error(data?.error||`HTTP ${res.status}`);
       render(data);
-      setFeedback(`${from} → ${to}: ${data.stations.length} temsilci istasyon, ${data.hazards.length} rota-ilişkili SIGMET.`);
+      setFeedback(`${from} → ${to}: ${data.stations.length} temsilci istasyon. ${sigmetAvailable(data)?`${data.hazardSummary.within100nm||0} uçuş aralığıyla ilişkili / zamanı belirsiz SIGMET.`:"SIGMET verisi alınamadı."}`);
     }catch(err){
       if(err?.name==="AbortError") return;
       console.error(err); setFeedback(err?.message||"Briefing alınamadı.","error");

@@ -9,8 +9,10 @@
     //fetch('winds.grb')
 //   .then(response => response.arrayBuffer())
 //    .then(buffer => decodeGRIB2File(buffer))
-//    .catch(error => console.log(error));
+//    .catch(error => gribDebug(error));
 
+
+const gribDebug = (...args) => { if (globalThis.YC_GRIB_DEBUG) console.debug(...args); };
 
 const decodeGRIB2File = function (buffer) {
 
@@ -27,7 +29,7 @@ const decodeGRIB2File = function (buffer) {
         gribByteIndex += gribLength;
     }
 
-    console.log("Number of grib buffers: " + gribFileBuffers.length);
+    gribDebug("Number of grib buffers: " + gribFileBuffers.length);
     // Iterate over GRIB buffers
     for (let i = 0; i < gribFileBuffers.length; i++) {
         gribFiles[i] = new GRIB2(gribFileBuffers[i]);
@@ -106,7 +108,7 @@ const decodeGRIB2Buffer = function (buffer, myGrib) {
     }
 
     // Discipline
-    console.log(myGrib.dataTemplate[0][2].info + ": " + myGrib.dataTemplate[0][2].contentRef + "(" + myGrib.dataTemplate[0][2].content + ")");
+    gribDebug(myGrib.dataTemplate[0][2].info + ": " + myGrib.dataTemplate[0][2].contentRef + "(" + myGrib.dataTemplate[0][2].content + ")");
 
     // Separate section buffers
     let sectionByteIndex = 16;
@@ -137,7 +139,7 @@ const decodeGRIB2Buffer = function (buffer, myGrib) {
     myGrib.dataTemplate[8] = decodeSection(sectionBuffers[sectionBuffers.length-1], myGrib.dataTemplate[8]);
 
 
-    console.log(myGrib.dataTemplate);
+    gribDebug(myGrib.dataTemplate);
     // Transform from binary to JSON
     myGrib.data = parseData(myGrib.dataTemplate);
 
@@ -224,8 +226,8 @@ const parseData = function (decodedGrib) {
 
     data.grid = grid;
     data.product = product;
-    console.log(data.grid);
-    console.log(data.product);
+    gribDebug(data.grid);
+    gribDebug(data.product);
 
 
     // Template number
@@ -251,7 +253,7 @@ const parseData = function (decodedGrib) {
 
 
 
-    let rawData = decodedGrib[7][2].content;
+    let rawData = decodedGrib[7][2].content || new ArrayBuffer(0);
     let values = [];
 
 
@@ -260,9 +262,9 @@ const parseData = function (decodedGrib) {
     if (template == '5.0') {
         let compression = data.compression;
         // Should be the same number
-        console.log("Bit length/bits per point : " + (rawData.byteLength * 8 / compression.bitsPerValue) + ", Num points: " + grid.numPoints);
+        gribDebug("Bit length/bits per point : " + (rawData.byteLength * 8 / compression.bitsPerValue) + ", Num points: " + grid.numPoints);
         // Read bits
-        values = readValuesFromBuffer(rawData, compression.bitsPerValue, grid.numPoints);
+        values = readValuesFromBuffer(rawData, compression.bitsPerValue, numValues);
         // Decompress
         for (let i = 0; i < values.length; i++)
             values[i] = compression.decompress(values[i]);
@@ -482,50 +484,34 @@ const parseData = function (decodedGrib) {
 
 
 
-    // Scanning mode (section 3)
-    // https://www.nco.ncep.noaa.gov/pmb/docs/grib2/grib2_doc/grib2_table3-4.shtml
-    // Reorganize the data points so they start on the north-west and finish in the south-east
-
-
-    // Flip using vertical axis (left becomes right, right becomes left)
-    if (grid.scanningMode[0][0] == 1) { // Points in the first row or column scan in the -i (-x) direction
-        console.error('TODO: Scanning mode: the data needs to be mirroed in the vertical axis (east should be west and viceversa)');
-    }
-    // Flip using horizontal axis (top becomes bottom, bottom becomes top)
-    // TODO: SCANNING MODE DOES NOT NECESSARILY APPLIES. CHECK START GRID LATITUDE AND END GRID LATITUDE TO KNOW DIRECTION
-    if (grid.scanningMode[1][0] == 0) { // Points in the first row or column scan in the -j (-y) direction
-        // If latitude first grid point is bigger than end point, it does not apply?
-        if (grid.latStart < grid.latEnd) { // Grid defines the first grid latitude point as the southest
-            let horizontalFlipValues = [];
-            for (let i = 0; i < data.values.length; i++) {
-                let colN = i % grid.numLongPoints;
-                let rowN = Math.floor(i / grid.numLongPoints);
-
-                let flippedIndex = (grid.numLatPoints - rowN - 1) * grid.numLongPoints + colN;
-                horizontalFlipValues[i] = data.values[flippedIndex];
-            }
-            data.values = horizontalFlipValues;
+    // YulCaribe patch: normalize regular lat/lon grids to north-west row-major.
+    // WMO Table 3.4 bits are MSB first; NOMADS subsets normally use scan=64
+    // (south-to-north), while full GFS grids normally use scan=0.
+    const scan = getContentByInfo(decodedGrib[3], 'Scanning mode (flags — see Flag Table 3.4 and Note 6)');
+    if ((scan & 15) !== 0) throw new Error("Staggered GRIB grids are not supported.");
+    const ni = grid.numLongPoints, nj = grid.numLatPoints;
+    const normalized = new Array(ni * nj);
+    for (let k = 0; k < normalized.length; k++) {
+        let i, j;
+        if (scan & 32) {
+            i = Math.floor(k / nj); j = k % nj;
+            if ((scan & 16) && i % 2) j = nj - 1 - j;
+        } else {
+            j = Math.floor(k / ni); i = k % ni;
+            if ((scan & 16) && j % 2) i = ni - 1 - i;
         }
+        const col = (scan & 128) ? ni - 1 - i : i;
+        const row = (scan & 64) ? nj - 1 - j : j;
+        normalized[row * ni + col] = data.values[k];
     }
-    // Other scanning modes
-    // TODO: the grid can be diamond-shaped, meaning that it is not as simple as painting a point per pixel. Probably it is needed to assing a lat-long value to each datapoint, or to deal with it in the draw function
-    if (grid.scanningMode[2][0] == 1) console.error('TODO: Scanning mode: Adjacent points in the j (y) direction are consecutive')
-    if (grid.scanningMode[3][0] == 1) console.error('TODO: Scanning mode: Adjacent rows scan in the opposite direction')
-    if (grid.scanningMode[4][0] == 1) console.error('TODO: Scanning mode: Points within odd rows are offset by Di/2 in i(x) direction') // Making a grid with diamonds and not squares
-    if (grid.scanningMode[5][0] == 1) console.error('TODO: Scanning mode: Points within even rows are offset by Di/2 in i(x) direction') // Making a grid with diamonds and not squares
-    // Offset all lat coordinates by Dj/2 (Scanning mode: Points are offset by Dj/2 in j(y) direction)
-    if (grid.scanningMode[6][0] == 1) {
-        // Check direction
-        let jDirection = grid.scanningMode[1][0] == 0 ? -1 : 1;
-        // Apply offset
-        grid.latEnd = grid.latEnd + jDirection * grid.incJ / 2;
-        grid.latStart = grid.latStart + jDirection * grid.incJ / 2;
-    }
-    if (grid.scanningMode[7][0] == 1) console.error('TODO: Scanning mode: 8th bit at https://www.nco.ncep.noaa.gov/pmb/docs/grib2/grib2_doc/grib2_table3-4.shtml')
+    data.values = normalized;
+    grid.rawScanningMode = scan;
+    grid.north = grid.latStart + ((scan & 64) ? (nj - 1) * grid.incJ : 0);
+    grid.west = grid.lonStart - ((scan & 128) ? (ni - 1) * grid.incI : 0);
+    grid.normalizedNorthWest = true;
 
-
-    console.log("DATA VALUES: ------");
-    console.log(data.values);
+    gribDebug("DATA VALUES: ------");
+    gribDebug(data.values);
 
 
 
@@ -667,7 +653,7 @@ const calcMaxMin = function (array) {
         max = array[i] > max ? array[i] : max;
         min = array[i] < min ? array[i] : min;
     }
-    console.log("Max: " + max + ", Min: " + min);
+    gribDebug("Max: " + max + ", Min: " + min);
 }
 
 
@@ -676,6 +662,7 @@ const calcMaxMin = function (array) {
 
 // Read values coded into bits on a buffer (uint)
 const readValuesFromBuffer = function (arraybuffer, bitsPerValue, numValues, inBitIndex) {
+    if (bitsPerValue === 0) return new Array(numValues).fill(0);
     let values = [];
     let bitIndex = inBitIndex || 0;
     const rawUint8 = new Uint8Array(arraybuffer);
@@ -692,7 +679,7 @@ const readValuesFromBuffer = function (arraybuffer, bitsPerValue, numValues, inB
     //var a = new Uint16Array(arraybuffer.slice(0,2)); // small endian
     //var b = new DataView(arraybuffer).getUint16(); // big endian (one can specify little endian too)
     //var c = bits2uint8(bytes2bits(new Uint8Array(arraybuffer.slice(0,2))));
-    //console.log("Small endian uint16: " + a + ", Big endian uint16: " + b + ", Using strings: " + c); 
+    //gribDebug("Small endian uint16: " + a + ", Big endian uint16: " + b + ", Using strings: " + c);
 
 
     // If you are out of bounds
@@ -709,7 +696,7 @@ const readValuesFromBuffer = function (arraybuffer, bitsPerValue, numValues, inB
 
 
     //for (var i = 0; i < numValues; i++)
-    //    console.log(values[i] - values2ndmethod[i])
+    //    gribDebug(values[i] - values2ndmethod[i])
 
     return values2ndmethod;
 }
@@ -763,14 +750,14 @@ const decodeSection = function (buffer, section) {
                 section = section.concat(JSON.parse(JSON.stringify(GRIB2.templates[templateId]))); // Copy template
             }
             catch (error) {
-                console.log(templateId + " is not defined.")
-                console.log(error);
+                gribDebug(templateId + " is not defined.")
+                gribDebug(error);
             }
             // Store template id
             section[i].template = templateId;
             // Assign new prop
             prop = section[i];
-            console.log("Using template: " + templateId);
+            gribDebug("Using template: " + templateId);
         }
 
 
@@ -835,7 +822,7 @@ const decodeSection = function (buffer, section) {
             try {
                 prop.contentRef = GRIB2.tables[prop.table][prop.content];
             } catch (error) {
-                console.log(prop.table + " is not defined." + GRIB2.tables[prop.table]);
+                gribDebug(prop.table + " is not defined." + GRIB2.tables[prop.table]);
             }
         }
 
@@ -850,8 +837,8 @@ const decodeSection = function (buffer, section) {
             let flagBits = bytes2bits([prop.content]);
             // Iterate through flags
             for (let i = 0; i < flagBits.length; i++) {
-                // Start from lower bits
-                let flag = flagBits[flagBits.length - 1 - i];
+                // GRIB flag tables number bit 1 from the most significant bit.
+                let flag = flagBits[i];
                 // Check table
                 let flagContent = GRIB2.tables[prop.flagTable][i + 1][flag];
                 // Store
