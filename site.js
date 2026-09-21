@@ -24,6 +24,8 @@ async function finishLoader(){
 }
 
 let weatherRequestController=null;
+let currentWeatherLanguage="tr";
+let lastWeatherData=null;
 
 let airportTimezoneData={exact:{},prefix:{}};
 
@@ -60,6 +62,402 @@ function fillWeatherTemplate(template,values={}){
   return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g,(match,key)=>{
     return values[key] ?? match;
   });
+}
+
+function getStoredWeatherLanguage(){
+  const supported=weatherInterpretationData.locales?.supportedLanguages || ["tr","en"];
+  let stored=null;
+
+  try{ stored=localStorage.getItem("yulcaribe-weather-language"); }catch(error){}
+
+  return supported.includes(stored)
+    ? stored
+    : (weatherInterpretationData.locales?.defaultLanguage || "tr");
+}
+
+function setWeatherLanguage(language){
+  const supported=weatherInterpretationData.locales?.supportedLanguages || ["tr","en"];
+  currentWeatherLanguage=supported.includes(language) ? language : "tr";
+
+  try{ localStorage.setItem("yulcaribe-weather-language",currentWeatherLanguage); }catch(error){}
+
+  document.querySelectorAll("[data-weather-language]").forEach(button=>{
+    const active=button.dataset.weatherLanguage===currentWeatherLanguage;
+    button.setAttribute("aria-pressed",active ? "true" : "false");
+  });
+
+  if(lastWeatherData) renderWeatherInterpretation(lastWeatherData);
+}
+
+function parseInterpretationWind(token){
+  const match=String(token || "").toUpperCase().match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT$/);
+  if(!match) return null;
+
+  return {
+    direction:match[1],
+    speed:Number(match[2]),
+    gust:match[4] ? Number(match[4]) : null
+  };
+}
+
+function parseInterpretationVisibility(token){
+  const code=String(token || "").toUpperCase();
+  if(code==="CAVOK" || code==="9999") return 10000;
+  if(/^\d{4}$/.test(code)) return Number(code);
+  return null;
+}
+
+function weatherTermFromToken(token,locale){
+  const code=String(token || "").toUpperCase()
+    .replace(/^[+-]/,"")
+    .replace(/^VC/,"");
+
+  const ordered=["TSRA","SHRA","FZRA","TS","SN","FG","BR","RA","DZ"];
+  const key=ordered.find(item=>code.includes(item));
+  return key ? (locale?.terms?.[key] || key) : null;
+}
+
+function formatInterpretationClock(date,timeZone){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+
+  if(!timeZone){
+    return String(date.getUTCDate()).padStart(2,"0")+" "+
+      String(date.getUTCHours()).padStart(2,"0")+":"+
+      String(date.getUTCMinutes()).padStart(2,"0")+" UTC";
+  }
+
+  try{
+    const parts=new Intl.DateTimeFormat("en-GB",{
+      timeZone,
+      day:"2-digit",
+      hour:"2-digit",
+      minute:"2-digit",
+      hour12:false
+    }).formatToParts(date);
+    const get=type=>parts.find(part=>part.type===type)?.value || "";
+    return get("day")+" "+get("hour")+":"+get("minute");
+  }catch(error){
+    return null;
+  }
+}
+
+function interpretationRangeParts(range,timeZone,reference){
+  const match=String(range || "").match(/^(\d{2})(\d{2})\/(\d{2})(\d{2})$/);
+  if(!match) return {start:"",end:""};
+
+  const startDate=resolveUtcDate(match[1],match[2],0,reference);
+  const endDate=resolveUtcDate(match[3],match[4],0,startDate || reference);
+
+  return {
+    start:formatInterpretationClock(startDate,timeZone) || "",
+    end:formatInterpretationClock(endDate,timeZone) || ""
+  };
+}
+
+function parseTafInterpretationGroups(raw){
+  const clean=String(raw || "").replace(/\s+/g," ").trim();
+  if(!clean) return {station:"",issueDate:null,groups:[]};
+
+  const tokens=clean.split(" ");
+  const station=tokens.find(token=>/^[A-Z]{4}$/.test(token)) || "";
+  const issue=tokens.find(token=>/^\d{6}Z$/.test(token)) || "";
+  const issueDate=issue
+    ? resolveUtcDate(issue.slice(0,2),issue.slice(2,4),issue.slice(4,6))
+    : new Date();
+
+  const validityIndex=tokens.findIndex(token=>/^\d{4}\/\d{4}$/.test(token));
+  const start=Math.max(validityIndex+1,0);
+  const groups=[];
+  let current={type:"INITIAL",range:"",probability:null,temporary:false,tokens:[]};
+
+  const pushCurrent=()=>{
+    if(current.tokens.length || !groups.length) groups.push(current);
+  };
+
+  for(let i=start;i<tokens.length;i++){
+    const token=tokens[i];
+
+    if(token==="BECMG" || token==="TEMPO" || /^FM\d{6}$/.test(token) || /^PROB(?:30|40)$/.test(token)){
+      pushCurrent();
+
+      if(token==="BECMG" || token==="TEMPO"){
+        const range=/^\d{4}\/\d{4}$/.test(tokens[i+1] || "") ? tokens[++i] : "";
+        current={
+          type:token,
+          range,
+          probability:null,
+          temporary:token==="TEMPO",
+          tokens:[]
+        };
+      }else if(/^FM\d{6}$/.test(token)){
+        const value=token.slice(2);
+        current={
+          type:"FM",
+          range:value.slice(0,4)+"/"+value.slice(0,4),
+          from:value,
+          probability:null,
+          temporary:false,
+          tokens:[]
+        };
+      }else{
+        const probability=Number(token.slice(4));
+        let temporary=false;
+        if(tokens[i+1]==="TEMPO"){
+          temporary=true;
+          i++;
+        }
+        const range=/^\d{4}\/\d{4}$/.test(tokens[i+1] || "") ? tokens[++i] : "";
+        current={
+          type:"PROB",
+          range,
+          probability,
+          temporary,
+          tokens:[]
+        };
+      }
+    }else{
+      current.tokens.push(token);
+    }
+  }
+
+  pushCurrent();
+  return {station,issueDate,groups};
+}
+
+function buildWeatherInterpretation(data,language){
+  const locale=getWeatherLocale(language);
+  if(!locale) return null;
+
+  const rules=weatherInterpretationData.rules || {};
+  const current=[];
+  const forecast=[];
+
+  const metarRaw=data?.metar?.raw || "";
+  const metarTokens=metarRaw ? metarRaw.replace(/\s+/g," ").trim().split(" ") : [];
+
+  if(metarTokens.includes("CAVOK")){
+    current.push({text:locale.templates.currentCavok,attention:false});
+  }
+
+  const metarWind=metarTokens.map(parseInterpretationWind).find(Boolean);
+  if(metarWind){
+    const template=metarWind.direction==="VRB"
+      ? locale.templates.currentVariableWind
+      : locale.templates.currentWind;
+
+    current.push({
+      text:fillWeatherTemplate(template,{
+        direction:metarWind.direction==="VRB" ? "VRB" : Number(metarWind.direction)+"°",
+        speed:metarWind.speed
+      }),
+      attention:metarWind.speed >= (rules.wind?.cautionAtKt ?? 20)
+    });
+
+    if(metarWind.gust){
+      current.push({
+        text:fillWeatherTemplate(locale.templates.gust,{gust:metarWind.gust}),
+        attention:metarWind.gust >= (rules.wind?.gustCautionAtKt ?? 25)
+      });
+    }
+  }
+
+  const metarVisibility=metarTokens.map(parseInterpretationVisibility).find(value=>value!==null);
+  if(metarVisibility!==undefined && metarVisibility!==null && metarVisibility<10000){
+    const low=metarVisibility < (rules.visibility?.cautionBelowMeters ?? 5000);
+    current.push({
+      text:fillWeatherTemplate(
+        low ? locale.templates.currentLowVisibility : locale.templates.currentVisibility,
+        {visibility:metarVisibility.toLocaleString(language==="tr" ? "tr-TR" : "en-US")+" m"}
+      ),
+      attention:low
+    });
+  }
+
+  const metarWeatherToken=metarTokens.find(token=>weatherTermFromToken(token,locale));
+  if(metarWeatherToken){
+    const weather=weatherTermFromToken(metarWeatherToken,locale);
+    const raw=metarWeatherToken.toUpperCase();
+    current.push({
+      text:fillWeatherTemplate(locale.templates.currentWeather,{weather}),
+      attention:/TS|FZRA|FG|SN|SQ|FC/.test(raw)
+    });
+  }
+
+  for(const token of metarTokens){
+    const cloud=String(token).toUpperCase().match(/^(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)$/);
+    if(!cloud) continue;
+    const height=Number(cloud[2])*100;
+    current.push({
+      text:fillWeatherTemplate(
+        cloud[3]==="CB" ? locale.templates.currentCb : locale.templates.currentTcu,
+        {height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")}
+      ),
+      attention:true
+    });
+  }
+
+  const taf=parseTafInterpretationGroups(data?.taf?.raw || "");
+  const timeZone=getAirportTimezone(taf.station || data?.icao);
+  let prevailingWind=taf.groups[0]?.tokens?.map(parseInterpretationWind).find(Boolean) || null;
+
+  for(let index=1;index<taf.groups.length;index++){
+    const group=taf.groups[index];
+    let range=interpretationRangeParts(group.range,timeZone,taf.issueDate);
+
+    if(group.type==="FM" && group.from){
+      const fromDate=resolveUtcDate(
+        group.from.slice(0,2),
+        group.from.slice(2,4),
+        group.from.slice(4,6),
+        taf.issueDate
+      );
+      const fromText=formatInterpretationClock(fromDate,timeZone) || "";
+      range={start:fromText,end:fromText};
+    }
+
+    const wind=group.tokens.map(parseInterpretationWind).find(Boolean);
+    if(wind){
+      let template;
+      const values={
+        start:range.start,
+        end:range.end,
+        direction:wind.direction==="VRB" ? "VRB" : Number(wind.direction)+"°",
+        speed:wind.speed,
+        from:prevailingWind?.direction==="VRB" ? "VRB" : (prevailingWind ? Number(prevailingWind.direction)+"°" : ""),
+        to:wind.direction==="VRB" ? "VRB" : Number(wind.direction)+"°"
+      };
+
+      if(wind.direction==="VRB"){
+        template=locale.templates.variableWindChange;
+      }else if(prevailingWind && prevailingWind.direction!=="VRB" && prevailingWind.direction!==wind.direction){
+        template=locale.templates.windShift;
+      }else{
+        template=locale.templates.windChange;
+      }
+
+      forecast.push({
+        text:fillWeatherTemplate(template,values),
+        attention:wind.speed >= (rules.wind?.cautionAtKt ?? 20)
+      });
+
+      if(wind.gust){
+        forecast.push({
+          text:fillWeatherTemplate(locale.templates.gust,{gust:wind.gust}),
+          attention:wind.gust >= (rules.wind?.gustCautionAtKt ?? 25)
+        });
+      }
+
+      if(group.type==="BECMG" || group.type==="FM") prevailingWind=wind;
+    }
+
+    if(group.tokens.includes("CAVOK")){
+      forecast.push({
+        text:fillWeatherTemplate(locale.templates.forecastCavok,range),
+        attention:false
+      });
+    }
+
+    const weatherToken=group.tokens.find(token=>weatherTermFromToken(token,locale));
+    if(weatherToken){
+      const weather=weatherTermFromToken(weatherToken,locale);
+      const values={...range,weather,probability:group.probability};
+
+      let template=locale.templates.weather;
+      if(group.probability) template=locale.templates.probabilityWeather;
+      else if(group.temporary) template=locale.templates.temporaryWeather;
+
+      forecast.push({
+        text:fillWeatherTemplate(template,values),
+        attention:/TS|FZRA|FG|SN|SQ|FC/.test(weatherToken.toUpperCase())
+      });
+    }
+
+    for(const token of group.tokens){
+      const cloud=String(token).toUpperCase().match(/^(FEW|SCT|BKN|OVC)(\d{3})(CB|TCU)?$/);
+      if(!cloud) continue;
+
+      const height=Number(cloud[2])*100;
+      if(cloud[3]==="CB" || cloud[3]==="TCU"){
+        forecast.push({
+          text:fillWeatherTemplate(
+            cloud[3]==="CB" ? locale.templates.cb : locale.templates.tcu,
+            {...range,height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")}
+          ),
+          attention:true
+        });
+      }else if((cloud[1]==="BKN" || cloud[1]==="OVC") && height < (rules.ceiling?.cautionBelowFeet ?? 3000)){
+        forecast.push({
+          text:fillWeatherTemplate(locale.templates.lowCeiling,{
+            height:height.toLocaleString(language==="tr" ? "tr-TR" : "en-US")
+          }),
+          attention:true
+        });
+      }
+    }
+
+    const visibility=group.tokens.map(parseInterpretationVisibility).find(value=>value!==null);
+    if(visibility!==undefined && visibility!==null && visibility < (rules.visibility?.cautionBelowMeters ?? 5000)){
+      forecast.push({
+        text:fillWeatherTemplate(locale.templates.lowVisibility,{
+          visibility:visibility.toLocaleString(language==="tr" ? "tr-TR" : "en-US")+" m"
+        }),
+        attention:true
+      });
+    }
+  }
+
+  if(!current.length && !forecast.length){
+    current.push({text:locale.ui.noSignificantHazard,attention:false});
+  }
+
+  return {locale,current,forecast};
+}
+
+function renderWeatherInterpretation(data){
+  const panel=document.getElementById("weather-interpretation");
+  const title=document.getElementById("weather-interpretation-title");
+  const content=document.getElementById("weather-interpretation-content");
+  if(!panel || !title || !content) return;
+
+  const summary=buildWeatherInterpretation(data,currentWeatherLanguage);
+  if(!summary){
+    panel.hidden=true;
+    content.innerHTML="";
+    return;
+  }
+
+  title.textContent=summary.locale.ui.title;
+  content.innerHTML="";
+
+  const appendSection=(label,items)=>{
+    if(!items.length) return;
+
+    const section=document.createElement("div");
+    section.className="weather-summary-section";
+
+    const heading=document.createElement("div");
+    heading.className="weather-summary-label";
+    heading.textContent=label;
+    section.appendChild(heading);
+
+    const list=document.createElement("div");
+    list.className="weather-summary-list";
+
+    for(const item of items){
+      const row=document.createElement("div");
+      row.className="weather-summary-item"+(item.attention ? " is-attention" : "");
+      row.textContent=item.text;
+      list.appendChild(row);
+    }
+
+    section.appendChild(list);
+    content.appendChild(section);
+  };
+
+  appendSection(summary.locale.ui.current,summary.current);
+  appendSection(summary.locale.ui.forecast,summary.forecast);
+
+  panel.hidden=false;
 }
 
 
@@ -549,6 +947,7 @@ function decodeTaf(raw){
 }
 
 function renderWeatherResult(data){
+  lastWeatherData=data;
   const results=document.getElementById("weather-results");
   const metarEl=document.getElementById("weather-metar");
   const tafEl=document.getElementById("weather-taf");
@@ -575,6 +974,7 @@ function renderWeatherResult(data){
     data?.taf?.raw ? decodeTaf(data.taf.raw) : []
   );
 
+  renderWeatherInterpretation(data);
   results.hidden=false;
 
   if(sourceEl){
@@ -678,6 +1078,15 @@ function initWeatherConsole(){
   const input=document.getElementById("weather-icao");
 
   if(!form || !input) return;
+
+  currentWeatherLanguage=getStoredWeatherLanguage();
+  document.querySelectorAll("[data-weather-language]").forEach(button=>{
+    const active=button.dataset.weatherLanguage===currentWeatherLanguage;
+    button.setAttribute("aria-pressed",active ? "true" : "false");
+    button.addEventListener("click",()=>{
+      setWeatherLanguage(button.dataset.weatherLanguage || "tr");
+    });
+  });
 
   input.addEventListener("input",()=>{
     const clean=input.value
