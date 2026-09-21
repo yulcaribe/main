@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=4">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=5">
 </head>
 <body>
   <header class="pb-header">
@@ -104,7 +104,7 @@
           <p>Üst seviye wind/temp, aviation hazard gridleri ve legacy WAFS karşılaştırması. Her kaynak ayrı ayrı doğrulanır.</p>
           <div class="model-source-list">
             <div id="model-source-gfs"><div class="model-source-head"><strong>GFS 0.25°</strong><span class="info">WAITING</span></div></div>
-            <div id="model-source-wafs025"><div class="model-source-head"><strong>WAFS 0.25°</strong><span class="info">WAITING</span></div></div>
+            <div id="model-source-wafs025"><div class="model-source-head"><strong>AVIATION GFS 0.25°</strong><span class="info">WAITING</span></div></div>
             <div id="model-source-wafs125"><div class="model-source-head"><strong>WAFS 1.25°</strong><span class="info">WAITING</span></div></div>
           </div>
         </div>
@@ -118,7 +118,7 @@
       </div>
       <div class="model-meta">
         <div><small>GFS 0.25°</small><span id="model-gfs-meta">—</span></div>
-        <div><small>WAFS 0.25° AVIATION</small><span id="model-wafs025-meta">—</span></div>
+        <div><small>AVIATION GFS 0.25° AVIATION</small><span id="model-wafs025-meta">—</span></div>
       </div>
       <div id="model-route-table" class="model-route-table"></div>
       <div id="model-hazard-grid" class="model-hazard-grid"></div>
@@ -148,7 +148,7 @@
 
   <footer class="footer">
     <span>Data: NOAA / NWS Aviation Weather Center + NOAA/NCEP GFS</span>
-    <span>Model WX: GFS 0.25° · WAFS aviation feed when publicly available · legacy WAFS 1.25°</span>
+    <span>Model WX: GFS 0.25° · NOAA Aviation GFS 0.25° · legacy WAFS 1.25°</span>
   </footer>
 
   <div class="boot" id="boot"><strong>PB</strong><span id="boot-text">Pilot briefing hazırlanıyor…</span></div>
@@ -166,12 +166,12 @@
         let ok=false;
         for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
         if(!ok){text.textContent="Leaflet yüklenemedi.";return;}
-        try{await load("/main/briefing/vendor/grib2.js?v=4");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
-        try{await load("/main/briefing/vendor/grib2utils.js?v=4");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
-        try{await load("/main/briefing/grib2-browser.js?v=4");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
-        try{await load("/main/briefing/modelwx.js?v=4");}catch(e){console.warn("Model WX yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2.js?v=5");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
+        try{await load("/main/briefing/vendor/grib2utils.js?v=5");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
+        try{await load("/main/briefing/grib2-browser.js?v=5");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
+        try{await load("/main/briefing/modelwx.js?v=5");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=4");
+          await load("/main/briefing/briefing.js?v=5");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
