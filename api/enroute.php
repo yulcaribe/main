@@ -5,7 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 
 const AWC_BASE = 'https://aviationweather.gov/api/data/';
-const USER_AGENT = 'YulCaribe-Aviation/1.0 (+https://yulcaribe.com)';
+const USER_AGENT = 'YulCaribe-Aviation/1.1 (+https://yulcaribe.com)';
 
 function respond(int $status, array $payload): never {
     http_response_code($status);
@@ -14,7 +14,7 @@ function respond(int $status, array $payload): never {
 }
 
 function cacheDir(): string {
-    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_enroute_v1';
+    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_enroute_v2';
     if (!is_dir($dir)) @mkdir($dir, 0700, true);
     return $dir;
 }
@@ -34,7 +34,11 @@ function cacheGet(string $key, int $maxAge): ?array {
 
 function cachePut(string $key, array $payload): void {
     $file = cacheDir() . DIRECTORY_SEPARATOR . sha1($key) . '.json';
-    @file_put_contents($file, json_encode(['savedAt' => time(), 'payload' => $payload], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    @file_put_contents(
+        $file,
+        json_encode(['savedAt' => time(), 'payload' => $payload], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        LOCK_EX
+    );
 }
 
 function awcGet(string $path, array $query = [], int $timeout = 12): array {
@@ -123,6 +127,235 @@ function nearestRoute(array $route, float $lat, float $lon): array {
     return [$best, $progress];
 }
 
+function buildRoute(array $points): array {
+    $route = [];
+    $distance = 0.0;
+
+    for ($i = 0; $i < count($points) - 1; $i++) {
+        $a = $points[$i]; $b = $points[$i + 1];
+        $legDistance = haversineNm((float)$a['lat'], (float)$a['lon'], (float)$b['lat'], (float)$b['lon']);
+        $distance += $legDistance;
+        $count = max(2, min(80, (int)ceil($legDistance / 35) + 1));
+        $leg = greatCircle((float)$a['lat'], (float)$a['lon'], (float)$b['lat'], (float)$b['lon'], $count);
+        if ($route && $leg) array_shift($leg);
+        array_push($route, ...$leg);
+    }
+
+    return [$route, $distance];
+}
+
+function sampleRoute(array $route, int $count): array {
+    $n = count($route);
+    if ($n <= $count) return $route;
+    $out = [];
+    for ($i = 0; $i < $count; $i++) {
+        $idx = (int)round(($i / max(1, $count - 1)) * ($n - 1));
+        $out[] = $route[$idx];
+    }
+    return $out;
+}
+
+function parseCoordinateToken(string $token): ?array {
+    if (preg_match('/^(\d{2})([NS])(\d{3})([EW])$/', $token, $m)) {
+        $lat = (float)$m[1] * ($m[2] === 'S' ? -1 : 1);
+        $lon = (float)$m[3] * ($m[4] === 'W' ? -1 : 1);
+        if (abs($lat) <= 90 && abs($lon) <= 180) return ['lat' => $lat, 'lon' => $lon];
+    }
+
+    if (preg_match('/^(\d{2})(\d{2})([NS])(\d{3})(\d{2})([EW])$/', $token, $m)) {
+        $lat = ((float)$m[1] + ((float)$m[2] / 60)) * ($m[3] === 'S' ? -1 : 1);
+        $lon = ((float)$m[4] + ((float)$m[5] / 60)) * ($m[6] === 'W' ? -1 : 1);
+        if (abs($lat) <= 90 && abs($lon) <= 180) return ['lat' => $lat, 'lon' => $lon];
+    }
+
+    return null;
+}
+
+function parseRouteTokens(string $raw, string $from, string $to): array {
+    $raw = strtoupper(trim($raw));
+    $raw = preg_replace('/[\r\n\t]+/', ' ', $raw) ?? $raw;
+    $tokens = preg_split('/[\s,;]+/', $raw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+    $parsed = [];
+    $ignored = [];
+
+    foreach ($tokens as $original) {
+        $token = trim($original, " \t\n\r\0\x0B()[]{}");
+        if ($token === '') continue;
+        if (str_contains($token, '/')) $token = explode('/', $token, 2)[0];
+        $token = trim($token, '.');
+        if ($token === '' || $token === $from || $token === $to) continue;
+
+        if (in_array($token, ['DCT','IFR','VFR','NAT','SID','STAR'], true)) {
+            $ignored[] = $token;
+            continue;
+        }
+
+        $coord = parseCoordinateToken($token);
+        if ($coord) {
+            $parsed[] = ['token' => $token, 'kind' => 'coordinate', 'coord' => $coord];
+            continue;
+        }
+
+        if (preg_match('/^[A-Z]{5}$/', $token)) {
+            $parsed[] = ['token' => $token, 'kind' => 'fix'];
+            continue;
+        }
+
+        if (preg_match('/^[A-Z]{3}$/', $token)) {
+            $parsed[] = ['token' => $token, 'kind' => 'navaid'];
+            continue;
+        }
+
+        $ignored[] = $token;
+    }
+
+    return ['parsed' => $parsed, 'ignored' => array_values(array_unique($ignored))];
+}
+
+function groupNavRows(array $rows): array {
+    $out = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) continue;
+        $id = strtoupper((string)($row['id'] ?? $row['ident'] ?? ''));
+        if ($id === '' || !isset($row['lat'], $row['lon']) || !is_numeric($row['lat']) || !is_numeric($row['lon'])) continue;
+        $out[$id][] = $row;
+    }
+    return $out;
+}
+
+function chooseNavCandidate(array $rows, array $directRoute, float $lastProgress, float $maxOffRouteNm): ?array {
+    $best = null; $bestScore = INF;
+
+    foreach ($rows as $row) {
+        $lat = (float)$row['lat']; $lon = (float)$row['lon'];
+        [$offRoute, $progress] = nearestRoute($directRoute, $lat, $lon);
+        if ($offRoute > $maxOffRouteNm) continue;
+
+        $backtrackPenalty = ($progress + 0.12 < $lastProgress) ? 700 : 0;
+        $score = $offRoute + $backtrackPenalty;
+
+        if ($score < $bestScore) {
+            $bestScore = $score;
+            $best = [
+                'lat' => $lat,
+                'lon' => $lon,
+                'progress' => $progress,
+                'raw' => $row
+            ];
+        }
+    }
+
+    return $best;
+}
+
+function resolveUserRoute(string $raw, string $from, string $to, array $departure, array $arrival): array {
+    $parsed = parseRouteTokens($raw, $from, $to);
+    $items = $parsed['parsed'];
+
+    $fixIds = [];
+    $navaidIds = [];
+    foreach ($items as $item) {
+        if ($item['kind'] === 'fix') $fixIds[] = $item['token'];
+        if ($item['kind'] === 'navaid') $navaidIds[] = $item['token'];
+    }
+    $fixIds = array_values(array_unique($fixIds));
+    $navaidIds = array_values(array_unique($navaidIds));
+
+    $fixRows = [];
+    $navaidRows = [];
+
+    if ($fixIds) {
+        $res = awcGet('fix', ['ids' => implode(',', $fixIds), 'format' => 'json']);
+        if ($res['ok'] && is_array($res['data'])) $fixRows = groupNavRows($res['data']);
+    }
+    if ($navaidIds) {
+        $res = awcGet('navaid', ['ids' => implode(',', $navaidIds), 'format' => 'json']);
+        if ($res['ok'] && is_array($res['data'])) $navaidRows = groupNavRows($res['data']);
+    }
+
+    $directDistance = haversineNm((float)$departure['lat'], (float)$departure['lon'], (float)$arrival['lat'], (float)$arrival['lon']);
+    $directRoute = greatCircle(
+        (float)$departure['lat'], (float)$departure['lon'],
+        (float)$arrival['lat'], (float)$arrival['lon'],
+        max(24, min(96, (int)ceil($directDistance / 35) + 1))
+    );
+    $maxOffRouteNm = max(350.0, min(1200.0, $directDistance * 0.35));
+
+    $points = [[
+        'id' => $from, 'type' => 'departure',
+        'lat' => (float)$departure['lat'], 'lon' => (float)$departure['lon']
+    ]];
+    $resolved = $points;
+    $unresolved = [];
+    $lastProgress = 0.0;
+
+    foreach ($items as $item) {
+        $id = $item['token'];
+
+        if ($item['kind'] === 'coordinate') {
+            $candidate = [
+                'id' => $id, 'type' => 'coordinate',
+                'lat' => (float)$item['coord']['lat'], 'lon' => (float)$item['coord']['lon']
+            ];
+            [$offRoute, $progress] = nearestRoute($directRoute, $candidate['lat'], $candidate['lon']);
+            if ($offRoute <= $maxOffRouteNm * 1.5) {
+                $points[] = $candidate;
+                $resolved[] = $candidate;
+                $lastProgress = max($lastProgress, $progress);
+            } else {
+                $unresolved[] = $id;
+            }
+            continue;
+        }
+
+        $rows = $item['kind'] === 'fix' ? ($fixRows[$id] ?? []) : ($navaidRows[$id] ?? []);
+        if (!$rows) {
+            $unresolved[] = $id;
+            continue;
+        }
+
+        $chosen = chooseNavCandidate($rows, $directRoute, $lastProgress, $maxOffRouteNm);
+        if (!$chosen) {
+            $unresolved[] = $id;
+            continue;
+        }
+
+        $candidate = [
+            'id' => $id,
+            'type' => $item['kind'],
+            'lat' => $chosen['lat'],
+            'lon' => $chosen['lon']
+        ];
+
+        $prev = end($points);
+        if ($prev && haversineNm((float)$prev['lat'], (float)$prev['lon'], $candidate['lat'], $candidate['lon']) < 2.0) {
+            continue;
+        }
+
+        $points[] = $candidate;
+        $resolved[] = $candidate;
+        $lastProgress = max($lastProgress, (float)$chosen['progress']);
+    }
+
+    $arrivalPoint = [
+        'id' => $to, 'type' => 'arrival',
+        'lat' => (float)$arrival['lat'], 'lon' => (float)$arrival['lon']
+    ];
+    $points[] = $arrivalPoint;
+    $resolved[] = $arrivalPoint;
+
+    $userResolvedCount = max(0, count($points) - 2);
+
+    return [
+        'usable' => $userResolvedCount > 0,
+        'points' => $points,
+        'resolved' => $resolved,
+        'unresolved' => array_values(array_unique($unresolved)),
+        'ignored' => $parsed['ignored']
+    ];
+}
+
 function normalizeStation(array $s, array $route): ?array {
     $icao = strtoupper((string)($s['icaoId'] ?? ''));
     if (!preg_match('/^[A-Z0-9]{4}$/', $icao)) return null;
@@ -181,6 +414,8 @@ function mapByIcao(array $rows): array {
 
 $from = strtoupper(trim((string)($_GET['from'] ?? '')));
 $to = strtoupper(trim((string)($_GET['to'] ?? '')));
+$routeRaw = strtoupper(trim((string)($_GET['route'] ?? '')));
+if (strlen($routeRaw) > 2000) $routeRaw = substr($routeRaw, 0, 2000);
 $corridor = (int)($_GET['corridor'] ?? 90);
 $corridor = max(40, min(180, $corridor));
 
@@ -189,7 +424,7 @@ if (!preg_match('/^[A-Z0-9]{4}$/', $from) || !preg_match('/^[A-Z0-9]{4}$/', $to)
 }
 if (!function_exists('curl_init')) respond(500, ['ok' => false, 'error' => 'PHP cURL aktif değil.']);
 
-$cacheKey = "{$from}|{$to}|{$corridor}";
+$cacheKey = "{$from}|{$to}|{$corridor}|" . sha1($routeRaw);
 if ($cached = cacheGet($cacheKey, 300)) respond(200, $cached);
 
 $airportRes = awcGet('airport', ['ids' => $from . ',' . $to, 'format' => 'json']);
@@ -205,12 +440,42 @@ if (!isset($airports[$from], $airports[$to])) {
 $a = $airports[$from]; $b = $airports[$to];
 $lat1 = (float)$a['lat']; $lon1 = (float)$a['lon'];
 $lat2 = (float)$b['lat']; $lon2 = (float)$b['lon'];
-$distanceNm = haversineNm($lat1, $lon1, $lat2, $lon2);
-$routeCount = max(24, min(96, (int)ceil($distanceNm / 35) + 1));
-$route = greatCircle($lat1, $lon1, $lat2, $lon2, $routeCount);
 
-$probeCount = max(4, min(12, (int)ceil($distanceNm / 300) + 1));
-$probeRoute = greatCircle($lat1, $lon1, $lat2, $lon2, $probeCount);
+$routeMode = 'great_circle';
+$routeInput = [
+    'raw' => $routeRaw !== '' ? $routeRaw : null,
+    'resolved' => [],
+    'unresolved' => [],
+    'ignored' => []
+];
+
+if ($routeRaw !== '') {
+    $resolvedRoute = resolveUserRoute($routeRaw, $from, $to, $a, $b);
+    $routeInput['resolved'] = $resolvedRoute['resolved'];
+    $routeInput['unresolved'] = $resolvedRoute['unresolved'];
+    $routeInput['ignored'] = $resolvedRoute['ignored'];
+
+    if ($resolvedRoute['usable']) {
+        [$route, $distanceNm] = buildRoute($resolvedRoute['points']);
+        $routeMode = 'user_route';
+    }
+}
+
+if ($routeMode === 'great_circle') {
+    $distanceNm = haversineNm($lat1, $lon1, $lat2, $lon2);
+    $routeCount = max(24, min(96, (int)ceil($distanceNm / 35) + 1));
+    $route = greatCircle($lat1, $lon1, $lat2, $lon2, $routeCount);
+
+    if (!$routeInput['resolved']) {
+        $routeInput['resolved'] = [
+            ['id' => $from, 'type' => 'departure', 'lat' => $lat1, 'lon' => $lon1],
+            ['id' => $to, 'type' => 'arrival', 'lat' => $lat2, 'lon' => $lon2]
+        ];
+    }
+}
+
+$probeCount = max(4, min(10, (int)ceil($distanceNm / 300) + 1));
+$probeRoute = sampleRoute($route, $probeCount);
 $stationPool = [];
 $searchNm = min(200, max(100, $corridor + 65));
 
@@ -287,25 +552,34 @@ $sigmetRes = awcGet('isigmet', ['format' => 'geojson'], 15);
 $sigmets = $sigmetRes['ok'] && is_array($sigmetRes['data']) ? $sigmetRes['data'] : ['type' => 'FeatureCollection', 'features' => []];
 if (($sigmets['type'] ?? '') !== 'FeatureCollection') $sigmets = ['type' => 'FeatureCollection', 'features' => []];
 
+$notes = [
+    'Kalkış ve varış meydanları her zaman dahil edilir.',
+    'Yolboyunda her havalimanı değil, rota koridoruna yakın temsilci METAR/TAF istasyonları seçilir.'
+];
+if ($routeMode === 'user_route') {
+    $notes[] = 'Rota, kullanıcı tarafından girilen metindeki çözülebilen FIX/NAVAID/koordinat noktaları üzerinden çizildi.';
+} else {
+    $notes[] = $routeRaw !== ''
+        ? 'Girilen rota içinde koordinata çözülebilen nokta bulunamadığı için great-circle rotasına geri dönüldü.'
+        : 'OFP rotası girilmediği için great-circle rotası kullanıldı.';
+}
+
 $payload = [
     'ok' => true,
     'source' => 'NOAA/NWS Aviation Weather Center',
     'fetchedAt' => gmdate('c'),
-    'routeMode' => 'great_circle',
+    'routeMode' => $routeMode,
     'operationalRoute' => false,
     'corridorNm' => $corridor,
     'distanceNm' => round($distanceNm, 0),
     'from' => $fromBase,
     'to' => $toBase,
     'route' => $route,
+    'routeInput' => $routeInput,
     'stations' => $stations,
     'sigmets' => $sigmets,
     'cache' => ['hit' => false, 'ageSeconds' => 0],
-    'notes' => [
-        'Kalkış ve varış meydanları her zaman dahil edilir.',
-        'Yolboyunda her havalimanı değil, rota koridoruna yakın temsilci METAR/TAF istasyonları seçilir.',
-        'Haritadaki rota büyük daire hattıdır; operasyonel flight plan rotası değildir.'
-    ]
+    'notes' => $notes
 ];
 
 cachePut($cacheKey, $payload);
