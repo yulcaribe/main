@@ -25,6 +25,10 @@
     <div class="shell weather-wrap">
       <div class="weather-head">
         <h2>METAR / TAF</h2>
+        <div class="weather-language" role="group" aria-label="Yorum dili">
+          <button type="button" data-weather-language="tr" aria-pressed="true">TR</button>
+          <button type="button" data-weather-language="en" aria-pressed="false">EN</button>
+        </div>
       </div>
 
       <form class="weather-search" id="weather-search-form" autocomplete="off">
@@ -75,6 +79,14 @@
           </div>
           <pre id="weather-taf">—</pre>
           <div class="weather-decode" id="weather-taf-decode" hidden></div>
+        </article>
+
+        <article class="weather-interpretation" id="weather-interpretation" hidden>
+          <div class="weather-interpretation-head">
+            <span id="weather-interpretation-title">Hava Durumu Yorumu</span>
+            <span class="weather-interpretation-mode">ALG</span>
+          </div>
+          <div id="weather-interpretation-content"></div>
         </article>
 
         <div class="weather-source-line" id="weather-source-line"></div>
