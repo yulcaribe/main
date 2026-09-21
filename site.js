@@ -34,8 +34,8 @@ let weatherInterpretationData={locales:null,rules:null};
 async function loadWeatherInterpretationData(){
   try{
     const [localesResponse,rulesResponse]=await Promise.all([
-      fetch("/main/assets/data/weather-locales.json",{cache:"force-cache"}),
-      fetch("/main/assets/data/weather-rules.json",{cache:"force-cache"})
+      fetch("/main/assets/data/weather-locales.json?v=3",{cache:"no-cache"}),
+      fetch("/main/assets/data/weather-rules.json?v=2",{cache:"no-cache"})
     ]);
 
     weatherInterpretationData={
@@ -191,15 +191,27 @@ function interpretationRangeParts(range,timeZone,reference){
   const startDate=resolveUtcDate(match[1],match[2],0,reference);
   const endDate=resolveUtcDate(match[3],match[4],0,startDate || reference);
 
+  const utcStartDate=formatInterpretationDate(startDate,"UTC");
+  const utcStartTime=formatInterpretationTime(startDate,"UTC");
+  const utcEndDate=formatInterpretationDate(endDate,"UTC");
+  const utcEndTime=formatInterpretationTime(endDate,"UTC");
+  const localStartDate=formatInterpretationDate(startDate,timeZone || "UTC");
+  const localStartTime=formatInterpretationTime(startDate,timeZone || "UTC");
+  const localEndDate=formatInterpretationDate(endDate,timeZone || "UTC");
+  const localEndTime=formatInterpretationTime(endDate,timeZone || "UTC");
+
   return {
-    utcStartDate:formatInterpretationDate(startDate,"UTC"),
-    utcStartTime:formatInterpretationTime(startDate,"UTC"),
-    utcEndDate:formatInterpretationDate(endDate,"UTC"),
-    utcEndTime:formatInterpretationTime(endDate,"UTC"),
-    localStartDate:formatInterpretationDate(startDate,timeZone || "UTC"),
-    localStartTime:formatInterpretationTime(startDate,timeZone || "UTC"),
-    localEndDate:formatInterpretationDate(endDate,timeZone || "UTC"),
-    localEndTime:formatInterpretationTime(endDate,timeZone || "UTC")
+    utcStartDate,
+    utcStartTime,
+    utcEndDate,
+    utcEndTime,
+    localStartDate,
+    localStartTime,
+    localEndDate,
+    localEndTime,
+    // Backward compatibility for an older cached locale template.
+    start:localStartDate+" "+localStartTime,
+    end:localEndDate+" "+localEndTime
   };
 }
 
@@ -360,15 +372,21 @@ function buildWeatherInterpretation(data,language){
         group.from.slice(4,6),
         taf.issueDate
       );
+      const utcDate=formatInterpretationDate(fromDate,"UTC");
+      const utcTime=formatInterpretationTime(fromDate,"UTC");
+      const localDate=formatInterpretationDate(fromDate,timeZone || "UTC");
+      const localTime=formatInterpretationTime(fromDate,timeZone || "UTC");
       range={
-        utcStartDate:formatInterpretationDate(fromDate,"UTC"),
-        utcStartTime:formatInterpretationTime(fromDate,"UTC"),
-        utcEndDate:formatInterpretationDate(fromDate,"UTC"),
-        utcEndTime:formatInterpretationTime(fromDate,"UTC"),
-        localStartDate:formatInterpretationDate(fromDate,timeZone || "UTC"),
-        localStartTime:formatInterpretationTime(fromDate,timeZone || "UTC"),
-        localEndDate:formatInterpretationDate(fromDate,timeZone || "UTC"),
-        localEndTime:formatInterpretationTime(fromDate,timeZone || "UTC")
+        utcStartDate:utcDate,
+        utcStartTime:utcTime,
+        utcEndDate:utcDate,
+        utcEndTime:utcTime,
+        localStartDate:localDate,
+        localStartTime:localTime,
+        localEndDate:localDate,
+        localEndTime:localTime,
+        start:localDate+" "+localTime,
+        end:localDate+" "+localTime
       };
     }
 
