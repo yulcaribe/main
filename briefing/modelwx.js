@@ -52,7 +52,7 @@
     for(let i=1;i<=n;i++){
       const s4=window.YCGrib2.section4(handle,i);
       const key=`${s4.parameterCategory}:${s4.parameterNumber}`;
-      out.push({i,key,name:names[i-1]||paramNames.get(key)||key,s4});
+      out.push({i,key,name:names[i-1]||s4.ycName||paramNames.get(key)||key,s4});
     }
     return out;
   }
@@ -77,14 +77,21 @@
     const valid=new Date(midEpoch).toISOString().slice(0,16).replace("T"," ");
     const q=new URLSearchParams({action,fl:String(data.flight.cruiseFL),valid});
     if(bbox){for(const k of ["left","right","bottom","top"])q.set(k,String(bbox[k].toFixed(3)));}
-    const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store"});
-    const type=r.headers.get("content-type")||"";
-    if(!r.ok||type.includes("application/json")){
-      let j=null;try{j=await r.json();}catch(e){}
-      throw new Error(j?.error||`HTTP ${r.status}`);
-    }
-    const bytes=new Uint8Array(await r.arrayBuffer());
-    return {bytes,meta:{source:r.headers.get("x-yc-model-source")||action,cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",records:r.headers.get("x-yc-records")||""}};
+    const ac=new AbortController();
+    const timer=setTimeout(()=>ac.abort(),15000);
+    try{
+      const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store",signal:ac.signal});
+      const type=r.headers.get("content-type")||"";
+      if(!r.ok||type.includes("application/json")){
+        let j=null;try{j=await r.json();}catch(e){}
+        throw new Error(j?.error||`HTTP ${r.status}`);
+      }
+      const bytes=new Uint8Array(await r.arrayBuffer());
+      return {bytes,meta:{source:r.headers.get("x-yc-model-source")||action,cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",records:r.headers.get("x-yc-records")||""}};
+    }catch(e){
+      if(e?.name==="AbortError")throw new Error(action+" 15 saniyede yanıt vermedi.");
+      throw e;
+    }finally{clearTimeout(timer);}
   }
 
   function decode(bytes,recordsHeader=""){const h=window.YCGrib2.parse(bytes);return {handle:h,records:recMeta(h,recordsHeader)};}
