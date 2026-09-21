@@ -34,7 +34,7 @@ let weatherInterpretationData={locales:null,rules:null};
 async function loadWeatherInterpretationData(){
   try{
     const [localesResponse,rulesResponse]=await Promise.all([
-      fetch("/main/assets/data/weather-locales.json?v=3",{cache:"no-cache"}),
+      fetch("/main/assets/data/weather-locales.json?v=4",{cache:"no-cache"}),
       fetch("/main/assets/data/weather-rules.json?v=2",{cache:"no-cache"})
     ]);
 
