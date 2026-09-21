@@ -78,7 +78,8 @@
     const q=new URLSearchParams({action,fl:String(data.flight.cruiseFL),valid});
     if(bbox){for(const k of ["left","right","bottom","top"])q.set(k,String(bbox[k].toFixed(3)));}
     const ac=new AbortController();
-    const timer=setTimeout(()=>ac.abort(),15000);
+    const timeoutMs=action==="wafs125"?8000:15000;
+    const timer=setTimeout(()=>ac.abort(),timeoutMs);
     try{
       const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store",signal:ac.signal});
       const type=r.headers.get("content-type")||"";
@@ -89,7 +90,7 @@
       const bytes=new Uint8Array(await r.arrayBuffer());
       return {bytes,meta:{source:r.headers.get("x-yc-model-source")||action,cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",records:r.headers.get("x-yc-records")||""}};
     }catch(e){
-      if(e?.name==="AbortError")throw new Error(action+" 15 saniyede yanıt vermedi.");
+      if(e?.name==="AbortError")throw new Error(action+" "+Math.round(timeoutMs/1000)+" saniyede yanıt vermedi.");
       throw e;
     }finally{clearTimeout(timer);}
   }
@@ -108,8 +109,8 @@
     return {midWind:mw,midTemp:Number.isFinite(t?.[mid])?t[mid]-273.15:null};
   }
 
-  function renderWafs025(product,points){
-    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("WAFS 0.25 kayıt yok.");
+  function renderAviation025(product,points){
+    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("Aviation GFS 0.25 kayıt yok.");
     const ix=nearestIndices(d.handle,first.i,points);
     const edrRec=find(d.records,"EDPARM")||find(d.records,"CATEDR")||find(d.records,"MWTURB");
     const iceRec=find(d.records,"ICESEV")||find(d.records,"ICSEV");
@@ -142,7 +143,7 @@
     $("#model-hazard-grid").innerHTML='<div class="model-loading">Aviation hazard gridleri aranıyor…</div>';
     $("#model-wafs125").innerHTML='<strong>LOADING</strong><span>legacy WAFS karşılaştırması</span>';
     setSource("#model-source-gfs","GFS 0.25°","LOADING","info");
-    setSource("#model-source-wafs025","WAFS 0.25°","LOADING","info");
+    setSource("#model-source-wafs025","AVIATION GFS 0.25°","LOADING","info");
     setSource("#model-source-wafs125","WAFS 1.25°","LOADING","info");
     try{await window.YCGrib2.init();}catch(e){
       if(my!==generation)return;
@@ -155,7 +156,7 @@
     if(my!==generation)return;
     const bbox=routeBBox(data.route),points=routeSamples(data.route,5);
     const [gfsR,w025R,w125R]=await Promise.allSettled([
-      fetchGrib("gfs025",data,bbox),fetchGrib("wafs025",data),fetchGrib("wafs125",data)
+      fetchGrib("gfs025",data,bbox),fetchGrib("aviation025",data),fetchGrib("wafs125",data)
     ]);
     if(my!==generation)return;
     let gfsSummary=null;
@@ -163,8 +164,8 @@
       try{gfsSummary=renderGfs(gfsR.value,data,points);setSource("#model-source-gfs","GFS 0.25°","LIVE","ok");}catch(e){setSource("#model-source-gfs","GFS 0.25°","DECODE ERROR","bad");$("#model-route-table").innerHTML=`<div class="empty">${esc(e.message)}</div>`;}
     }else{setSource("#model-source-gfs","GFS 0.25°","UNAVAILABLE","bad");$("#model-route-table").innerHTML=`<div class="empty">${esc(gfsR.reason?.message||gfsR.reason)}</div>`;}
     if(w025R.status==="fulfilled"){
-      try{renderWafs025(w025R.value,points);setSource("#model-source-wafs025","WAFS 0.25°","LIVE","ok");}catch(e){setSource("#model-source-wafs025","WAFS 0.25°","DECODE ERROR","bad");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(e.message)}</div>`;}
-    }else{setSource("#model-source-wafs025","WAFS 0.25°","PUBLIC FEED UNAVAILABLE","warn");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(w025R.reason?.message||w025R.reason)}</div>`;}
+      try{renderAviation025(w025R.value,points);setSource("#model-source-wafs025","AVIATION GFS 0.25°","LIVE","ok");}catch(e){setSource("#model-source-wafs025","AVIATION GFS 0.25°","DECODE ERROR","bad");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(e.message)}</div>`;}
+    }else{setSource("#model-source-wafs025","AVIATION GFS 0.25°","PUBLIC FEED UNAVAILABLE","warn");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(w025R.reason?.message||w025R.reason)}</div>`;}
     if(w125R.status==="fulfilled"){
       try{renderWafs125(w125R.value,points,gfsSummary);setSource("#model-source-wafs125","WAFS 1.25°","LIVE","ok");}catch(e){setSource("#model-source-wafs125","WAFS 1.25°","DECODE ERROR","bad");$("#model-wafs125").innerHTML=`<strong>ERROR</strong><span>${esc(e.message)}</span>`;}
     }else{setSource("#model-source-wafs125","WAFS 1.25°","PUBLIC FEED UNAVAILABLE","warn");$("#model-wafs125").innerHTML=`<strong>N/A</strong><span>${esc(w125R.reason?.message||w125R.reason)}</span>`;}
