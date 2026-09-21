@@ -122,7 +122,7 @@ function lineFL(string $line): ?int {
     if(preg_match('/FL\s?(\d{2,3})/i',$line,$m))return (int)$m[1];
     if(preg_match('/(\d{2,3})00 ft/i',$line,$m))return (int)$m[1]; return null;
 }
-function selectWafs025(array $entries,int $fl,int $pressure): array {
+function selectAviation025(array $entries,int $fl,int $pressure): array {
     $wanted=['ICESEV','ICSEV','EDPARM','CATEDR','MWTURB','CBHE','ICAHT']; $groups=[];
     foreach($entries as $i=>$e){
         $var=null; foreach($wanted as $w){if(stripos(':'.$e['rest'].':',':'.$w.':')!==false){$var=$w;break;}} if(!$var)continue;
@@ -163,13 +163,20 @@ function tryIndexedProduct(array $urls, callable $selector): ?array {
     }
     return null;
 }
-function fetchWafs025(int $valid,int $fl,int $pressure): array {
+function fetchAviation025(int $valid,int $fl,int $pressure): array {
     foreach(cycleCandidates($valid) as $c){
-        $fh=str_pad((string)$c['fh'],3,'0',STR_PAD_LEFT);$name="gfs.t{$c['cc']}z.wafs_0p25.f{$fh}.grib2";
-        $r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectWafs025($rows,$fl,$pressure));
-        if($r)return ['body'=>$r['body'],'meta'=>['source'=>'NOAA GFS/WAFS 0.25 aviation','cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>'FL'.$fl,'records'=>$r['records']]];
+        $fh=str_pad((string)$c['fh'],3,'0',STR_PAD_LEFT);
+        $name="gfs.t{$c['cc']}z.awf_0p25.f{$fh}.grib2";
+        $r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectAviation025($rows,$fl,$pressure));
+        if($r)return ['body'=>$r['body'],'meta'=>[
+            'source'=>'NOAA Aviation GFS 0.25',
+            'cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),
+            'fh'=>$c['fh'],
+            'level'=>$pressure.' mb / FL'.$fl,
+            'records'=>$r['records']
+        ]];
     }
-    throw new RuntimeException('Güncel NOAA WAFS 0.25 aviation dosyası public HTTP kaynaklarında bulunamadı.');
+    throw new RuntimeException('NOAA Aviation GFS 0.25 AWF dosyası public HTTP kaynaklarında bulunamadı.');
 }
 function fetchWafs125(int $valid,int $pressure): array {
     foreach(cycleCandidates($valid) as $c){
@@ -186,12 +193,12 @@ if(!function_exists('curl_init'))jsonOut(500,['ok'=>false,'error'=>'PHP cURL akt
 $action=strtolower(trim((string)($_GET['action']??'status')));$fl=max(50,min(600,(int)($_GET['fl']??360)));$valid=parseUtc(trim((string)($_GET['valid']??'')));$pressure=pressureFromFL($fl);$bb=bbox();[$cycle,$fh]=cycleFor($valid);
 if($action==='status')jsonOut(200,['ok'=>true,'validUtc'=>gmdate('c',$valid),'cycleUtc'=>gmdate('c',$cycle),'forecastHour'=>$fh,'cruiseFL'=>$fl,'nearestPressureMb'=>$pressure,'bbox'=>['left'=>$bb[0],'right'=>$bb[1],'bottom'=>$bb[2],'top'=>$bb[3]],'products'=>[
     ['id'=>'gfs025','label'=>'NOAA GFS 0.25°','purpose'=>'upper wind / temperature / RH / height','mode'=>'NOMADS GRIB Filter (primary pressure levels)'],
-    ['id'=>'wafs025','label'=>'NOAA WAFS 0.25° aviation','purpose'=>'icing / turbulence / CB when present in public feed','mode'=>'indexed GRIB2'],
+    ['id'=>'aviation025','label'=>'NOAA Aviation GFS 0.25°','purpose'=>'EDPARM / CATEDR / MWTURB / CB extent-base-top','mode'=>'AWF indexed GRIB2'],
     ['id'=>'wafs125','label'=>'NOAA legacy WAFS 1.25°','purpose'=>'upper-air comparison','mode'=>'indexed GRIB2']
 ],'note'=>'Old WAFS_blended 1.25 hazard product was retired; current hazard target is WAFS 0.25.']);
 try{
     if($action==='gfs025'){$r=fetchGfs025($valid,$pressure,$bb);binOut($r['body'],$r['meta']);}
-    if($action==='wafs025'){$r=fetchWafs025($valid,$fl,$pressure);binOut($r['body'],$r['meta']);}
+    if($action==='aviation025' || $action==='wafs025'){$r=fetchAviation025($valid,$fl,$pressure);binOut($r['body'],$r['meta']);}
     if($action==='wafs125'){$r=fetchWafs125($valid,$pressure);binOut($r['body'],$r['meta']);}
     jsonOut(400,['ok'=>false,'error'=>'Bilinmeyen action.']);
 }catch(Throwable $e){jsonOut(502,['ok'=>false,'source'=>$action,'error'=>$e->getMessage(),'validUtc'=>gmdate('c',$valid),'cruiseFL'=>$fl,'pressureMb'=>$pressure]);}
