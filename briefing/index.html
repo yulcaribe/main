@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=1">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=2">
 </head>
 <body>
   <header class="pb-header">
@@ -99,12 +99,34 @@
 
         <div class="simple-brief" id="simple-brief"></div>
 
-        <div class="wafs-card">
-          <div><strong>WAFS</strong><span id="wafs-status">NOT CONNECTED</span></div>
-          <p>Wind, turbulence, icing ve CB gridleri için gerçek WIFS/WAFS API erişimi gerekir. Bu bölüm veri varmış gibi uydurmuyor.</p>
-          <a href="https://aviationweather.gov/wafs/" target="_blank" rel="noopener">Official WAFS Viewer ↗</a>
+        <div class="wafs-card model-status-card">
+          <div><strong>MODEL WX</strong><span>NOAA / NCEP</span></div>
+          <p>Üst seviye wind/temp, aviation hazard gridleri ve legacy WAFS karşılaştırması. Her kaynak ayrı ayrı doğrulanır.</p>
+          <div class="model-source-list">
+            <div id="model-source-gfs"><div class="model-source-head"><strong>GFS 0.25°</strong><span class="info">WAITING</span></div></div>
+            <div id="model-source-wafs025"><div class="model-source-head"><strong>WAFS 0.25°</strong><span class="info">WAITING</span></div></div>
+            <div id="model-source-wafs125"><div class="model-source-head"><strong>WAFS 1.25°</strong><span class="info">WAITING</span></div></div>
+          </div>
         </div>
       </aside>
+    </section>
+
+    <section id="modelwx-section" class="section" hidden>
+      <div class="section-head">
+        <div><span class="eyebrow">ENROUTE MODEL WEATHER</span><h2>MODEL WX</h2></div>
+        <p>Rota orta zamanı ve seçilen cruise FL için model gridleri. Operasyonel karar ürünü değildir.</p>
+      </div>
+      <div class="model-meta">
+        <div><small>GFS 0.25°</small><span id="model-gfs-meta">—</span></div>
+        <div><small>WAFS 0.25° AVIATION</small><span id="model-wafs025-meta">—</span></div>
+      </div>
+      <div id="model-route-table" class="model-route-table"></div>
+      <div id="model-hazard-grid" class="model-hazard-grid"></div>
+      <div class="model-legacy">
+        <div><small>LEGACY WAFS 1.25° / MID-ROUTE CHECK</small><span id="model-wafs125-meta">—</span></div>
+        <div id="model-wafs125"><strong>—</strong><span>—</span></div>
+      </div>
+      <p class="model-caveat">GFS model guidance ile WAFS aviation product aynı şey değildir. Kaynak adları özellikle ayrı gösterilir; veri yoksa sistem bunu açıkça belirtir.</p>
     </section>
 
     <section id="hazard-section" class="section" hidden>
@@ -125,8 +147,8 @@
   </main>
 
   <footer class="footer">
-    <span>Data: NOAA / NWS Aviation Weather Center</span>
-    <span>WAFS: official viewer only until WIFS API is connected</span>
+    <span>Data: NOAA / NWS Aviation Weather Center + NOAA/NCEP GFS</span>
+    <span>Model WX: GFS 0.25° · WAFS aviation feed when publicly available · legacy WAFS 1.25°</span>
   </footer>
 
   <div class="boot" id="boot"><strong>PB</strong><span id="boot-text">Pilot briefing hazırlanıyor…</span></div>
@@ -144,7 +166,12 @@
         let ok=false;
         for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
         if(!ok){text.textContent="Leaflet yüklenemedi.";return;}
-        try{await load("/main/briefing/briefing.js?v=1");boot.classList.add("hide");setTimeout(()=>boot.remove(),350);}
+        try{
+          await load("/main/briefing/grib2-browser.js?v=2");
+          await load("/main/briefing/modelwx.js?v=2");
+          await load("/main/briefing/briefing.js?v=2");
+          boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
+        }
         catch(e){text.textContent="Briefing kodu yüklenemedi.";}
       })();
     })();
