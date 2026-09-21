@@ -1,174 +1,139 @@
 (() => {
   "use strict";
-  const $=(s,r=document)=>r.querySelector(s);
-  let generation=0;
-
-  const paramNames=new Map([
-    ["0:0","TMP"],["1:1","RH"],["2:2","UGRD"],["2:3","VGRD"],["3:3","ICAHT"],["3:5","HGT"],
-    ["6:25","CBHE"],["19:28","MWTURB"],["19:29","CATEDR"],["19:30","EDPARM"],["19:37","ICESEV"],["19:234","ICSEV"]
-  ]);
-
-  function esc(v){return String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));}
-  function fmt(n,d=0){return Number.isFinite(n)?Number(n).toFixed(d):"—";}
-  function normLon(x){let v=x;while(v>180)v-=360;while(v<-180)v+=360;return v;}
-  function lonDiff(a,b){return Math.abs(normLon(a-b));}
-  function icingLabel(v){const n=Math.round(v);return ({0:"NONE",1:"TRACE",2:"LIGHT",3:"MODERATE",4:"SEVERE"})[n]??fmt(v,1);}
-
-  function setSource(id,status,text,cls=""){
-    const el=$(id); if(!el)return;
-    el.innerHTML=`<div class="model-source-head"><strong>${esc(status)}</strong><span class="${esc(cls)}">${esc(text)}</span></div>`;
+  const $=s=>document.querySelector(s);
+  let generation=0,active=null;
+  const notice="https://www.weather.gov/media/notification/pdf_2023_24/scn23-111_wafs_products_change.pdf";
+  const esc=v=>String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+  const fmt=(n,d=0)=>Number.isFinite(n)?n.toFixed(d):"—";
+  const normLon=x=>((x+540)%360)-180;
+  const rad=x=>x*Math.PI/180,deg=x=>x*180/Math.PI;
+  const utc=s=>{const d=new Date(s);return Number.isFinite(d.getTime())?d.toISOString().slice(0,16).replace("T"," ")+"Z":"—";};
+  function setSource(id,title,state,cls){$(id).innerHTML=`<div class="model-source-head"><strong>${esc(title)}</strong><span class="${cls}">${esc(state)}</span></div>`;}
+  function distance(a,b){const dlat=rad(b[0]-a[0]),dlon=rad(normLon(b[1]-a[1]));return 6880.13*Math.asin(Math.min(1,Math.sqrt(Math.sin(dlat/2)**2+Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dlon/2)**2)));}
+  function bearing(a,b){const x=rad(a[0]),y=rad(b[0]),dl=rad(normLon(b[1]-a[1]));return (deg(Math.atan2(Math.sin(dl)*Math.cos(y),Math.cos(x)*Math.sin(y)-Math.sin(x)*Math.cos(y)*Math.cos(dl)))+360)%360;}
+  function interpolate(a,b,f){
+    const angle=distance(a,b)/3440.065;
+    if(angle<1e-10)return [a[0],a[1]];
+    const aa=Math.sin((1-f)*angle)/Math.sin(angle),bb=Math.sin(f*angle)/Math.sin(angle);
+    const x=aa*Math.cos(rad(a[0]))*Math.cos(rad(a[1]))+bb*Math.cos(rad(b[0]))*Math.cos(rad(b[1]));
+    const y=aa*Math.cos(rad(a[0]))*Math.sin(rad(a[1]))+bb*Math.cos(rad(b[0]))*Math.sin(rad(b[1]));
+    const z=aa*Math.sin(rad(a[0]))+bb*Math.sin(rad(b[0]));
+    return [deg(Math.atan2(z,Math.hypot(x,y))),normLon(deg(Math.atan2(y,x)))];
   }
-
+  function routeSamples(route,spacingNm=25){
+    if(!Array.isArray(route)||route.length<2||route.some(p=>!Number.isFinite(p[0])||!Number.isFinite(p[1])))throw new Error("Model için geçerli rota yok.");
+    const lengths=route.slice(1).map((p,i)=>distance(route[i],p)),total=lengths.reduce((a,b)=>a+b,0);
+    if(!total)throw new Error("Rota uzunluğu sıfır.");
+    const segments=Math.max(4,Math.min(240,Math.ceil(total/spacingNm))),out=[];
+    let leg=0,passed=0;
+    for(let i=0;i<=segments;i++){
+      const target=total*i/segments;
+      while(leg<lengths.length-1 && passed+lengths[leg]<target){passed+=lengths[leg];leg++;}
+      const f=lengths[leg]?Math.max(0,Math.min(1,(target-passed)/lengths[leg])):0;
+      const p=interpolate(route[leg],route[leg+1],f);
+      out.push({lat:p[0],lon:p[1],progress:i/segments,distanceNm:target,track:bearing(f<.999999?p:route[leg],route[leg+1])});
+    }
+    return {points:out,total,spacingNm:total/segments};
+  }
   function routeBBox(route){
-    const lats=route.map(p=>Number(p[0])).filter(Number.isFinite), lons=route.map(p=>normLon(Number(p[1]))).filter(Number.isFinite);
-    let bottom=Math.min(...lats)-3, top=Math.max(...lats)+3, left=Math.min(...lons)-3, right=Math.max(...lons)+3;
-    bottom=Math.max(-90,bottom); top=Math.min(90,top);
-    if(right-left>170){left=-180;right=180;}else{left=Math.max(-180,left);right=Math.min(180,right);}
-    return {left,right,bottom,top};
+    const lats=route.map(p=>p[0]),lons=route.map(p=>normLon(p[1]));
+    let left=Math.min(...lons)-3,right=Math.max(...lons)+3;
+    if(right-left>170){left=-180;right=180;}
+    return {left:Math.max(-180,left),right:Math.min(180,right),bottom:Math.max(-90,Math.min(...lats)-3),top:Math.min(90,Math.max(...lats)+3)};
   }
-
-  function routeSamples(route,count=5){
-    if(!route?.length)return [];
-    const out=[];
-    for(let i=0;i<count;i++){
-      const idx=Math.round((route.length-1)*(i/(count-1)));
-      const p=route[idx]; out.push({lat:Number(p[0]),lon:normLon(Number(p[1])),progress:i/(count-1)});
-    }
-    return out;
-  }
-
-  function recordNamesFromHeader(text){
-    if(!text)return [];
-    return text.split(";").map(line=>{
-      const m=line.match(/(?:^|:)(TMP|RH|UGRD|VGRD|HGT|ICESEV|ICSEV|EDPARM|CATEDR|MWTURB|CBHE|ICAHT)(?=:|$)/i);
-      return m?m[1].toUpperCase():null;
-    });
-  }
-
-  function recMeta(handle,recordsHeader=""){
-    const out=[];
-    const names=recordNamesFromHeader(recordsHeader);
-    const n=window.YCGrib2.recordCount(handle);
-    for(let i=1;i<=n;i++){
-      const s4=window.YCGrib2.section4(handle,i);
-      const key=`${s4.parameterCategory}:${s4.parameterNumber}`;
-      out.push({i,key,name:names[i-1]||s4.ycName||paramNames.get(key)||key,s4});
-    }
-    return out;
-  }
-
-  function nearestIndices(handle,recordIndex,points){
-    return points.map(p=>window.YCGrib2.nearest(handle,recordIndex,p.lat,p.lon).index);
-  }
-
-  function samplesFor(handle,record,indices){
-    if(!record)return null;
-    const a=window.YCGrib2.values(handle,record.i);
-    return indices.map(i=>i>=0&&i<a.length?Number(a[i]):NaN);
-  }
-
-  function wind(u,v){
+  function wind(u,v,track){
     if(!Number.isFinite(u)||!Number.isFinite(v))return null;
-    return {kt:Math.hypot(u,v)*1.943844,dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360};
+    return {kt:Math.hypot(u,v)*1.943844,dir:(deg(Math.atan2(-u,-v))+360)%360,
+      tailKt:(u*Math.sin(rad(track))+v*Math.cos(rad(track)))*1.943844,
+      crossKt:Math.abs(u*Math.cos(rad(track))-v*Math.sin(rad(track)))*1.943844};
   }
-
-  async function fetchGrib(action,data,bbox){
-    const midEpoch=(new Date(data.flight.etdUtc).getTime()+new Date(data.flight.estimatedArrivalUtc).getTime())/2;
-    const valid=new Date(midEpoch).toISOString().slice(0,16).replace("T"," ");
-    const q=new URLSearchParams({action,fl:String(data.flight.cruiseFL),valid});
-    if(bbox){for(const k of ["left","right","bottom","top"])q.set(k,String(bbox[k].toFixed(3)));}
-    const ac=new AbortController();
-    const timeoutMs=action==="wafs125"?8000:15000;
-    const timer=setTimeout(()=>ac.abort(),timeoutMs);
-    try{
-      const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store",signal:ac.signal});
-      const type=r.headers.get("content-type")||"";
-      if(!r.ok||type.includes("application/json")){
-        let j=null;try{j=await r.json();}catch(e){}
-        throw new Error(j?.error||`HTTP ${r.status}`);
-      }
-      const bytes=new Uint8Array(await r.arrayBuffer());
-      return {bytes,meta:{source:r.headers.get("x-yc-model-source")||action,cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",records:r.headers.get("x-yc-records")||""}};
-    }catch(e){
-      if(e?.name==="AbortError")throw new Error(action+" "+Math.round(timeoutMs/1000)+" saniyede yanıt vermedi.");
-      throw e;
-    }finally{clearTimeout(timer);}
-  }
-
-  function decode(bytes,recordsHeader=""){const h=window.YCGrib2.parse(bytes);return {handle:h,records:recMeta(h,recordsHeader)};}
-  function find(records,name){return records.find(r=>r.name===name);}
-
-  function renderGfs(product,data,points){
-    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("GFS GRIB içinde kayıt yok.");
-    const ix=nearestIndices(d.handle,first.i,points);
-    const u=samplesFor(d.handle,find(d.records,"UGRD"),ix),v=samplesFor(d.handle,find(d.records,"VGRD"),ix),t=samplesFor(d.handle,find(d.records,"TMP"),ix),rh=samplesFor(d.handle,find(d.records,"RH"),ix),hgt=samplesFor(d.handle,find(d.records,"HGT"),ix);
-    const rows=points.map((p,i)=>{const w=wind(u?.[i],v?.[i]);return `<tr><td>${Math.round(p.progress*100)}%</td><td>${w?`${String(Math.round(w.dir)).padStart(3,"0")}° / ${Math.round(w.kt)} kt`:"—"}</td><td>${Number.isFinite(t?.[i])?fmt(t[i]-273.15,0)+" °C":"—"}</td><td>${Number.isFinite(rh?.[i])?fmt(rh[i],0)+"%":"—"}</td><td>${Number.isFinite(hgt?.[i])?fmt(hgt[i],0)+" m":"—"}</td></tr>`;}).join("");
-    $("#model-route-table").innerHTML=`<table><thead><tr><th>ROUTE</th><th>WIND</th><th>TEMP</th><th>RH</th><th>HGT</th></tr></thead><tbody>${rows}</tbody></table>`;
-    $("#model-gfs-meta").textContent=`${product.meta.source} · ${product.meta.cycle} +${product.meta.fh}h · ${product.meta.level}`;
-    const mid=Math.floor(points.length/2),mw=wind(u?.[mid],v?.[mid]);
-    return {midWind:mw,midTemp:Number.isFinite(t?.[mid])?t[mid]-273.15:null};
-  }
-
-  function renderAviation025(product,points){
-    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("Aviation GFS 0.25 kayıt yok.");
-    const ix=nearestIndices(d.handle,first.i,points);
-    const edrRec=find(d.records,"EDPARM")||find(d.records,"CATEDR")||find(d.records,"MWTURB");
-    const iceRec=find(d.records,"ICESEV")||find(d.records,"ICSEV");
-    const cbRec=find(d.records,"CBHE");
-    const edr=samplesFor(d.handle,edrRec,ix)||[], ice=samplesFor(d.handle,iceRec,ix)||[], cb=samplesFor(d.handle,cbRec,ix)||[];
-    const maxFinite=a=>a.filter(Number.isFinite).reduce((m,v)=>Math.max(m,v),-Infinity);
-    const mxE=maxFinite(edr),mxI=maxFinite(ice),mxC=maxFinite(cb);
-    const cards=[];
-    cards.push(`<div><small>TURBULENCE</small><strong>${Number.isFinite(mxE)?fmt(mxE,3):"N/A"}</strong><span>${edrRec?esc(edrRec.name+" route max"):"public feed kaydı yok"}</span></div>`);
-    cards.push(`<div><small>ICING</small><strong>${Number.isFinite(mxI)?icingLabel(mxI):"N/A"}</strong><span>${iceRec?"route sample max":"public feed kaydı yok"}</span></div>`);
-    cards.push(`<div><small>CB EXTENT</small><strong>${Number.isFinite(mxC)?fmt(mxC,0)+"%":"N/A"}</strong><span>${cbRec?"route sample max":"public feed kaydı yok"}</span></div>`);
-    $("#model-hazard-grid").innerHTML=cards.join("");
-    $("#model-wafs025-meta").textContent=`${product.meta.source} · ${product.meta.cycle} +${product.meta.fh}h · ${product.meta.level}`;
-  }
-
-  function renderWafs125(product,points,gfs){
-    const d=decode(product.bytes,product.meta.records), first=d.records[0]; if(!first)throw new Error("WAFS 1.25 kayıt yok.");
-    const ix=nearestIndices(d.handle,first.i,[points[Math.floor(points.length/2)]]);
-    const u=samplesFor(d.handle,find(d.records,"UGRD"),ix)?.[0],v=samplesFor(d.handle,find(d.records,"VGRD"),ix)?.[0],t=samplesFor(d.handle,find(d.records,"TMP"),ix)?.[0];
-    const w=wind(u,v); const tc=Number.isFinite(t)?t-273.15:null;
-    const deltaWind=w&&gfs?.midWind?Math.abs(w.kt-gfs.midWind.kt):null, deltaTemp=Number.isFinite(tc)&&Number.isFinite(gfs?.midTemp)?Math.abs(tc-gfs.midTemp):null;
-    $("#model-wafs125").innerHTML=`<strong>${w?`${String(Math.round(w.dir)).padStart(3,"0")}° / ${Math.round(w.kt)} kt`:"—"}</strong><span>${Number.isFinite(tc)?fmt(tc,0)+" °C":"—"}${Number.isFinite(deltaWind)?` · GFS Δ ${fmt(deltaWind,0)} kt`:""}${Number.isFinite(deltaTemp)?` · ΔT ${fmt(deltaTemp,1)}°C`:""}</span>`;
-    $("#model-wafs125-meta").textContent=`${product.meta.source} · ${product.meta.cycle} +${product.meta.fh}h · ${product.meta.level}`;
-  }
-
-  async function load(data){
-    const my=++generation, section=$("#modelwx-section"); if(!section)return;
-    section.hidden=false;
-    $("#model-route-table").innerHTML='<div class="model-loading">NOAA model gridleri alınıyor…</div>';
-    $("#model-hazard-grid").innerHTML='<div class="model-loading">Aviation hazard gridleri aranıyor…</div>';
-    $("#model-wafs125").innerHTML='<strong>LOADING</strong><span>legacy WAFS karşılaştırması</span>';
-    setSource("#model-source-gfs","GFS 0.25°","LOADING","info");
-    setSource("#model-source-wafs025","AVIATION GFS 0.25°","LOADING","info");
-    setSource("#model-source-wafs125","WAFS 1.25°","LOADING","info");
-    try{await window.YCGrib2.init();}catch(e){
-      if(my!==generation)return;
-      const msg=e?.message||String(e);["#model-source-gfs","#model-source-wafs025","#model-source-wafs125"].forEach(id=>setSource(id,"DECODER","UNAVAILABLE","bad"));
-      $("#model-route-table").innerHTML=`<div class="empty">${esc(msg)}</div>`;
-      $("#model-hazard-grid").innerHTML='<div class="empty">Decoder yüklenemediği için hazard gridleri çözülemedi.</div>';
-      $("#model-wafs125").innerHTML='<strong>N/A</strong><span>Decoder yüklenemedi.</span>';
-      return;
+  async function fetchGrib(data,bbox,signal){
+    const mid=(Date.parse(data.flight.etdUtc)+Date.parse(data.flight.estimatedArrivalUtc))/2;
+    if(!Number.isFinite(mid))throw new Error("Uçuş zamanı geçersiz.");
+    const requested=new Date(mid).toISOString();
+    const q=new URLSearchParams({action:"gfs025",fl:String(data.flight.cruiseFL),valid:requested.slice(0,16).replace("T"," ")});
+    for(const [k,v] of Object.entries(bbox))q.set(k,v.toFixed(3));
+    const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store",signal});
+    if(!r.ok||(r.headers.get("content-type")||"").includes("json")){
+      const j=await r.json().catch(()=>null);throw new Error(j?.error||`HTTP ${r.status}`);
     }
-    if(my!==generation)return;
-    const bbox=routeBBox(data.route),points=routeSamples(data.route,5);
-    const [gfsR,w025R,w125R]=await Promise.allSettled([
-      fetchGrib("gfs025",data,bbox),fetchGrib("aviation025",data),fetchGrib("wafs125",data)
-    ]);
-    if(my!==generation)return;
-    let gfsSummary=null;
-    if(gfsR.status==="fulfilled"){
-      try{gfsSummary=renderGfs(gfsR.value,data,points);setSource("#model-source-gfs","GFS 0.25°","LIVE","ok");}catch(e){setSource("#model-source-gfs","GFS 0.25°","DECODE ERROR","bad");$("#model-route-table").innerHTML=`<div class="empty">${esc(e.message)}</div>`;}
-    }else{setSource("#model-source-gfs","GFS 0.25°","UNAVAILABLE","bad");$("#model-route-table").innerHTML=`<div class="empty">${esc(gfsR.reason?.message||gfsR.reason)}</div>`;}
-    if(w025R.status==="fulfilled"){
-      try{renderAviation025(w025R.value,points);setSource("#model-source-wafs025","AVIATION GFS 0.25°","LIVE","ok");}catch(e){setSource("#model-source-wafs025","AVIATION GFS 0.25°","DECODE ERROR","bad");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(e.message)}</div>`;}
-    }else{setSource("#model-source-wafs025","AVIATION GFS 0.25°","PUBLIC FEED UNAVAILABLE","warn");$("#model-hazard-grid").innerHTML=`<div class="empty">${esc(w025R.reason?.message||w025R.reason)}</div>`;}
-    if(w125R.status==="fulfilled"){
-      try{renderWafs125(w125R.value,points,gfsSummary);setSource("#model-source-wafs125","WAFS 1.25°","LIVE","ok");}catch(e){setSource("#model-source-wafs125","WAFS 1.25°","DECODE ERROR","bad");$("#model-wafs125").innerHTML=`<strong>ERROR</strong><span>${esc(e.message)}</span>`;}
-    }else{setSource("#model-source-wafs125","WAFS 1.25°","PUBLIC FEED UNAVAILABLE","warn");$("#model-wafs125").innerHTML=`<strong>N/A</strong><span>${esc(w125R.reason?.message||w125R.reason)}</span>`;}
+    return {bytes:new Uint8Array(await r.arrayBuffer()),meta:{source:r.headers.get("x-yc-model-source")||"NOAA GFS 0.25",cycle:r.headers.get("x-yc-cycle")||"",fh:r.headers.get("x-yc-forecast-hour")||"",level:r.headers.get("x-yc-level")||"",validUtc:r.headers.get("x-yc-valid-utc")||null,requestedUtc:requested}};
   }
-  window.YCModelWX={load};
+  function decodeProduct(product,points,data){
+    const api=window.YCGrib2,h=api.parse(product.bytes);
+    try{
+      const records=Array.from({length:api.recordCount(h)},(_,i)=>({i:i+1,...api.section4(h,i+1),...api.section3(h,i+1)}));
+      const fields={};
+      for(const name of ["UGRD","VGRD","TMP","RH","HGT"]){
+        const matching=records.filter(r=>r.ycName===name);
+        if(matching.length>1)throw new Error(`${name}: birden fazla seviye/kayıt geldi.`);
+        fields[name]=matching[0]||null;
+      }
+      if(!fields.UGRD||!fields.VGRD||!fields.TMP)throw new Error("GFS rüzgâr/sıcaklık kayıtları eksik.");
+      const levels=new Set(Object.values(fields).filter(Boolean).map(r=>r.pressureMb));
+      if(levels.size!==1||levels.has(null))throw new Error("GFS kayıtlarının basınç seviyeleri uyuşmuyor.");
+      const sample=(record,p)=>{
+        if(!record)return NaN;
+        const ix=api.nearest(h,record.i,p.lat,p.lon).index,value=api.values(h,record.i)[ix];
+        return typeof value==="number"&&Number.isFinite(value)&&Math.abs(value)<1e20?value:NaN;
+      };
+      const samples=points.map(p=>{
+        const u=sample(fields.UGRD,p),v=sample(fields.VGRD,p),t=sample(fields.TMP,p),rh=sample(fields.RH,p);
+        return {...p,wind:wind(u,v,p.track),tempC:Number.isFinite(t)?t-273.15:NaN,
+          rh:Number.isFinite(rh)&&rh>=0&&rh<=100?rh:NaN,heightM:sample(fields.HGT,p),
+          gridPoint:api.nearest(h,fields.TMP.i,p.lat,p.lon),
+          etaUtc:new Date(Date.parse(data.flight.etdUtc)+p.progress*(Date.parse(data.flight.estimatedArrivalUtc)-Date.parse(data.flight.etdUtc))).toISOString()};
+      });
+      if(!samples.some(p=>p.wind&&Number.isFinite(p.tempC)))throw new Error("Rota model gridinin dışında veya değerler eksik.");
+      return {samples,records,pressureMb:[...levels][0],missingFields:Object.entries(fields).filter(([,r])=>!r).map(([n])=>n)};
+    }finally{api.release(h);}
+  }
+  function renderGfs(product,data,route,onUpdate,onFocus){
+    const decoded=decodeProduct(product,route.points,data),samples=decoded.samples;
+    const summaryIndices=[0,.25,.5,.75,1].map(f=>Math.round((samples.length-1)*f));
+    const rows=summaryIndices.map(i=>{
+      const p=samples[i],w=p.wind;
+      return `<tr><td><button type="button" data-model-point="${i}" title="Haritada göster">${fmt(p.progress*100)}% ↗</button></td><td>${utc(p.etaUtc).slice(11)}</td><td>${w?`${String(Math.round(w.dir)%360).padStart(3,"0")}° / ${fmt(w.kt)} kt`:"—"}</td><td>${w?`${w.tailKt>=0?"Arka":"Karşı"} ${fmt(Math.abs(w.tailKt))} kt`:"—"}</td><td>${fmt(p.tempC)} °C</td><td>${fmt(p.rh)}%</td><td>${fmt(p.heightM)} gpm</td></tr>`;
+    }).join("");
+    $("#model-route-table").innerHTML=`<table><thead><tr><th>ROTA</th><th>TAHMİNİ GEÇİŞ*</th><th>RÜZGÂR (TRUE)</th><th>ROTA BİLEŞENİ</th><th>SICAKLIK</th><th>RH</th><th>GEOP. HGT</th></tr></thead><tbody>${rows}</tbody></table>`;
+    $("#model-route-table").onclick=e=>{const button=e.target.closest("[data-model-point]");if(button)onFocus?.(Number(button.dataset.modelPoint));};
+    const meta={...product.meta,pressureMb:decoded.pressureMb};
+    $("#model-gfs-meta").textContent=`${meta.source} · run ${meta.cycle} +${meta.fh}h · ${decoded.pressureMb} hPa · geçerli ${utc(meta.validUtc)}`;
+    const hasMissing=decoded.missingFields.length||samples.some(p=>!p.wind||![p.tempC,p.rh,p.heightM].every(Number.isFinite));
+    $("#model-sampling-note").textContent=`${samples.length} nokta, yaklaşık ${fmt(route.spacingNm)} NM aralık. Tabloda 5 özet nokta. FL${data.flight.cruiseFL} için en yakın ${decoded.pressureMb} hPa kullanılıyor; tam uçuş seviyesine interpolasyon yapılmıyor. Bütün noktalar tek model zamanına aittir; geçiş saatleri 450 kt temelli kaba EET hesabıdır. Tırmanış/alçalma modellenmiyor.${hasMissing?" Bazı alanlarda veri eksik; — sıfır anlamına gelmez.":""}`;
+    $("#model-diagnostics").textContent=JSON.stringify({source:meta,requestedFL:data.flight.cruiseFL,sampleCount:samples.length,spacingNm:route.spacingNm,records:decoded.records.map(r=>({index:r.i,discipline:r.discipline,category:r.parameterCategory,parameter:r.parameterNumber,name:r.ycName,pressureMb:r.pressureMb,grid:`${r.ni} × ${r.nj}`,values:r.numberOfPoints,scan:r.scanningMode})),firstSample:samples[0]},null,2);
+    setSource("#model-source-gfs","GFS 0.25°",hasMissing?"PARTIAL":"MODEL READY",hasMissing?"warn":"ok");
+    onUpdate?.({state:hasMissing?"partial":"ready",...decoded,meta});
+  }
+  function unavailableSources(){
+    setSource("#model-source-wafs025","AVIATION GFS 0.25°","PUBLIC FEED RETIRED","warn");
+    setSource("#model-source-wafs125","WAFS 1.25°","REFERENCE UNAVAILABLE","warn");
+    $("#model-wafs025-meta").innerHTML=`AWF açık dağıtımı 17 Ocak 2024’te kaldırıldı. <a href="${notice}" target="_blank" rel="noopener">NOAA duyurusu</a> · <a href="https://aviationweather.gov/wifs/" target="_blank" rel="noopener">WIFS erişimi</a>`;
+    $("#model-hazard-grid").innerHTML=["EDR / CAT / MWT","CB EXTENT / BASE / TOP","ICING"].map(name=>`<div><small>${name}</small><strong>N/A</strong><span>Doğrulanmış kaynak bağlı değil. Tehlike yok anlamına gelmez.</span></div>`).join("");
+    $("#model-wafs125-meta").textContent="Güncel public dosya + inventory kaynağı doğrulanamadı.";
+    $("#model-wafs125").innerHTML="<strong>N/A</strong><span>Karşılaştırma yapılmadı.</span>";
+  }
+  function cancel(){generation++;active?.abort();active=null;}
+  async function load(data,{onUpdate,onFocus}={}){
+    cancel();const my=generation,controller=new AbortController();active=controller;
+    if(!$("#modelwx-section"))return;
+    $("#modelwx-section").hidden=false;
+    $("#model-route-table").innerHTML='<div class="model-loading">NOAA GFS rota verisi alınıyor…</div>';
+    $("#model-gfs-meta").textContent="—";$("#model-sampling-note").textContent="";$("#model-diagnostics").textContent="";
+    setSource("#model-source-gfs","GFS 0.25°","LOADING","info");unavailableSources();onUpdate?.({state:"loading",samples:[]});
+    const timer=setTimeout(()=>controller.abort(),15000);
+    try{
+      await window.YCGrib2.init();
+      const route=routeSamples(data.route),product=await fetchGrib(data,routeBBox(data.route),controller.signal);
+      if(my!==generation)return;
+      renderGfs(product,data,route,onUpdate,onFocus);
+    }catch(e){
+      if(my!==generation)return;
+      const msg=e?.name==="AbortError"?"GFS 15 saniyede yanıt vermedi.":e.message||String(e);
+      setSource("#model-source-gfs","GFS 0.25°","UNAVAILABLE","bad");
+      $("#model-route-table").innerHTML=`<div class="empty">${esc(msg)}</div>`;
+      onUpdate?.({state:"unavailable",samples:[],error:msg});
+    }finally{clearTimeout(timer);if(active===controller)active=null;}
+  }
+  window.YCModelWX={load,cancel,routeSamples,routeBBox,wind,decodeProduct};
 })();
