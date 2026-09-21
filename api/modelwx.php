@@ -79,7 +79,9 @@ function cycleCandidates(int $valid): array {
 function pressureFromFL(int $fl): int {
     $hft=max(0,$fl*100.0); $hm=$hft*0.3048;
     $p=$hm<=11000 ? 1013.25*pow(1-2.25577e-5*$hm,5.25588) : 226.321*exp(-($hm-11000)/6341.62);
-    $levels=[1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,225,200,175,150,125,100,70,50];
+    // Primary GFS 0.25 pressure-grid levels exposed by NOMADS filter.
+    // Do not request 225/175/125 mb here; those belong to the secondary pgrb2b dataset.
+    $levels=[1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,70,50,40,30,20,15,10,7,5,3,2,1];
     $best=$levels[0]; $d=INF; foreach($levels as $v){$x=abs($p-$v);if($x<$d){$d=$x;$best=$v;}} return $best;
 }
 function bbox(): array {
@@ -104,7 +106,13 @@ function fetchGfs025(int $valid,int $pressure,array $bbox): array {
 }
 function baseCandidates(string $date,string $cc,string $filename): array {
     $rel="gfs.{$date}/{$cc}/atmos/{$filename}";
-    return ['https://ftp.ncep.noaa.gov/data/nccf/com/gfs/prod/'.$rel,'https://www.ftp.ncep.noaa.gov/data/nccf/com/gfs/prod/'.$rel,'https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/'.$rel];
+    return [
+        'https://noaa-gfs-bdp-pds.s3.amazonaws.com/'.$rel,
+        'https://storage.googleapis.com/global-forecast-system/'.$rel,
+        'https://noaagfs.blob.core.windows.net/gfs/'.$rel,
+        'https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/'.$rel,
+        'https://www.ftp.ncep.noaa.gov/data/nccf/com/gfs/prod/'.$rel
+    ];
 }
 function idxEntries(string $txt): array {
     $rows=[]; foreach(preg_split('/\r?\n/',$txt)?:[] as $line){if(!preg_match('/^(\d+):(\d+):(.*)$/',$line,$m))continue;$rows[]=['n'=>(int)$m[1],'offset'=>(int)$m[2],'rest'=>$m[3],'line'=>$line];} return $rows;
@@ -134,13 +142,13 @@ function fetchRanges(string $base,array $all,array $sel): ?string {
     if(!$sel)return null;$pos=[];foreach($all as $i=>$e)$pos[$e['offset']]=$i;$out='';
     foreach($sel as $e){
         $i=$pos[$e['offset']]??null;if($i===null)continue;$start=$e['offset'];$end=isset($all[$i+1])?$all[$i+1]['offset']-1:null;$range=$end!==null?($start.'-'.$end):($start.'-');
-        $r=httpFetch($base,$range,7,5000000);if(!$r['ok']||!isGrib($r['body']))return null;if($r['status']===200&&$start>0)return null;$out.=$r['body'];if(strlen($out)>MAX_BINARY_BYTES)return null;
+        $r=httpFetch($base,$range,6,5000000);if(!$r['ok']||!isGrib($r['body']))return null;if($r['status']===200&&$start>0)return null;$out.=$r['body'];if(strlen($out)>MAX_BINARY_BYTES)return null;
     }
     return $out!==''?$out:null;
 }
 function tryIndexedProduct(array $urls, callable $selector): ?array {
     foreach($urls as $u){
-        $idx=httpFetch($u.'.idx',null,4,1000000);if(!$idx['ok']||trim($idx['body'])==='')continue;$all=idxEntries($idx['body']);if(!$all)continue;$sel=$selector($all);if(!$sel)continue;
+        $idx=httpFetch($u.'.idx',null,3,1000000);if(!$idx['ok']||trim($idx['body'])==='')continue;$all=idxEntries($idx['body']);if(!$all)continue;$sel=$selector($all);if(!$sel)continue;
         $cacheKey='range|'.$u.'|'.sha1(implode('|',array_column($sel,'line')));
         if($cached=cacheRead($cacheKey,1800))return ['body'=>$cached,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];
         $body=fetchRanges($u,$all,$sel);if($body!==null){cacheWrite($cacheKey,$body);return ['body'=>$body,'url'=>$u,'records'=>implode(';',array_map(fn($e)=>$e['rest'],$sel))];}
@@ -157,7 +165,7 @@ function fetchWafs025(int $valid,int $fl,int $pressure): array {
 }
 function fetchWafs125(int $valid,int $pressure): array {
     foreach(cycleCandidates($valid) as $c){
-        $fh=str_pad((string)$c['fh'],3,'0',STR_PAD_LEFT);
+        $fh=str_pad((string)$c['fh'],2,'0',STR_PAD_LEFT);
         foreach(['40','44'] as $grid){
             $name="wafsgfs{$grid}.t{$c['cc']}z.gribf{$fh}.grib2";$r=tryIndexedProduct(baseCandidates($c['date'],$c['cc'],$name),fn($rows)=>selectWafs125($rows,$pressure));
             if($r)return ['body'=>$r['body'],'meta'=>['source'=>'NOAA legacy WAFS 1.25 grid '.$grid,'cycle'=>gmdate('Y-m-d H\Z',$c['epoch']),'fh'=>$c['fh'],'level'=>$pressure.' mb','records'=>$r['records']]];
@@ -169,7 +177,7 @@ function fetchWafs125(int $valid,int $pressure): array {
 if(!function_exists('curl_init'))jsonOut(500,['ok'=>false,'error'=>'PHP cURL aktif değil.']);
 $action=strtolower(trim((string)($_GET['action']??'status')));$fl=max(50,min(600,(int)($_GET['fl']??360)));$valid=parseUtc(trim((string)($_GET['valid']??'')));$pressure=pressureFromFL($fl);$bb=bbox();[$cycle,$fh]=cycleFor($valid);
 if($action==='status')jsonOut(200,['ok'=>true,'validUtc'=>gmdate('c',$valid),'cycleUtc'=>gmdate('c',$cycle),'forecastHour'=>$fh,'cruiseFL'=>$fl,'nearestPressureMb'=>$pressure,'bbox'=>['left'=>$bb[0],'right'=>$bb[1],'bottom'=>$bb[2],'top'=>$bb[3]],'products'=>[
-    ['id'=>'gfs025','label'=>'NOAA GFS 0.25°','purpose'=>'upper wind / temperature / RH / height','mode'=>'NOMADS GRIB Filter'],
+    ['id'=>'gfs025','label'=>'NOAA GFS 0.25°','purpose'=>'upper wind / temperature / RH / height','mode'=>'NOMADS GRIB Filter (primary pressure levels)'],
     ['id'=>'wafs025','label'=>'NOAA WAFS 0.25° aviation','purpose'=>'icing / turbulence / CB when present in public feed','mode'=>'indexed GRIB2'],
     ['id'=>'wafs125','label'=>'NOAA legacy WAFS 1.25°','purpose'=>'upper-air comparison','mode'=>'indexed GRIB2']
 ],'note'=>'Old WAFS_blended 1.25 hazard product was retired; current hazard target is WAFS 0.25.']);
