@@ -2,6 +2,7 @@
   "use strict";
 
   const MODULE_URLS = [
+    "https://cdn.jsdelivr.net/npm/@azohra/meteo.grib@0.1.4/+esm",
     "https://cdn.jsdelivr.net/npm/@azohra/meteo.grib@0.1.4/dist/index.js",
     "https://esm.sh/@azohra/meteo.grib@0.1.4?bundle"
   ];
