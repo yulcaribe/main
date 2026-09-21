@@ -13,24 +13,6 @@
       "noSignificantHazard": "Belirgin bir meteorolojik risk tespit edilmedi.",
       "localTime": "Yerel saat"
     },
-    "terms": {
-      "CAVOK": "CAVOK",
-      "BECMG": "kademeli değişim",
-      "TEMPO": "geçici değişim",
-      "PROB30": "%30 olasılık",
-      "PROB40": "%40 olasılık",
-      "TS": "gök gürültülü hava",
-      "TSRA": "gök gürültülü yağmur",
-      "RA": "yağmur",
-      "SHRA": "sağanak yağmur",
-      "DZ": "çisenti",
-      "SN": "kar",
-      "FZRA": "donan yağmur",
-      "FG": "sis",
-      "BR": "pus",
-      "CB": "cumulonimbus",
-      "TCU": "towering cumulus"
-    },
     "templates": {
       "currentCavok": "Mevcut koşullar CAVOK.",
       "currentWind": "Rüzgar {direction} yönünden {speed} kt.",
@@ -66,24 +48,6 @@
       "attention": "Attention",
       "noSignificantHazard": "No significant meteorological hazard detected.",
       "localTime": "Local time"
-    },
-    "terms": {
-      "CAVOK": "CAVOK",
-      "BECMG": "gradual change",
-      "TEMPO": "temporary change",
-      "PROB30": "30% probability",
-      "PROB40": "40% probability",
-      "TS": "thunderstorm",
-      "TSRA": "thunderstorm rain",
-      "RA": "rain",
-      "SHRA": "rain showers",
-      "DZ": "drizzle",
-      "SN": "snow",
-      "FZRA": "freezing rain",
-      "FG": "fog",
-      "BR": "mist",
-      "CB": "cumulonimbus",
-      "TCU": "towering cumulus"
     },
     "templates": {
       "currentCavok": "Current conditions are CAVOK.",
