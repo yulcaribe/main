@@ -167,44 +167,208 @@ function parseCoordinateToken(string $token): ?array {
     return null;
 }
 
-function parseRouteTokens(string $raw, string $from, string $to): array {
-    $raw = strtoupper(trim($raw));
-    $raw = preg_replace('/[\r\n\t]+/', ' ', $raw) ?? $raw;
-    $tokens = preg_split('/[\s,;]+/', $raw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-    $parsed = []; $ignored = [];
+function parseFlightLevelToken(string $token): ?int {
+    if (!preg_match('/^F(?:L)?(\d{2,3})$/', strtoupper($token), $m)) return null;
+    $fl=(int)$m[1];
+    return ($fl>=0 && $fl<=600) ? $fl : null;
+}
 
-    foreach ($tokens as $original) {
-        $token = trim($original, " \t\n\r\0\x0B()[]{}");
-        if ($token === '') continue;
-        if (str_contains($token, '/')) $token = explode('/', $token, 2)[0];
-        $token = trim($token, '.');
-        if ($token === '' || $token === $from || $token === $to) continue;
+function isAirwayDesignator(string $token): bool {
+    // ICAO ATS route designator heuristic. Handles L610, N131, G8, UL620,
+    // UT39, UM860 etc. Terminal fixes such as FJ823 deliberately do not match.
+    return (bool)preg_match('/^(?:[UKS]?[ABGRLMNPHJVWQTYZ])\d{1,4}[A-Z]?$/', $token);
+}
 
-        if (in_array($token, ['DCT','IFR','VFR','NAT','SID','STAR'], true)) {
-            $ignored[] = $token;
-            continue;
-        }
+function isProcedureDesignator(string $token): bool {
+    // Common SID/STAR shape such as EKSEN1K / ETAMP1G. Exact procedure
+    // validation belongs to the navdata resolver, not to this lexical parser.
+    return (bool)preg_match('/^[A-Z]{3,6}\d[A-Z]$/', $token);
+}
 
-        $coord = parseCoordinateToken($token);
-        if ($coord) {
-            $parsed[] = ['token' => $token, 'kind' => 'coordinate', 'coord' => $coord];
-            continue;
-        }
+function splitRouteSections(string $raw): array {
+    $marked=preg_replace('/\bDEST\s+ALTN2\s+ROUTE\b/i', "\n@@ALTN2@@\n", $raw) ?? $raw;
+    $marked=preg_replace('/\bDEST\s+ALTN\s+ROUTE\b/i', "\n@@ALTN1@@\n", $marked) ?? $marked;
+    $buckets=['main'=>[],'altn1'=>[],'altn2'=>[]];
+    $current='main';
 
-        if (preg_match('/^[A-Z]{5}$/', $token)) {
-            $parsed[] = ['token' => $token, 'kind' => 'fix'];
-            continue;
-        }
-
-        if (preg_match('/^[A-Z]{3}$/', $token)) {
-            $parsed[] = ['token' => $token, 'kind' => 'navaid'];
-            continue;
-        }
-
-        $ignored[] = $token;
+    foreach (preg_split('/\R+/', $marked) ?: [] as $line) {
+        $line=trim($line);
+        if ($line==='') continue;
+        if ($line==='@@ALTN1@@') { $current='altn1'; continue; }
+        if ($line==='@@ALTN2@@') { $current='altn2'; continue; }
+        $buckets[$current][]=$line;
     }
 
-    return ['parsed' => $parsed, 'ignored' => array_values(array_unique($ignored))];
+    return [
+        'main'=>trim(implode(' ', $buckets['main'])),
+        'alternates'=>array_values(array_filter([
+            $buckets['altn1'] ? ['name'=>'DEST ALTN ROUTE','raw'=>trim(implode(' ', $buckets['altn1']))] : null,
+            $buckets['altn2'] ? ['name'=>'DEST ALTN2 ROUTE','raw'=>trim(implode(' ', $buckets['altn2']))] : null,
+        ]))
+    ];
+}
+
+function parseRouteSection(string $raw, string $from, string $to, bool $isAlternate=false): array {
+    $raw=strtoupper(trim($raw));
+    $raw=preg_replace('/[\r\n\t]+/', ' ', $raw) ?? $raw;
+    $tokens=preg_split('/[\s,;]+/', $raw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $items=[]; $ignored=[]; $unknown=[];
+    $vertical=['initialFL'=>null,'changes'=>[]];
+    $procedureHint=null;
+
+    foreach ($tokens as $original) {
+        $token=trim($original, " \t\n\r\0\x0B()[]{}");
+        $token=trim($token, '.');
+        if ($token==='') continue;
+
+        if ($token==='SID' || $token==='STAR') {
+            $procedureHint=strtolower($token);
+            continue;
+        }
+        if (in_array($token,['IFR','VFR','NAT'],true)) {
+            $ignored[]=$token;
+            continue;
+        }
+        if ($token==='DCT') {
+            $items[]=['token'=>'DCT','kind'=>'dct'];
+            continue;
+        }
+
+        $base=$token;
+        $levelFL=null;
+        if (preg_match('/^(.+)\/F(?:L)?(\d{2,3})$/', $token, $m)) {
+            $base=trim($m[1]);
+            $levelFL=(int)$m[2];
+            if ($levelFL<0 || $levelFL>600) $levelFL=null;
+        }
+        $token=$base;
+        if ($token==='') continue;
+
+        $standaloneFL=parseFlightLevelToken($token);
+        if ($standaloneFL!==null) {
+            if ($vertical['initialFL']===null) $vertical['initialFL']=$standaloneFL;
+            $items[]=['token'=>$token,'kind'=>'flight_level','fl'=>$standaloneFL];
+            continue;
+        }
+
+        $item=null;
+        if (preg_match('/^([A-Z0-9]{4})R(?:WY)?([0-9]{2}[LCR]?)$/', $token, $m)) {
+            $item=['token'=>$token,'kind'=>'airport_runway','airport'=>$m[1],'runway'=>$m[2]];
+        } else {
+            $coord=parseCoordinateToken($token);
+            if ($coord) {
+                $item=['token'=>$token,'kind'=>'coordinate','coord'=>$coord];
+            } elseif (isProcedureDesignator($token)) {
+                $item=['token'=>$token,'kind'=>'procedure','role'=>$procedureHint];
+                $procedureHint=null;
+            } elseif (isAirwayDesignator($token)) {
+                $item=['token'=>$token,'kind'=>'airway'];
+            } elseif ($token===$from || $token===$to || ($isAlternate && preg_match('/^[A-Z]{4}$/',$token))) {
+                $item=['token'=>$token,'kind'=>'airport','airport'=>$token];
+            } elseif (preg_match('/^[A-Z]{5}$/',$token) || preg_match('/^[A-Z]{2}\d{3}$/',$token)) {
+                $item=['token'=>$token,'kind'=>'fix'];
+            } elseif (preg_match('/^[A-Z]{2,3}$/',$token)) {
+                $item=['token'=>$token,'kind'=>'navaid'];
+            } else {
+                $item=['token'=>$token,'kind'=>'unknown'];
+                $unknown[]=$token;
+            }
+        }
+
+        if ($levelFL!==null) {
+            $item['levelFL']=$levelFL;
+            $vertical['changes'][]=['at'=>$token,'fl'=>$levelFL];
+        }
+        $items[]=$item;
+    }
+
+    // Infer SID/STAR only when the lexical shape is clear. Validation and exact
+    // legs remain a resolver/navdata job.
+    $navIndexes=[];
+    foreach ($items as $i=>$item) {
+        if (in_array($item['kind'],['fix','navaid','coordinate'],true)) $navIndexes[]=$i;
+    }
+    $firstNav=$navIndexes ? min($navIndexes) : null;
+    $lastNav=$navIndexes ? max($navIndexes) : null;
+
+    foreach ($items as $i=>&$item) {
+        if (($item['kind']??'')!=='procedure' || !empty($item['role'])) continue;
+        if ($firstNav!==null && $i<$firstNav) $item['role']='sid';
+        elseif ($lastNav!==null && $i>$lastNav) $item['role']='star';
+        else $item['role']='procedure';
+    }
+    unset($item);
+
+    $structure=[
+        'departure'=>['airport'=>$from,'runway'=>null,'sid'=>null],
+        'enroute'=>[],
+        'arrival'=>['airport'=>$to,'runway'=>null,'star'=>null],
+        'procedures'=>[]
+    ];
+
+    foreach ($items as $item) {
+        $kind=$item['kind']??'';
+        if ($kind==='airport_runway') {
+            if (($item['airport']??'')===$from) $structure['departure']['runway']=$item['runway'];
+            elseif (($item['airport']??'')===$to) $structure['arrival']['runway']=$item['runway'];
+            continue;
+        }
+        if ($kind==='procedure') {
+            $role=$item['role']??'procedure';
+            $structure['procedures'][]=['id'=>$item['token'],'role'=>$role];
+            if ($role==='sid' && $structure['departure']['sid']===null) $structure['departure']['sid']=$item['token'];
+            elseif ($role==='star' && $structure['arrival']['star']===null) $structure['arrival']['star']=$item['token'];
+            else $structure['enroute'][]=['type'=>'procedure','id'=>$item['token'],'role'=>$role];
+            continue;
+        }
+        if (in_array($kind,['fix','navaid','coordinate','airway','dct'],true)) {
+            $row=['type'=>$kind,'id'=>$item['token']];
+            if (isset($item['levelFL'])) $row['levelFL']=$item['levelFL'];
+            if ($kind==='coordinate') $row['coord']=$item['coord'];
+            $structure['enroute'][]=$row;
+        }
+    }
+
+    return [
+        'items'=>$items,
+        'structure'=>$structure,
+        'verticalProfile'=>$vertical,
+        'unknown'=>array_values(array_unique($unknown)),
+        'ignored'=>array_values(array_unique($ignored))
+    ];
+}
+
+function parseRouteTokens(string $raw, string $from, string $to): array {
+    $sections=splitRouteSections($raw);
+    $main=parseRouteSection($sections['main'],$from,$to,false);
+    $alternates=[];
+
+    foreach ($sections['alternates'] as $section) {
+        $parsed=parseRouteSection((string)$section['raw'],$from,$to,true);
+        $airportIds=[];
+        foreach ($parsed['items'] as $item) {
+            if (($item['kind']??'')==='airport') $airportIds[]=$item['airport'];
+            elseif (($item['kind']??'')==='airport_runway') $airportIds[]=$item['airport'];
+        }
+        $alternates[]=[
+            'name'=>$section['name'],
+            'raw'=>$section['raw'],
+            'departure'=>$airportIds[0]??null,
+            'destination'=>$airportIds ? $airportIds[count($airportIds)-1] : null,
+            'items'=>$parsed['items'],
+            'verticalProfile'=>$parsed['verticalProfile'],
+            'unknown'=>$parsed['unknown']
+        ];
+    }
+
+    return [
+        'parsed'=>$main['items'],
+        'ignored'=>$main['ignored'],
+        'unknown'=>$main['unknown'],
+        'structure'=>$main['structure'],
+        'verticalProfile'=>$main['verticalProfile'],
+        'alternates'=>$alternates
+    ];
 }
 
 function groupNavRows(array $rows): array {
@@ -235,72 +399,96 @@ function chooseNavCandidate(array $rows, array $directRoute, float $lastProgress
 }
 
 function resolveUserRoute(string $raw, string $from, string $to, array $departure, array $arrival): array {
-    $parsed = parseRouteTokens($raw, $from, $to);
-    $items = $parsed['parsed'];
-    $fixIds = []; $navaidIds = [];
+    $parsed=parseRouteTokens($raw,$from,$to);
+    $items=$parsed['parsed'];
+    $fixIds=[]; $navaidIds=[];
     foreach ($items as $item) {
-        if ($item['kind'] === 'fix') $fixIds[] = $item['token'];
-        if ($item['kind'] === 'navaid') $navaidIds[] = $item['token'];
+        if (($item['kind']??'')==='fix') $fixIds[]=$item['token'];
+        if (($item['kind']??'')==='navaid') $navaidIds[]=$item['token'];
     }
-    $fixIds = array_values(array_unique($fixIds));
-    $navaidIds = array_values(array_unique($navaidIds));
+    $fixIds=array_values(array_unique($fixIds));
+    $navaidIds=array_values(array_unique($navaidIds));
 
-    $fixRows = []; $navaidRows = [];
+    $fixRows=[]; $navaidRows=[];
     if ($fixIds) {
-        $res = awcGet('fix', ['ids' => implode(',', $fixIds), 'format' => 'json']);
-        if ($res['ok'] && is_array($res['data'])) $fixRows = groupNavRows($res['data']);
+        $res=awcGet('fix',['ids'=>implode(',',$fixIds),'format'=>'json']);
+        if ($res['ok'] && is_array($res['data'])) $fixRows=groupNavRows($res['data']);
     }
     if ($navaidIds) {
-        $res = awcGet('navaid', ['ids' => implode(',', $navaidIds), 'format' => 'json']);
-        if ($res['ok'] && is_array($res['data'])) $navaidRows = groupNavRows($res['data']);
+        $res=awcGet('navaid',['ids'=>implode(',',$navaidIds),'format'=>'json']);
+        if ($res['ok'] && is_array($res['data'])) $navaidRows=groupNavRows($res['data']);
     }
 
-    $directDistance = haversineNm((float)$departure['lat'], (float)$departure['lon'], (float)$arrival['lat'], (float)$arrival['lon']);
-    $directRoute = greatCircle(
-        (float)$departure['lat'], (float)$departure['lon'],
-        (float)$arrival['lat'], (float)$arrival['lon'],
-        max(40, min(140, (int)ceil($directDistance / 18) + 1))
+    $directDistance=haversineNm((float)$departure['lat'],(float)$departure['lon'],(float)$arrival['lat'],(float)$arrival['lon']);
+    $directRoute=greatCircle(
+        (float)$departure['lat'],(float)$departure['lon'],
+        (float)$arrival['lat'],(float)$arrival['lon'],
+        max(40,min(140,(int)ceil($directDistance/18)+1))
     );
-    $maxOffRouteNm = max(350.0, min(1200.0, $directDistance * 0.35));
+    $maxOffRouteNm=max(350.0,min(1200.0,$directDistance*0.35));
 
-    $points = [[
+    $points=[[
         'id'=>$from,'type'=>'departure','lat'=>(float)$departure['lat'],'lon'=>(float)$departure['lon']
     ]];
-    $resolved = $points; $unresolved = []; $lastProgress = 0.0;
+    $resolved=$points; $unresolved=[]; $pendingNavdata=[]; $lastProgress=0.0;
 
     foreach ($items as $item) {
-        $id = $item['token'];
-        if ($item['kind'] === 'coordinate') {
-            $candidate = ['id'=>$id,'type'=>'coordinate','lat'=>(float)$item['coord']['lat'],'lon'=>(float)$item['coord']['lon']];
-            [$offRoute, $progress] = nearestRoute($directRoute, $candidate['lat'], $candidate['lon']);
-            if ($offRoute <= $maxOffRouteNm * 1.5) {
-                $points[] = $candidate; $resolved[] = $candidate; $lastProgress = max($lastProgress, $progress);
+        $id=(string)($item['token']??'');
+        $kind=(string)($item['kind']??'');
+
+        if ($kind==='coordinate') {
+            $candidate=['id'=>$id,'type'=>'coordinate','lat'=>(float)$item['coord']['lat'],'lon'=>(float)$item['coord']['lon']];
+            if (isset($item['levelFL'])) $candidate['levelFL']=$item['levelFL'];
+            [$offRoute,$progress]=nearestRoute($directRoute,$candidate['lat'],$candidate['lon']);
+            if ($offRoute<=$maxOffRouteNm*1.5) {
+                $points[]=$candidate; $resolved[]=$candidate; $lastProgress=max($lastProgress,$progress);
             } else {
-                $unresolved[] = $id;
+                $unresolved[]=$id;
             }
             continue;
         }
 
-        $rows = $item['kind'] === 'fix' ? ($fixRows[$id] ?? []) : ($navaidRows[$id] ?? []);
-        if (!$rows) { $unresolved[] = $id; continue; }
-        $chosen = chooseNavCandidate($rows, $directRoute, $lastProgress, $maxOffRouteNm);
-        if (!$chosen) { $unresolved[] = $id; continue; }
+        if ($kind==='airway' || $kind==='procedure') {
+            $row=['token'=>$id,'kind'=>$kind];
+            if (isset($item['role'])) $row['role']=$item['role'];
+            $pendingNavdata[]=$row;
+            continue;
+        }
 
-        $candidate = ['id'=>$id,'type'=>$item['kind'],'lat'=>$chosen['lat'],'lon'=>$chosen['lon']];
-        $prev = end($points);
-        if ($prev && haversineNm((float)$prev['lat'], (float)$prev['lon'], $candidate['lat'], $candidate['lon']) < 2.0) continue;
-        $points[] = $candidate; $resolved[] = $candidate; $lastProgress = max($lastProgress, (float)$chosen['progress']);
+        if ($kind==='unknown') {
+            $unresolved[]=$id;
+            continue;
+        }
+
+        if (!in_array($kind,['fix','navaid'],true)) continue;
+
+        $rows=$kind==='fix' ? ($fixRows[$id]??[]) : ($navaidRows[$id]??[]);
+        if (!$rows) { $unresolved[]=$id; continue; }
+        $chosen=chooseNavCandidate($rows,$directRoute,$lastProgress,$maxOffRouteNm);
+        if (!$chosen) { $unresolved[]=$id; continue; }
+
+        $candidate=['id'=>$id,'type'=>$kind,'lat'=>$chosen['lat'],'lon'=>$chosen['lon']];
+        if (isset($item['levelFL'])) $candidate['levelFL']=$item['levelFL'];
+        $prev=end($points);
+        if ($prev && haversineNm((float)$prev['lat'],(float)$prev['lon'],$candidate['lat'],$candidate['lon'])<2.0) continue;
+        $points[]=$candidate; $resolved[]=$candidate; $lastProgress=max($lastProgress,(float)$chosen['progress']);
     }
 
-    $arrivalPoint = ['id'=>$to,'type'=>'arrival','lat'=>(float)$arrival['lat'],'lon'=>(float)$arrival['lon']];
-    $points[] = $arrivalPoint; $resolved[] = $arrivalPoint;
+    $arrivalPoint=['id'=>$to,'type'=>'arrival','lat'=>(float)$arrival['lat'],'lon'=>(float)$arrival['lon']];
+    $points[]=$arrivalPoint; $resolved[]=$arrivalPoint;
 
     return [
-        'usable' => count($points) > 2,
-        'points' => $points,
-        'resolved' => $resolved,
-        'unresolved' => array_values(array_unique($unresolved)),
-        'ignored' => $parsed['ignored']
+        'usable'=>count($points)>2,
+        'points'=>$points,
+        'resolved'=>$resolved,
+        'unresolved'=>array_values(array_unique($unresolved)),
+        'pendingNavdata'=>$pendingNavdata,
+        'ignored'=>$parsed['ignored'],
+        'unknown'=>$parsed['unknown'],
+        'structure'=>$parsed['structure'],
+        'verticalProfile'=>$parsed['verticalProfile'],
+        'alternates'=>$parsed['alternates'],
+        'recognized'=>$items
     ];
 }
 
@@ -711,13 +899,19 @@ $a=$airports[$from]; $b=$airports[$to];
 $lat1=(float)$a['lat']; $lon1=(float)$a['lon']; $lat2=(float)$b['lat']; $lon2=(float)$b['lon'];
 
 $routeMode='great_circle';
-$routeInput=['raw'=>$routeRaw!==''?$routeRaw:null,'resolved'=>[],'unresolved'=>[],'ignored'=>[]];
+$routeInput=['raw'=>$routeRaw!==''?$routeRaw:null,'parserVersion'=>'2.0','resolved'=>[],'unresolved'=>[],'pendingNavdata'=>[],'ignored'=>[],'unknown'=>[],'structure'=>null,'verticalProfile'=>null,'alternates'=>[],'recognized'=>[]];
 
 if ($routeRaw!=='') {
     $resolvedRoute=resolveUserRoute($routeRaw,$from,$to,$a,$b);
     $routeInput['resolved']=$resolvedRoute['resolved'];
     $routeInput['unresolved']=$resolvedRoute['unresolved'];
+    $routeInput['pendingNavdata']=$resolvedRoute['pendingNavdata'];
     $routeInput['ignored']=$resolvedRoute['ignored'];
+    $routeInput['unknown']=$resolvedRoute['unknown'];
+    $routeInput['structure']=$resolvedRoute['structure'];
+    $routeInput['verticalProfile']=$resolvedRoute['verticalProfile'];
+    $routeInput['alternates']=$resolvedRoute['alternates'];
+    $routeInput['recognized']=$resolvedRoute['recognized'];
     if ($resolvedRoute['usable']) {
         [$route,$distanceNm]=buildRoute($resolvedRoute['points']);
         $routeMode='user_route';
