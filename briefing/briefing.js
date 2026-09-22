@@ -19,6 +19,7 @@
     outside:L.layerGroup(),
     model:L.layerGroup().addTo(map)
   };
+  if(window.YCWAFS?.attachMap)window.YCWAFS.attachMap(map);
 
   function esc(v){return String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));}
   function setFeedback(text,state=""){feedback.className="feedback"+(state?" "+state:"");feedbackText.textContent=text;}
@@ -234,6 +235,7 @@
         map.invalidateSize({pan:false});
         renderMap(data);
         if(window.YCModelWX?.load)window.YCModelWX.load(data,{onUpdate:updateModelMap,onFocus:focusModelPoint}).catch(e=>console.error("Model WX error",e));
+        if(window.YCWAFS?.load)window.YCWAFS.load(data).catch(e=>console.error("WAFS visual forecast error",e));
         setTimeout(()=>map.invalidateSize({pan:false}),80);
       }catch(e){
         console.error("Map render error",e);
@@ -247,7 +249,7 @@
     const fl=$("#fl").value, etd=$("#etd").value, route=$("#route-text").value.trim().toUpperCase();
     if(!/^[A-Z0-9]{4}$/.test(from)||!/^[A-Z0-9]{4}$/.test(to)||from===to){setFeedback("Geçerli ve farklı iki ICAO kodu gir.","error");return;}
     if(!etd){setFeedback("ETD UTC gir.","error");return;}
-    if(controller) controller.abort(); window.YCModelWX?.cancel(); controller=new AbortController(); submit.disabled=true;
+    if(controller) controller.abort(); window.YCModelWX?.cancel(); window.YCWAFS?.cancel(); controller=new AbortController(); submit.disabled=true;
     setFeedback(`${from} → ${to} pilot briefing hazırlanıyor…`,"loading");
     try{
       const q=new URLSearchParams({from,to,fl,etd}); if(route) q.set("route",route);
