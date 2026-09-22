@@ -224,11 +224,60 @@
     const rows=[];
     rows.push(briefLine("KALKIŞ",depCat,catClass(depCat),`${esc(dep?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     rows.push(briefLine("VARIŞ",arrCat,catClass(arrCat),`${esc(arr?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
-    rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} fix/navaid çözüldü${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
+    const pending=data.routeInput?.pendingNavdata||[];
+    rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} koordinat/fix çözüldü${pending.length?`; ${pending.length} airway/procedure navdata bekliyor`:""}${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
     const available=sigmetAvailable(data),summary=data.hazardSummary||{},relevant=summary.within100nm||0;
     rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" İLGİLİ":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı tahmini rota geçiş saatiyle ilgili veya zamanı belirsiz. ${summary.outsideRouteEta||0} kayıt uçuş sırasında geçerli olsa da ilgili bölgedeki tahmini geçiş saatine uymuyor. ${summary.outsideFlightWindow||0} kayıt tüm uçuş penceresi dışında. ${summary.unknownTime||0} kaydın zamanı kesin eşleştirilemedi. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
     rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",!available?"SIGMET kaynağı alınamadığı için seviye karşılaştırması yapılamadı.":cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
     $("#simple-brief").innerHTML=rows.join("");
+  }
+
+  function formatRouteParser(meta){
+    if(!meta?.raw) return "Great-circle route";
+    const lines=[],s=meta.structure||{};
+    const dep=s.departure||{},arr=s.arrival||{};
+    const depBits=[dep.airport,dep.runway?`RWY ${dep.runway}`:"",dep.sid?`SID ${dep.sid}`:""].filter(Boolean);
+    const arrBits=[arr.star?`STAR ${arr.star}`:"",arr.airport,arr.runway?`RWY ${arr.runway}`:""].filter(Boolean);
+    if(depBits.length) lines.push("DEP: "+depBits.join(" · "));
+
+    const enroute=(s.enroute||[]).map(p=>{
+      let label=p.id||"";
+      if(p.type==="airway") label=`AIRWAY ${label}`;
+      else if(p.type==="procedure") label=`PROC ${label}`;
+      else if(p.type==="dct") label="DCT";
+      if(Number.isFinite(Number(p.levelFL))) label+=` / FL${String(Number(p.levelFL)).padStart(3,"0")}`;
+      return label;
+    }).filter(Boolean);
+    if(enroute.length) lines.push("ENROUTE: "+enroute.join(" → "));
+    if(arrBits.length) lines.push("ARR: "+arrBits.join(" · "));
+
+    const vp=meta.verticalProfile||{},vertical=[];
+    if(Number.isFinite(Number(vp.initialFL))) vertical.push(`INITIAL FL${String(Number(vp.initialFL)).padStart(3,"0")}`);
+    for(const c of vp.changes||[]) vertical.push(`${c.at}: FL${String(Number(c.fl)).padStart(3,"0")}`);
+    if(vertical.length) lines.push("VERTICAL: "+vertical.join(" · "));
+
+    for(const alt of meta.alternates||[]){
+      const route=(alt.items||[]).filter(x=>!["flight_level","airport"].includes(x.kind)).map(x=>{
+        if(x.kind==="airway") return `AIRWAY ${x.token}`;
+        if(x.kind==="dct") return "DCT";
+        return x.token;
+      }).filter(Boolean);
+      const endpoints=[alt.departure,alt.destination].filter(Boolean).join(" → ");
+      lines.push(`${alt.name}: ${endpoints||"ayrı rota"}${route.length?" · "+route.join(" → "):""}`);
+    }
+
+    const pending=(meta.pendingNavdata||[]).map(x=>{
+      const role=x.role&&x.role!=="procedure"?` ${String(x.role).toUpperCase()}`:"";
+      return `${String(x.kind||"navdata").toUpperCase()}${role} ${x.token}`.trim();
+    });
+    if(pending.length) lines.push("NAVDATA PENDING: "+pending.join(", "));
+
+    const resolved=(meta.resolved||[]).filter(p=>!["departure","arrival"].includes(p.type)).map(p=>p.id);
+    if(resolved.length) lines.push("AWC / COORD RESOLVED: "+resolved.join(" → "));
+
+    const unr=meta.unresolved||[];
+    if(unr.length) lines.push("UNRESOLVED: "+unr.join(", "));
+    return lines.join("\n")||"Parsed route";
   }
 
   function renderRouteMeta(data){
@@ -236,15 +285,13 @@
     $("#route-label").textContent=label; $("#brief-route").textContent=label;
     $("#distance").textContent=`${Math.round(data.distanceNm)} NM`;
     $("#fl-out").textContent=`FL${data.flight.cruiseFL}`;
-    $("#route-type").textContent=data.routeMode==="user_route"?"USER ROUTE":"GREAT CIRCLE";
+    $("#route-type").textContent=data.routeMode==="user_route"?"PARSED OFP":"GREAT CIRCLE";
     $("#etd-out").textContent=new Date(data.flight.etdUtc).toLocaleTimeString("en-GB",{timeZone:"UTC",hour:"2-digit",minute:"2-digit"})+"Z";
     $("#station-count").textContent=data.stations.length;
     $("#hit-count").textContent=sigmetAvailable(data)?data.hazardSummary.intersects:"—";
     $("#near-count").textContent=sigmetAvailable(data)?data.hazardSummary.nearRoute:"—";
     const m=data.flight.estimatedEetMinutes; $("#eet").textContent=`${Math.floor(m/60)}h ${m%60}m*`;
-    const resolved=(data.routeInput?.resolved||[]).filter(p=>!["departure","arrival"].includes(p.type)).map(p=>p.id);
-    const unr=data.routeInput?.unresolved||[];
-    $("#resolved-route").textContent=(resolved.length?"Resolved: "+resolved.join(" → "):"Great-circle route")+(unr.length?"\nUnresolved: "+unr.join(", "):"");
+    $("#resolved-route").textContent=formatRouteParser(data.routeInput);
   }
 
   function render(data){
