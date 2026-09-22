@@ -229,7 +229,7 @@
         try{await load("/main/briefing/modelwx.js?v=9");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{await load("/main/briefing/wafs.js?v=10");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=11");
+          await load("/main/briefing/briefing.js?v=12");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
