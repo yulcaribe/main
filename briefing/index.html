@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=10">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=11">
 </head>
 <body>
   <header class="pb-header">
@@ -62,7 +62,7 @@
         <div id="map"></div>
         <div class="map-badges">
           <button id="route-toggle" type="button">ROUTE <strong id="route-label">—</strong></button>
-          <button id="layers-toggle" type="button">LAYERS <strong>WX</strong></button>
+          <button id="layers-toggle" type="button" title="Harita katmanlarını seç">LAYERS <strong>SELECT ▾</strong></button>
         </div>
 
         <div class="map-panel" id="route-panel" hidden>
@@ -77,7 +77,7 @@
         </div>
 
         <div class="map-panel layers-panel" id="layers-panel" hidden>
-          <div class="panel-head"><strong>LAYERS</strong><button data-close="layers-panel">×</button></div>
+          <div class="panel-head"><div class="panel-head-copy"><strong>MAP LAYERS</strong><small>Aç / kapat · opacity · kaydır ↓</small></div><button data-close="layers-panel">×</button></div>
           <label><span>Route</span><input type="checkbox" checked data-layer="route"></label>
           <label><span>METAR / TAF</span><input type="checkbox" checked data-layer="stations"></label>
           <label><span>SIGMET · uçuş aralığı / zamanı belirsiz</span><input type="checkbox" checked data-layer="hazards"></label>
@@ -111,8 +111,15 @@
           </div>
         </div>
         <div class="map-wx-legend" aria-live="polite">
+          <div class="wx-color-key" aria-label="Harita renk açıklaması">
+            <span><i class="key-gfs"></i>GFS WIND</span>
+            <span><i class="key-edr"></i>TURB</span>
+            <span><i class="key-icing"></i>ICING</span>
+            <span><i class="key-cbextent"></i>CB EXT</span>
+            <span><i class="key-cbtop"></i>CB TOP</span>
+            <span><i class="key-wafs-wind"></i>WAFS WIND</span>
+          </div>
           <strong id="map-model-status">MODEL WIND · bekleniyor</strong>
-          <span>Oklar rüzgârın gittiği yönü gösterir · Noktaya tıkla</span>
           <span id="map-wafs-status">WAFS · bekleniyor</span>
           <span id="map-sigmet-status">SIGMET · bekleniyor</span>
         </div>
@@ -222,7 +229,7 @@
         try{await load("/main/briefing/modelwx.js?v=9");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{await load("/main/briefing/wafs.js?v=10");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=8");
+          await load("/main/briefing/briefing.js?v=11");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
