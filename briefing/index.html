@@ -81,7 +81,7 @@
           <label><span>Route</span><input type="checkbox" checked data-layer="route"></label>
           <label><span>METAR / TAF</span><input type="checkbox" checked data-layer="stations"></label>
           <label><span>SIGMET · uçuş aralığı / zamanı belirsiz</span><input type="checkbox" checked data-layer="hazards"></label>
-          <label><span>SIGMET · uçuş saati dışında</span><input type="checkbox" data-layer="outside"></label>
+          <label><span>SIGMET · rota geçiş zamanında ilgisiz</span><input type="checkbox" data-layer="outside"></label>
           <label><span>GFS · rüzgâr / rota noktaları</span><input type="checkbox" checked data-layer="model"></label>
           <div class="wafs-layer-control">
             <label><span>WAFS forecast overlay</span><input id="wafs-overlay-enabled" type="checkbox"></label>
@@ -207,7 +207,7 @@
         try{await load("/main/briefing/modelwx.js?v=7");}catch(e){console.warn("Model WX yüklenemedi",e);}
         try{await load("/main/briefing/wafs.js?v=7");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=7");
+          await load("/main/briefing/briefing.js?v=8");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
