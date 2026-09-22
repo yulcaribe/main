@@ -252,7 +252,7 @@
     if(arrBits.length) lines.push("ARR: "+arrBits.join(" · "));
 
     const vp=meta.verticalProfile||{},vertical=[];
-    if(Number.isFinite(Number(vp.initialFL))) vertical.push(`INITIAL FL${String(Number(vp.initialFL)).padStart(3,"0")}`);
+    if(vp.initialFL!=null&&Number.isFinite(Number(vp.initialFL))) vertical.push(`INITIAL FL${String(Number(vp.initialFL)).padStart(3,"0")}`);
     for(const c of vp.changes||[]) vertical.push(`${c.at}: FL${String(Number(c.fl)).padStart(3,"0")}`);
     if(vertical.length) lines.push("VERTICAL: "+vertical.join(" · "));
 
