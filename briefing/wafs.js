@@ -199,6 +199,13 @@
     const span=first&&last?`${utc(first.etaUtc).slice(11)}–${utc(last.etaUtc).slice(11)}`:"";
     return [`${item.hits} hit`,`${known}/${item.total} örnek değerlendirildi · ${span}`];
   }
+  function setPublicStatus(state,cls="info",detail=""){
+    const box=$("#model-source-wafs025");
+    if(box)box.innerHTML=`<div class="model-source-head"><strong>AWC WAFS VISUAL</strong><span class="${cls}">${esc(state)}</span></div>`;
+    const meta=$("#model-wafs025-meta");
+    if(meta&&detail)meta.textContent=detail;
+  }
+
 
   function renderAnalysis(){
     const grid=$("#wafs-route-summary"),meta=$("#wafs-meta");
@@ -287,14 +294,24 @@
     if($("#wafs-route-summary"))$("#wafs-route-summary").innerHTML='<div class="model-loading">AWC WAFS forecast görüntüleri rota saatlerine göre eşleştiriliyor…</div>';
     if($("#wafs-meta"))$("#wafs-meta").textContent="WAFS frame eşleştirmesi hazırlanıyor…";
     const status=$("#map-wafs-status");if(status)status.textContent="WAFS · rota analizi yükleniyor…";
+    setPublicStatus("LOADING","info","Public AWC WAFS forecast PNG'leri rota ve saate göre yükleniyor.");
     try{
       analysis=await analyzeRoute(data,my,controller.signal);
       if(my!==generation)return;
+      const available=ANALYSIS_PRODUCTS.some(id=>(analysis.products[id]?.available||0)>0);
+      setPublicStatus(
+        available?"VISUAL READY":"VISUAL UNAVAILABLE",
+        available?"ok":"warn",
+        available
+          ?"Public AWC WAFS görsel forecast aktif. Turbulence, icing ve CB rota-zaman analizi aşağıda; harita overlay varsayılan açık."
+          :"Public AWC WAFS PNG alınamadı. Bu, hazard olmadığı anlamına gelmez."
+      );
       renderAnalysis();
       await renderSelectedOverlay();
     }catch(e){
       if(my!==generation||e?.name==="AbortError")return;
       console.error("WAFS visual forecast",e);
+      setPublicStatus("VISUAL UNAVAILABLE","warn","Public AWC WAFS PNG alınamadı; ham WIFS yetkisiyle ilgili bir hata değildir.");
       if($("#wafs-route-summary"))$("#wafs-route-summary").innerHTML=`<div class="empty">${esc(e.message||"WAFS görselleri alınamadı.")}</div>`;
       if(status)status.textContent="WAFS · public görsel alınamadı";
     }
