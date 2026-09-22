@@ -325,11 +325,10 @@ function normalizeStation(array $s, array $route): ?array {
     ];
 }
 
-function selectStations(array $candidates, float $distanceNm): array {
+function selectStations(array $candidates, float $distanceNm, int $maxSlots=8, float $spacingNm=120.0): array {
     // Keep enough en-route reference airports to resemble an operational
     // route-weather strip without turning the page into an airport directory.
-    // ~120 NM spacing gives AYT-KTW about eight intermediate stations.
-    $slots = max(2, min(8, (int)ceil($distanceNm / 120)));
+    $slots = max(2, min($maxSlots, (int)ceil($distanceNm / max(40.0,$spacingNm))));
     $selected = [];
 
     for ($b=0; $b<$slots; $b++) {
@@ -536,13 +535,90 @@ function firstTimestamp(array $props,array $keys): ?int {
     return null;
 }
 
+function pointGeometryDistanceNm(float $lat,float $lon,?array $geometry): float {
+    if (!$geometry) return INF;
+    $type=$geometry['type'] ?? '';
+    $coords=$geometry['coordinates'] ?? null;
+    if (!is_array($coords)) return INF;
+
+    $ringDistance=function(array $ring) use ($lat,$lon): float {
+        if (count($ring)<2) return INF;
+        if (count($ring)>=3 && pointInRing($lon,$lat,$ring)) return 0.0;
+        $best=INF;
+        for ($j=0;$j<count($ring)-1;$j++) {
+            $a=$ring[$j]; $b=$ring[$j+1];
+            if (!is_array($a)||!is_array($b)||count($a)<2||count($b)<2) continue;
+            $d=pointSegmentNm($lat,$lon,(float)$a[1],(float)$a[0],(float)$b[1],(float)$b[0]);
+            if ($d<$best) $best=$d;
+        }
+        return $best;
+    };
+
+    if ($type==='Polygon') return $ringDistance(is_array($coords[0]??null)?$coords[0]:[]);
+    if ($type==='MultiPolygon') {
+        $best=INF;
+        foreach ($coords as $poly) {
+            $ring=is_array($poly[0]??null)?$poly[0]:[];
+            $d=$ringDistance($ring);
+            if ($d<$best) $best=$d;
+        }
+        return $best;
+    }
+    if ($type==='LineString') {
+        $best=INF;
+        for ($j=0;$j<count($coords)-1;$j++) {
+            $a=$coords[$j]; $b=$coords[$j+1];
+            if (!is_array($a)||!is_array($b)||count($a)<2||count($b)<2) continue;
+            $d=pointSegmentNm($lat,$lon,(float)$a[1],(float)$a[0],(float)$b[1],(float)$b[0]);
+            if ($d<$best) $best=$d;
+        }
+        return $best;
+    }
+    if ($type==='Point' && count($coords)>=2) return haversineNm($lat,$lon,(float)$coords[1],(float)$coords[0]);
+    return INF;
+}
+
+function routeEncounterWindow(array $route,?array $geometry,int $etdEpoch,int $flightEndEpoch,float $thresholdNm=100.0): ?array {
+    $n=count($route);
+    if ($n<2 || !$geometry) return null;
+    $first=null; $last=null; $closestIdx=null; $closest=INF;
+
+    foreach ($route as $i=>$p) {
+        $d=pointGeometryDistanceNm((float)$p[0],(float)$p[1],$geometry);
+        if ($d<$closest) { $closest=$d; $closestIdx=$i; }
+        if ($d<=$thresholdNm) {
+            if ($first===null) $first=$i;
+            $last=$i;
+        }
+    }
+    if ($first===null || $last===null) return null;
+
+    $span=max(1,$n-1);
+    $duration=max(0,$flightEndEpoch-$etdEpoch);
+    $progressStart=$first/$span;
+    $progressEnd=$last/$span;
+    $progressClosest=($closestIdx??$first)/$span;
+
+    return [
+        'progressStart'=>round($progressStart,4),
+        'progressEnd'=>round($progressEnd,4),
+        'progressClosest'=>round($progressClosest,4),
+        'etaStart'=>$etdEpoch+(int)round($duration*$progressStart),
+        'etaEnd'=>$etdEpoch+(int)round($duration*$progressEnd),
+        'etaClosest'=>$etdEpoch+(int)round($duration*$progressClosest),
+        'closestDistanceNm'=>round($closest,1),
+        'thresholdNm'=>$thresholdNm
+    ];
+}
+
 function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,int $flightEndEpoch): array {
     $features=is_array($sigmets['features'] ?? null) ? $sigmets['features'] : [];
     $out=[];
 
     foreach ($features as $feature) {
         if (!is_array($feature)) continue;
-        $d=geometryDistanceNm($route,is_array($feature['geometry'] ?? null)?$feature['geometry']:null);
+        $geometry=is_array($feature['geometry'] ?? null)?$feature['geometry']:null;
+        $d=geometryDistanceNm($route,$geometry);
         if (!is_finite($d) || $d>100.0) continue;
 
         $raw=rawSigmet($feature);
@@ -550,11 +626,21 @@ function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,
         $props=is_array($feature['properties'] ?? null)?$feature['properties']:[];
         $validFrom=firstTimestamp($props,['validTimeFrom','validFrom','startTime','validStart','issueTime']);
         $validTo=firstTimestamp($props,['validTimeTo','validTo','endTime','validEnd','expireTime']);
+        $encounter=routeEncounterWindow($route,$geometry,$etdEpoch,$flightEndEpoch,100.0);
         $timeRelation='unknown';
+
         if ($validFrom!==null && $validTo!==null) {
-            $vf=$validFrom ?? PHP_INT_MIN;
-            $vt=$validTo ?? PHP_INT_MAX;
-            $timeRelation = ($vf <= $flightEndEpoch && $vt >= $etdEpoch) ? 'overlaps_flight_window' : 'outside_flight_window';
+            $flightOverlap=($validFrom <= $flightEndEpoch && $validTo >= $etdEpoch);
+            if (!$flightOverlap) {
+                $timeRelation='outside_flight_window';
+            } elseif ($encounter) {
+                $routeOverlap=($validFrom <= $encounter['etaEnd'] && $validTo >= $encounter['etaStart']);
+                $timeRelation=$routeOverlap?'overlaps_route_eta':'outside_route_eta';
+            } else {
+                // Geometry passed the 100 NM test but encounter sampling could not
+                // resolve a local ETA; keep it visible rather than claiming it is irrelevant.
+                $timeRelation='unknown';
+            }
         }
 
         $proximity=$d<0.5?'INTERSECTS':($d<=50?'NEAR_ROUTE':'WITHIN_100NM');
@@ -567,12 +653,25 @@ function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,
             'timeRelation'=>$timeRelation,
             'validFrom'=>$validFrom ? gmdate('c',$validFrom) : null,
             'validTo'=>$validTo ? gmdate('c',$validTo) : null,
+            'routeEncounter'=>$encounter?[
+                'progressStart'=>$encounter['progressStart'],
+                'progressEnd'=>$encounter['progressEnd'],
+                'progressClosest'=>$encounter['progressClosest'],
+                'etaStart'=>gmdate('c',$encounter['etaStart']),
+                'etaEnd'=>gmdate('c',$encounter['etaEnd']),
+                'etaClosest'=>gmdate('c',$encounter['etaClosest']),
+                'closestDistanceNm'=>$encounter['closestDistanceNm'],
+                'thresholdNm'=>$encounter['thresholdNm']
+            ]:null,
             'raw'=>$raw,
             'feature'=>$feature
         ];
     }
 
     usort($out,function($a,$b){
+        $time=['overlaps_route_eta'=>0,'unknown'=>1,'outside_route_eta'=>2,'outside_flight_window'=>3];
+        $ta=$time[$a['timeRelation']]??9; $tb=$time[$b['timeRelation']]??9;
+        if ($ta!==$tb) return $ta<=>$tb;
         $p=['INTERSECTS'=>0,'NEAR_ROUTE'=>1,'WITHIN_100NM'=>2];
         $c=($p[$a['proximity']]??9)<=>($p[$b['proximity']]??9);
         return $c!==0?$c:($a['distanceNm']<=>$b['distanceNm']);
@@ -657,7 +756,7 @@ foreach ($probeRoute as $p) {
     }
 }
 
-$intermediate=selectStations(array_values($stationPool),$distanceNm);
+$intermediate=selectStations(array_values($stationPool),$distanceNm,12,75.0);
 $endpointStationsRes=awcGet('stationinfo',['ids'=>$from.','.$to,'format'=>'json']);
 $endpointMap=$endpointStationsRes['ok'] && is_array($endpointStationsRes['data']) ? mapByIcao($endpointStationsRes['data']) : [];
 $fromStation=isset($endpointMap[$from])?normalizeStation($endpointMap[$from],$route):null;
@@ -686,7 +785,10 @@ $tafMap=$tafRes['ok'] && is_array($tafRes['data']) ? mapByIcao($tafRes['data']) 
 
 foreach ($stations as &$s) {
     $icao=$s['icao']; $m=$metarMap[$icao]??null; $t=$tafMap[$icao]??null;
-    $s['metar']=is_array($m)?[
+
+    $metarEpoch=is_array($m)?firstTimestamp($m,['obsTime']):null;
+    $metarFresh=$metarEpoch!==null && $metarEpoch >= time()-4*3600 && $metarEpoch <= time()+3600;
+    $s['metar']=$metarFresh?[
         'raw'=>$m['rawOb']??null,
         'obsTime'=>$m['obsTime']??null,
         'flightCategory'=>$m['fltCat']??null,
@@ -696,14 +798,37 @@ foreach ($stations as &$s) {
         'visibilitySm'=>$m['visib']??null,
         'weather'=>$m['wxString']??null,
     ]:null;
-    $s['taf']=is_array($t)?[
+    $s['metarStale']=is_array($m) && !$metarFresh;
+
+    $tafFrom=is_array($t)?firstTimestamp($t,['validTimeFrom']):null;
+    $tafTo=is_array($t)?firstTimestamp($t,['validTimeTo']):null;
+    $tafFresh=$tafFrom!==null && $tafTo!==null && $tafFrom <= $flightEndEpoch && $tafTo >= $etdEpoch;
+    $s['taf']=$tafFresh?[
         'raw'=>$t['rawTAF']??null,
         'issueTime'=>$t['issueTime']??null,
         'validFrom'=>$t['validTimeFrom']??null,
         'validTo'=>$t['validTimeTo']??null,
     ]:null;
+    $s['tafStale']=is_array($t) && !$tafFresh;
+    $s['hasMetar']=$s['metar']!==null;
+    $s['hasTaf']=$s['taf']!==null;
 }
 unset($s);
+
+// Re-select up to eight en-route stations after freshness checks, so dead/stale
+// stations do not consume the route-weather slots. Endpoints are always retained.
+$depStation=null; $arrStation=null; $freshIntermediate=[];
+foreach ($stations as $s) {
+    if (($s['role']??'')==='departure') { $depStation=$s; continue; }
+    if (($s['role']??'')==='arrival') { $arrStation=$s; continue; }
+    if ($s['metar']!==null || $s['taf']!==null) $freshIntermediate[]=$s;
+}
+$intermediate=selectStations($freshIntermediate,$distanceNm,8,120.0);
+$stations=array_values(array_filter(array_merge(
+    $depStation?[$depStation]:[],
+    $intermediate,
+    $arrStation?[$arrStation]:[]
+)));
 
 $sigmetRes=awcGet('isigmet',['format'=>'geojson'],15);
 $sigmetAvailable=$sigmetRes['ok'] && (
@@ -713,7 +838,7 @@ $sigmetAvailable=$sigmetRes['ok'] && (
 $sigmets=$sigmetAvailable && ($sigmetRes['status']??0)!==204 ? $sigmetRes['data'] : ['type'=>'FeatureCollection','features'=>[]];
 $hazards=analyzeSigmets($sigmets,$route,$cruiseFL,$etdEpoch,$flightEndEpoch);
 
-$timeRelevant=array_values(array_filter($hazards,fn($h)=>$h['timeRelation']!=='outside_flight_window'));
+$timeRelevant=array_values(array_filter($hazards,fn($h)=>in_array($h['timeRelation'],['overlaps_route_eta','unknown'],true)));
 $intersectCount=count(array_filter($timeRelevant,fn($h)=>$h['proximity']==='INTERSECTS'));
 $nearCount=count(array_filter($timeRelevant,fn($h)=>$h['proximity']==='NEAR_ROUTE'));
 $cruiseCount=count(array_filter($timeRelevant,fn($h)=>$h['cruiseRelation']==='at_cruise_level'));
@@ -749,7 +874,8 @@ $payload=[
         'atCruiseLevel'=>$cruiseCount,
         'available'=>$sigmetAvailable,
         'within100nm'=>count($timeRelevant),
-        'outsideFlightWindow'=>count($hazards)-count($timeRelevant),
+        'outsideRouteEta'=>count(array_filter($hazards,fn($h)=>$h['timeRelation']==='outside_route_eta')),
+        'outsideFlightWindow'=>count(array_filter($hazards,fn($h)=>$h['timeRelation']==='outside_flight_window')),
         'unknownTime'=>count(array_filter($timeRelevant,fn($h)=>$h['timeRelation']==='unknown')),
         'shown'=>count($hazards)
     ],
@@ -762,7 +888,7 @@ $payload=[
     'cache'=>['hit'=>false,'ageSeconds'=>0],
     'notes'=>[
         'METAR/TAF istasyonları rota boyunca yaklaşık 120 NM aralıklı, en fazla 8 ara meydan olacak şekilde temsilci olarak seçilir; kalkış/varış ayrıca eklenir.',
-        'SIGMET yakınlığı gerçek rota geometrisine yaklaşık mesafe/intersection hesabıyla belirlenir.',
+        'SIGMET yakınlığı rota geometrisine göre belirlenir; zaman ilgisi ayrıca tehlike bölgesinin yaklaşık rota geçiş penceresiyle karşılaştırılır.',
         'ETD ve tahmini EET yalnızca zaman bağlamı içindir; EET 450 kt varsayımıyla kaba tahmindir.',
         'WAFS gridleri bu sürümde doğrudan işlenmez; WIFS API erişimi gerekir.'
     ]
