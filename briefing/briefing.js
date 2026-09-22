@@ -81,7 +81,12 @@
   };
   const sigmetAvailable=data=>data.sourceStatus?.sigmet?.ok===true;
   function timeText(h){
-    return ({overlaps_flight_window:"Uçuş zaman aralığıyla örtüşüyor",outside_flight_window:"Uçuş zaman aralığı dışında",unknown:"Geçerlilik zamanı bilinmiyor"})[h.timeRelation]||"Zaman bilinmiyor";
+    return ({
+      overlaps_route_eta:"Tahmini rota geçiş zamanı ile örtüşüyor",
+      outside_route_eta:"Uçuş sırasında geçerli, fakat bu bölgedeki tahmini geçiş saatine uymuyor",
+      outside_flight_window:"Uçuş zaman aralığı dışında",
+      unknown:"Geçerlilik / rota zamanı kesin eşleştirilemedi"
+    })[h.timeRelation]||"Zaman bilinmiyor";
   }
   function updateModelMap(result){
     groups.model.clearLayers();modelMarkers=[];modelResult=result;modelZoom=map.getZoom();
@@ -127,14 +132,15 @@
     }
     for(const h of data.hazards||[]){
       try{
-        const outside=h.timeRelation==="outside_flight_window",col=outside?"#8195a4":hazardColor(h);
+        const outside=["outside_flight_window","outside_route_eta"].includes(h.timeRelation),col=outside?"#8195a4":hazardColor(h);
         const l=L.geoJSON(h.feature,{style:()=>({color:col,weight:1.6,fillColor:col,fillOpacity:outside?.035:.12,dashArray:outside?"3 9":"6 5"})});
-        l.bindPopup(`<strong>${esc(h.hazard)}</strong><br>${esc(h.proximity)} · ${esc(h.distanceNm)} NM<br><span style="color:#8297a6">${esc(relationText(h.cruiseRelation))}</span><br>${esc(timeText(h))}<br>${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}<br><br><code style="font-size:9px">${esc(h.raw||"SIGMET")}</code>`);
+        const encounter=h.routeEncounter?`<br>Rota yakınından tahmini geçiş: ${esc(utc(h.routeEncounter.etaStart))} → ${esc(utc(h.routeEncounter.etaEnd))}`:"";
+        l.bindPopup(`<strong>${esc(h.hazard)}</strong><br>${esc(h.proximity)} · ${esc(h.distanceNm)} NM<br><span style="color:#8297a6">${esc(relationText(h.cruiseRelation))}</span><br>${esc(timeText(h))}<br>SIGMET: ${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}${encounter}<br><br><code style="font-size:9px">${esc(h.raw||"SIGMET")}</code>`);
         l.addTo(outside?groups.outside:groups.hazards);
       }catch(e){}
     }
     const summary=data.hazardSummary||{};
-    $("#map-sigmet-status").textContent=sigmetAvailable(data)?`SIGMET · ${summary.intersects||0} kesişim · ${summary.within100nm||0} kayıt / 100 NM · ${summary.outsideFlightWindow||0} uçuş saati dışında` : "SIGMET · kaynak alınamadı; durum bilinmiyor";
+    $("#map-sigmet-status").textContent=sigmetAvailable(data)?`SIGMET · ${summary.intersects||0} kesişim · ${summary.within100nm||0} rota-zaman ilgili/belirsiz · ${summary.outsideRouteEta||0} geçiş saatinde ilgisiz` : "SIGMET · kaynak alınamadı; durum bilinmiyor";
     map.fitBounds(line.getBounds(),{paddingTopLeft:[45,55],paddingBottomRight:[45,95],animate:false});
   }
 
@@ -144,6 +150,8 @@
     for(const s of stations){
       const fc=s.metar?.flightCategory||"NA";
       const meta=s.role==="enroute"?`${s.routeDistanceNm} NM from route · ${Math.round(s.progress*100)}%`:s.role==="departure"?"Route origin":"Route destination";
+      const metarText=s.metar?.raw||(s.metarStale?"Eski METAR gösterilmedi.":"METAR mevcut değil");
+      const tafText=s.taf?.raw||(s.tafStale?"Uçuş zamanını kapsamayan eski TAF gösterilmedi.":"TAF mevcut değil");
       const a=document.createElement("article"); a.className="station-card";
       a.innerHTML=`
         <div class="station-main">
@@ -152,8 +160,8 @@
           <span class="fc fc-${esc(fc)}">${esc(fc)}</span>
         </div>
         <div class="wx-lines">
-          <div class="wx-block"><small>OBSERVATION · METAR · ${esc(utc(s.metar?.obsTime))}</small><div class="wx-raw">${esc(s.metar?.raw||"METAR mevcut değil")}</div></div>
-          <div class="wx-block"><small>TERMINAL FORECAST · TAF · ${esc(utc(s.taf?.validFrom))} → ${esc(utc(s.taf?.validTo))}</small><div class="wx-raw">${esc(s.taf?.raw||"TAF mevcut değil")}</div></div>
+          <div class="wx-block"><small>OBSERVATION · METAR · ${esc(utc(s.metar?.obsTime))}</small><div class="wx-raw">${esc(metarText)}</div></div>
+          <div class="wx-block"><small>TERMINAL FORECAST · TAF · ${esc(utc(s.taf?.validFrom))} → ${esc(utc(s.taf?.validTo))}</small><div class="wx-raw">${esc(tafText)}</div></div>
         </div>`;
       stationList.appendChild(a);
     }
@@ -177,7 +185,7 @@
     if(!hazards.length){hazardList.innerHTML='<div class="empty">Alınan SIGMET verisinde rota/100 NM için kayıt bulunmadı. Bu, hava tehlikesi olmadığı anlamına gelmez.</div>';return;}
     for(const h of hazards){
       const a=document.createElement("article"); a.className="hazard-card";
-      if(h.timeRelation==="outside_flight_window")a.classList.add("outside-window");
+      if(["outside_flight_window","outside_route_eta"].includes(h.timeRelation))a.classList.add("outside-window");
       const cls=h.proximity==="INTERSECTS"?"bad":h.proximity==="NEAR_ROUTE"?"warn":"info";
       a.innerHTML=`
         <div class="head"><strong>${esc(h.hazard)}</strong><span class="tag ${cls}">${esc(h.proximity)}</span></div>
@@ -186,7 +194,8 @@
           <span>${esc(verticalText(h))}</span>
           <span>${esc(relationText(h.cruiseRelation))}</span>
           <span>${esc(timeText(h))}</span>
-          <span>${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}</span>
+          <span>SIGMET ${esc(utc(h.validFrom))} → ${esc(utc(h.validTo))}</span>
+          ${h.routeEncounter?`<span>ROUTE ETA ${esc(utc(h.routeEncounter.etaStart))} → ${esc(utc(h.routeEncounter.etaEnd))}</span>`:""}
         </div>
         <pre>${esc(h.raw||"SIGMET")}</pre>`;
       hazardList.appendChild(a);
@@ -206,7 +215,7 @@
     rows.push(briefLine("VARIŞ",arrCat,catClass(arrCat),`${esc(arr?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} fix/navaid çözüldü${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
     const available=sigmetAvailable(data),summary=data.hazardSummary||{},relevant=summary.within100nm||0;
-    rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" YAKIN":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı uçuş aralığı dışında değil. ${summary.outsideFlightWindow||0} kayıt uçuş saati dışında; haritada ayrı katman. ${summary.unknownTime||0} kaydın zamanı belirsiz. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
+    rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" İLGİLİ":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı tahmini rota geçiş saatiyle ilgili veya zamanı belirsiz. ${summary.outsideRouteEta||0} kayıt uçuş sırasında geçerli olsa da ilgili bölgedeki tahmini geçiş saatine uymuyor. ${summary.outsideFlightWindow||0} kayıt tüm uçuş penceresi dışında. ${summary.unknownTime||0} kaydın zamanı kesin eşleştirilemedi. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
     rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",!available?"SIGMET kaynağı alınamadığı için seviye karşılaştırması yapılamadı.":cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
     $("#simple-brief").innerHTML=rows.join("");
   }
