@@ -326,7 +326,10 @@ function normalizeStation(array $s, array $route): ?array {
 }
 
 function selectStations(array $candidates, float $distanceNm): array {
-    $slots = max(2, min(5, (int)ceil($distanceNm / 500)));
+    // Keep enough en-route reference airports to resemble an operational
+    // route-weather strip without turning the page into an airport directory.
+    // ~120 NM spacing gives AYT-KTW about eight intermediate stations.
+    $slots = max(2, min(8, (int)ceil($distanceNm / 120)));
     $selected = [];
 
     for ($b=0; $b<$slots; $b++) {
@@ -634,7 +637,7 @@ if ($routeMode==='great_circle') {
 $estimatedEetMinutes=max(30,(int)round(($distanceNm/450.0)*60+20));
 $flightEndEpoch=$etdEpoch+$estimatedEetMinutes*60;
 
-$probeCount=max(4,min(10,(int)ceil($distanceNm/320)+1));
+$probeCount=max(6,min(16,(int)ceil($distanceNm/120)+1));
 $probeRoute=sampleRoute($route,$probeCount);
 $stationPool=[]; $searchNm=105.0;
 
@@ -758,7 +761,7 @@ $payload=[
     ],
     'cache'=>['hit'=>false,'ageSeconds'=>0],
     'notes'=>[
-        'METAR/TAF istasyonları rota boyunca temsilci olarak seçilir; corridor kullanıcı parametresi kullanılmaz.',
+        'METAR/TAF istasyonları rota boyunca yaklaşık 120 NM aralıklı, en fazla 8 ara meydan olacak şekilde temsilci olarak seçilir; kalkış/varış ayrıca eklenir.',
         'SIGMET yakınlığı gerçek rota geometrisine yaklaşık mesafe/intersection hesabıyla belirlenir.',
         'ETD ve tahmini EET yalnızca zaman bağlamı içindir; EET 450 kt varsayımıyla kaba tahmindir.',
         'WAFS gridleri bu sürümde doğrudan işlenmez; WIFS API erişimi gerekir.'
