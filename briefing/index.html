@@ -7,7 +7,7 @@
   <meta name="description" content="YulCaribe Pilot Briefing: rota, ETD, cruise flight level, METAR/TAF ve rota ile ilişkili SIGMET analizi.">
   <title>Pilot Briefing | YulCaribe</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/briefing/briefing.css?v=7">
+  <link rel="stylesheet" href="/main/briefing/briefing.css?v=10">
 </head>
 <body>
   <header class="pb-header">
@@ -84,15 +84,30 @@
           <label><span>SIGMET · rota geçiş zamanında ilgisiz</span><input type="checkbox" data-layer="outside"></label>
           <label><span>GFS · rüzgâr / rota noktaları</span><input type="checkbox" checked data-layer="model"></label>
           <div class="wafs-layer-control">
-            <label><span>WAFS visual forecast</span><input id="wafs-overlay-enabled" type="checkbox" checked></label>
-            <select id="wafs-product" aria-label="WAFS katmanı">
-              <option value="edr">Turbulence / EDR</option>
-              <option value="icing">Icing severity</option>
-              <option value="cbextent">CB horizontal extent</option>
-              <option value="cbtop">CB tops</option>
-              <option value="wind">Wind speed</option>
-            </select>
-            <small id="wafs-layer-meta">Uçuş saatine en yakın WAFS frame seçilir.</small>
+            <label class="wafs-master"><span>WAFS visual forecast</span><input id="wafs-overlay-enabled" type="checkbox" checked></label>
+            <div class="wafs-layer-list">
+              <div class="wafs-layer-row" data-wafs-row="edr">
+                <label><span><i class="wafs-swatch swatch-edr"></i>Turbulence / EDR</span><input type="checkbox" data-wafs-product="edr" checked></label>
+                <input class="wafs-opacity" type="range" min="15" max="80" value="38" data-wafs-opacity="edr" aria-label="Turbulence opacity">
+              </div>
+              <div class="wafs-layer-row" data-wafs-row="icing">
+                <label><span><i class="wafs-swatch swatch-icing"></i>Icing severity</span><input type="checkbox" data-wafs-product="icing"></label>
+                <input class="wafs-opacity" type="range" min="15" max="80" value="34" data-wafs-opacity="icing" aria-label="Icing opacity">
+              </div>
+              <div class="wafs-layer-row" data-wafs-row="cbextent">
+                <label><span><i class="wafs-swatch swatch-cbextent"></i>CB horizontal extent</span><input type="checkbox" data-wafs-product="cbextent" checked></label>
+                <input class="wafs-opacity" type="range" min="15" max="85" value="56" data-wafs-opacity="cbextent" aria-label="CB extent opacity">
+              </div>
+              <div class="wafs-layer-row" data-wafs-row="cbtop">
+                <label><span><i class="wafs-swatch swatch-cbtop"></i>CB tops</span><input type="checkbox" data-wafs-product="cbtop" checked></label>
+                <input class="wafs-opacity" type="range" min="15" max="85" value="60" data-wafs-opacity="cbtop" aria-label="CB tops opacity">
+              </div>
+              <div class="wafs-layer-row" data-wafs-row="wind">
+                <label><span><i class="wafs-swatch swatch-wind"></i>WAFS wind speed</span><input type="checkbox" data-wafs-product="wind"></label>
+                <input class="wafs-opacity" type="range" min="15" max="75" value="32" data-wafs-opacity="wind" aria-label="WAFS wind opacity">
+              </div>
+            </div>
+            <div id="wafs-layer-meta" class="wafs-layer-meta">Aktif WAFS katmanları yükleniyor…</div>
           </div>
         </div>
         <div class="map-wx-legend" aria-live="polite">
@@ -205,7 +220,7 @@
         try{await load("/main/briefing/vendor/grib2utils.js?v=7");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
         try{await load("/main/briefing/grib2-browser.js?v=7");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
         try{await load("/main/briefing/modelwx.js?v=9");}catch(e){console.warn("Model WX yüklenemedi",e);}
-        try{await load("/main/briefing/wafs.js?v=9");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
+        try{await load("/main/briefing/wafs.js?v=10");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
           await load("/main/briefing/briefing.js?v=8");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
