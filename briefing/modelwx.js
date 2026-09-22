@@ -106,11 +106,11 @@
     onUpdate?.({state:hasMissing?"partial":"ready",...decoded,meta});
   }
   function unavailableSources(){
-    setSource("#model-source-wafs025","AVIATION GFS 0.25°","PUBLIC FEED RETIRED","warn");
+    setSource("#model-source-wafs025","RAW WAFS HAZARD GRID","WIFS AUTH REQUIRED","warn");
     setSource("#model-source-wafs125","WAFS 1.25°","REFERENCE UNAVAILABLE","warn");
-    $("#model-wafs025-meta").innerHTML=`AWF açık dağıtımı 17 Ocak 2024’te kaldırıldı. <a href="${notice}" target="_blank" rel="noopener">NOAA duyurusu</a> · <a href="https://aviationweather.gov/wifs/" target="_blank" rel="noopener">WIFS erişimi</a>`;
-    $("#model-hazard-grid").innerHTML=["EDR / CAT / MWT","CB EXTENT / BASE / TOP","ICING"].map(name=>`<div><small>${name}</small><strong>N/A</strong><span>Doğrulanmış kaynak bağlı değil. Tehlike yok anlamına gelmez.</span></div>`).join("");
-    $("#model-wafs125-meta").textContent="Güncel public dosya + inventory kaynağı doğrulanamadı.";
+    $("#model-wafs025-meta").innerHTML=`Eski AWF açık dağıtımı 17 Ocak 2024’te kaldırıldı. Ham sayısal EDR / icing / CB gridleri için yetkili WIFS gerekir. <a href="${notice}" target="_blank" rel="noopener">NOAA duyurusu</a> · <a href="https://aviationweather.gov/wifs/" target="_blank" rel="noopener">WIFS</a>. Public AWC WAFS PNG tahmini aşağıdaki WAFS ROUTE FORECAST bölümünde ayrı işlenir.`;
+    $("#model-hazard-grid").innerHTML=["NUMERIC EDR / TURB","NUMERIC CB EXT / BASE / TOP","NUMERIC ICING"].map(name=>`<div><small>${name}</small><strong>RAW N/A</strong><span>Ham WIFS/GRIB bağlı değil. Public AWC PNG görsel analizi ayrı bölümde kullanılabilir; görsel hit olmaması tehlike yok anlamına gelmez.</span></div>`).join("");
+    $("#model-wafs125-meta").textContent="Legacy 1.25° karşılaştırması için doğrulanmış public ham kaynak bağlı değil.";
     $("#model-wafs125").innerHTML="<strong>N/A</strong><span>Karşılaştırma yapılmadı.</span>";
   }
   function cancel(){generation++;active?.abort();active=null;}
