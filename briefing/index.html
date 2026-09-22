@@ -84,7 +84,7 @@
           <label><span>SIGMET · rota geçiş zamanında ilgisiz</span><input type="checkbox" data-layer="outside"></label>
           <label><span>GFS · rüzgâr / rota noktaları</span><input type="checkbox" checked data-layer="model"></label>
           <div class="wafs-layer-control">
-            <label><span>WAFS forecast overlay</span><input id="wafs-overlay-enabled" type="checkbox"></label>
+            <label><span>WAFS visual forecast</span><input id="wafs-overlay-enabled" type="checkbox" checked></label>
             <select id="wafs-product" aria-label="WAFS katmanı">
               <option value="edr">Turbulence / EDR</option>
               <option value="icing">Icing severity</option>
@@ -123,8 +123,8 @@
           <p>Rota üzerinde GFS rüzgâr, sıcaklık, nem ve yükseklik. Türbülans / CB / icing kaynağının erişim durumu ayrıca gösterilir.</p>
           <div class="model-source-list">
             <div id="model-source-gfs"><div class="model-source-head"><strong>GFS 0.25°</strong><span class="info">WAITING</span></div></div>
-            <div id="model-source-wafs025"><div class="model-source-head"><strong>RAW WAFS HAZARD GRID</strong><span class="info">WAITING</span></div></div>
-            <div id="model-source-wafs125"><div class="model-source-head"><strong>WAFS 1.25°</strong><span class="info">WAITING</span></div></div>
+            <div id="model-source-wafs025"><div class="model-source-head"><strong>AWC WAFS VISUAL</strong><span class="info">LOADING</span></div></div>
+            <div id="model-source-wafs125" hidden><div class="model-source-head"><strong>RAW WIFS NUMERIC</strong><span class="info">NOT CONNECTED</span></div></div>
           </div>
         </div>
       </aside>
@@ -137,14 +137,14 @@
       </div>
       <div class="model-meta">
         <div><small>GFS 0.25°</small><span id="model-gfs-meta">—</span></div>
-        <div><small>RAW WAFS HAZARD GRID / ERİŞİM</small><span id="model-wafs025-meta">—</span></div>
+        <div><small>AWC WAFS PUBLIC VISUAL FORECAST</small><span id="model-wafs025-meta">—</span></div>
       </div>
       <div id="model-route-table" class="model-route-table"></div>
       <p id="model-sampling-note" class="model-caveat"></p>
       <details class="model-debug"><summary>Veri doğrulama ayrıntıları</summary><pre id="model-diagnostics"></pre></details>
       <div id="model-hazard-grid" class="model-hazard-grid"></div>
-      <div class="model-legacy">
-        <div><small>LEGACY WAFS 1.25° / MID-ROUTE CHECK</small><span id="model-wafs125-meta">—</span></div>
+      <div class="model-legacy" hidden>
+        <div><small>RAW WIFS / TECHNICAL STATUS</small><span id="model-wafs125-meta">—</span></div>
         <div id="model-wafs125"><strong>—</strong><span>—</span></div>
       </div>
       <p class="model-caveat">GFS model guidance ile WAFS aviation product aynı şey değildir. Kaynak adları özellikle ayrı gösterilir; veri yoksa sistem bunu açıkça belirtir.</p>
@@ -204,8 +204,8 @@
         try{await load("/main/briefing/vendor/grib2.js?v=7");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
         try{await load("/main/briefing/vendor/grib2utils.js?v=7");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
         try{await load("/main/briefing/grib2-browser.js?v=7");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
-        try{await load("/main/briefing/modelwx.js?v=7");}catch(e){console.warn("Model WX yüklenemedi",e);}
-        try{await load("/main/briefing/wafs.js?v=7");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
+        try{await load("/main/briefing/modelwx.js?v=9");}catch(e){console.warn("Model WX yüklenemedi",e);}
+        try{await load("/main/briefing/wafs.js?v=9");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
           await load("/main/briefing/briefing.js?v=8");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
