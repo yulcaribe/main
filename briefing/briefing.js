@@ -52,7 +52,18 @@
   function closePanels(){panel("route-panel","route-toggle",false);panel("layers-panel","layers-toggle",false);}
   $("#route-toggle").addEventListener("click",e=>{e.stopPropagation();const o=$("#route-panel").hidden;closePanels();panel("route-panel","route-toggle",o);});
   $("#layers-toggle").addEventListener("click",e=>{e.stopPropagation();const o=$("#layers-panel").hidden;closePanels();panel("layers-panel","layers-toggle",o);});
-  $$("[data-close]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.close;panel(id,id==="route-panel"?"route-toggle":"layers-toggle",false);}));
+  $("[data-close]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.close;panel(id,id==="route-panel"?"route-toggle":"layers-toggle",false);}));
+
+  // The layer panel has its own scroll area. Keep trackpad/mouse-wheel input
+  // inside it instead of letting Leaflet or the page steal the gesture.
+  const layersPanel=$("#layers-panel");
+  if(layersPanel&&window.L?.DomEvent){
+    L.DomEvent.disableClickPropagation(layersPanel);
+    L.DomEvent.disableScrollPropagation(layersPanel);
+  }
+  layersPanel?.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
+  layersPanel?.addEventListener("touchmove",e=>e.stopPropagation(),{passive:true});
+
   map.on("click",closePanels);
 
   $$("[data-layer]").forEach(cb=>cb.addEventListener("change",e=>{
