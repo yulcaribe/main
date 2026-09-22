@@ -106,12 +106,16 @@
     onUpdate?.({state:hasMissing?"partial":"ready",...decoded,meta});
   }
   function unavailableSources(){
-    setSource("#model-source-wafs025","RAW WAFS HAZARD GRID","WIFS AUTH REQUIRED","warn");
-    setSource("#model-source-wafs125","WAFS 1.25°","REFERENCE UNAVAILABLE","warn");
-    $("#model-wafs025-meta").innerHTML=`Eski AWF açık dağıtımı 17 Ocak 2024’te kaldırıldı. Ham sayısal EDR / icing / CB gridleri için yetkili WIFS gerekir. <a href="${notice}" target="_blank" rel="noopener">NOAA duyurusu</a> · <a href="https://aviationweather.gov/wifs/" target="_blank" rel="noopener">WIFS</a>. Public AWC WAFS PNG tahmini aşağıdaki WAFS ROUTE FORECAST bölümünde ayrı işlenir.`;
-    $("#model-hazard-grid").innerHTML=["NUMERIC EDR / TURB","NUMERIC CB EXT / BASE / TOP","NUMERIC ICING"].map(name=>`<div><small>${name}</small><strong>RAW N/A</strong><span>Ham WIFS/GRIB bağlı değil. Public AWC PNG görsel analizi ayrı bölümde kullanılabilir; görsel hit olmaması tehlike yok anlamına gelmez.</span></div>`).join("");
-    $("#model-wafs125-meta").textContent="Legacy 1.25° karşılaştırması için doğrulanmış public ham kaynak bağlı değil.";
-    $("#model-wafs125").innerHTML="<strong>N/A</strong><span>Karşılaştırma yapılmadı.</span>";
+    setSource("#model-source-wafs025","AWC WAFS VISUAL","LOADING","info");
+    setSource("#model-source-wafs125","RAW WIFS NUMERIC","NOT CONNECTED","warn");
+    $("#model-wafs025-meta").textContent="Public AWC WAFS forecast PNG'leri rota ve saate göre aşağıdaki WAFS ROUTE FORECAST bölümünde işleniyor.";
+    $("#model-hazard-grid").innerHTML=[
+      ["WAFS TURB / EDR","PUBLIC VISUAL","Haritadaki WAFS katmanı ve rota-zaman eşleştirmesi kullanılır."],
+      ["WAFS ICING","PUBLIC VISUAL","En yakın mevcut public WAFS FL görseli kullanılır."],
+      ["WAFS CB","PUBLIC VISUAL","CB extent ve CB tops görselleri kullanılır; CB base public viewer'da yoktur."]
+    ].map(([name,state,desc])=>`<div><small>${name}</small><strong>${state}</strong><span>${desc}</span></div>`).join("");
+    $("#model-wafs125-meta").textContent="Ham sayısal 0.25° WIFS/GRIB entegrasyonu ayrıca yetkili WIFS erişimi gerektirir; public PNG sistemi bundan bağımsızdır.";
+    $("#model-wafs125").innerHTML="<strong>OPTIONAL</strong><span>Public görsel forecast için gerekli değil.</span>";
   }
   function cancel(){generation++;active?.abort();active=null;}
   async function load(data,{onUpdate,onFocus}={}){
