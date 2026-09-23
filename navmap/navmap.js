@@ -107,8 +107,7 @@
 
     map.addSource(sourceId, {
       type: "geojson",
-      data: emptyGeojson(),
-      promoteId: "id"
+      data: emptyGeojson()
     });
 
     map.addLayer({
