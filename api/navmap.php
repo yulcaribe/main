@@ -210,11 +210,11 @@ if ($action === 'search') {
     $stmt = $pdo->prepare(
         'SELECT id, kind, ident, name, lat, lon
          FROM nav_points
-         WHERE ident LIKE :q OR name LIKE :q
+         WHERE ident LIKE :q1 OR name LIKE :q2
          ORDER BY (ident = :exact) DESC, kind, ident
          LIMIT 12'
     );
-    $stmt->execute(['q' => $like, 'exact' => $q]);
+    $stmt->execute(['q1' => $like, 'q2' => $like, 'exact' => $q]);
     foreach ($stmt as $row) {
         $results[] = [
             'kind' => $row['kind'] === 'designatedpoint' ? 'waypoint' : $row['kind'],
@@ -248,11 +248,11 @@ if ($action === 'search') {
     $stmt = $pdo->prepare(
         'SELECT id, ident, name
          FROM nav_airspaces
-         WHERE ident LIKE :q OR name LIKE :q
+         WHERE ident LIKE :q1 OR name LIKE :q2
          ORDER BY (ident = :exact) DESC, ident
          LIMIT 8'
     );
-    $stmt->execute(['q' => $like, 'exact' => $q]);
+    $stmt->execute(['q1' => $like, 'q2' => $like, 'exact' => $q]);
     foreach ($stmt as $row) {
         $results[] = [
             'kind' => 'airspace',
