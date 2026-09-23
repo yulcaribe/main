@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07131f">
+  <title>YulCaribe Navdata Inspector</title>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+    body{margin:0;background:#07131f;color:#eaf6ff}
+    main{max-width:980px;margin:auto;padding:24px 16px 48px}
+    h1{margin:0 0 8px;font-size:clamp(26px,5vw,40px)}
+    p{color:#9db6c8;line-height:1.55}
+    .card{background:#0d1b27;border:1px solid #1d3547;border-radius:16px;padding:16px;margin:14px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    input,select,button{background:#08141d;color:#eaf6ff;border:1px solid #284a60;border-radius:10px;padding:10px 12px}
+    input{min-width:180px;flex:1}
+    button{cursor:pointer;font-weight:700}
+    pre{white-space:pre-wrap;word-break:break-word;background:#050d13;border:1px solid #183246;border-radius:12px;padding:12px;max-height:60vh;overflow:auto}
+    code{background:#071018;border:1px solid #193449;border-radius:6px;padding:2px 5px}
+    .ok{color:#79e0a2}.err{color:#ff9a9a}.small{font-size:13px}
+    a{color:#7dd7ff}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Navdata Inspector</h1>
+  <p>Sunucudaki <code>navdata_core.sqlite</code> dosyasını salt-okunur API üzerinden kontrol eder. Key alanı yalnızca <code>NAVDATA_READ_KEY</code> tanımlıysa gerekir.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="key" type="password" placeholder="NAVDATA_READ_KEY (opsiyonel)">
+      <button id="summary">Özeti yükle</button>
+    </div>
+    <p class="small">Varsayılan dosya yolu: <code>/main/navdata_core.sqlite</code>. Alternatif olarak sunucuda <code>NAVDATA_SQLITE_PATH</code> tanımlanabilir.</p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="routeIdent" value="T723" placeholder="Route ident">
+      <button id="routeBtn">Route getir</button>
+      <select id="sampleType">
+        <option value="airway">airway</option>
+        <option value="sid">sid</option>
+        <option value="star">star</option>
+      </select>
+      <button id="sampleBtn">Örnek getir</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="pointIdent" value="LTAI" placeholder="Point ident">
+      <button id="pointBtn">Point getir</button>
+      <button id="aytBtn">AYT çevresi</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="status">Hazır.</div>
+    <pre id="out">{}</pre>
+  </div>
+
+  <div class="card small">
+    API: <a href="/main/api/navdata.php?action=summary" target="_blank" rel="noopener">/main/api/navdata.php?action=summary</a>
+  </div>
+</main>
+
+<script>
+(() => {
+  const out=document.getElementById('out');
+  const status=document.getElementById('status');
+  const keyEl=document.getElementById('key');
+
+  function url(params){
+    const q=new URLSearchParams(params);
+    const key=keyEl.value.trim();
+    if(key) q.set('key',key);
+    return '/main/api/navdata.php?'+q.toString();
+  }
+
+  async function load(params){
+    status.textContent='Yükleniyor…';
+    status.className='';
+    out.textContent='{}';
+    try{
+      const res=await fetch(url(params),{cache:'no-store'});
+      const data=await res.json().catch(()=>null);
+      if(!res.ok||!data) throw new Error(data?.error||('HTTP '+res.status));
+      out.textContent=JSON.stringify(data,null,2);
+      status.textContent='OK';
+      status.className='ok';
+    }catch(err){
+      status.textContent='Hata: '+err.message;
+      status.className='err';
+    }
+  }
+
+  document.getElementById('summary').onclick=()=>load({action:'summary'});
+  document.getElementById('routeBtn').onclick=()=>load({action:'route',ident:document.getElementById('routeIdent').value.trim(),limit:'200'});
+  document.getElementById('sampleBtn').onclick=()=>load({action:'sample',type:document.getElementById('sampleType').value,limit:'50'});
+  document.getElementById('pointBtn').onclick=()=>load({action:'point',ident:document.getElementById('pointIdent').value.trim(),limit:'100'});
+  document.getElementById('aytBtn').onclick=()=>load({action:'near',lat:'36.90',lon:'30.80',delta:'0.5',limit:'200'});
+
+  load({action:'summary'});
+})();
+</script>
+</body>
+</html>
