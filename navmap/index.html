@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#06111a">
+  <meta name="description" content="YulCaribe aeronautical navdata map">
+  <title>Navdata Map | YulCaribe</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/main/navmap/navmap.css?v=1">
+</head>
+<body>
+  <div id="map" aria-label="Aeronautical navigation map"></div>
+
+  <div class="boot" id="boot">
+    <div>
+      <strong>Navdata Map yükleniyor…</strong>
+      <small id="boot-detail">MapLibre hazırlanıyor</small>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <a class="back" href="/" aria-label="Ana sayfaya dön">←</a>
+
+    <div class="brand">
+      <strong>YulCaribe</strong>
+      <span>Aeronautical Navdata Map</span>
+    </div>
+
+    <div class="search">
+      <input
+        id="nav-search"
+        type="search"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="ICAO / waypoint / airway / SID / STAR ara"
+        aria-label="Navdata ara"
+      >
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </header>
+
+  <section class="status" aria-live="polite">
+    <span class="dot" id="status-dot"></span>
+    <div>
+      <span>VERİ</span>
+      <strong id="status-text">Bağlanıyor…</strong>
+    </div>
+    <div>
+      <span>GÖRÜNÜM</span>
+      <strong id="feature-count">0 obje</strong>
+    </div>
+  </section>
+
+  <button class="panel-toggle" id="layers-toggle" type="button">Katmanlar</button>
+
+  <aside class="layers-panel" id="layers-panel">
+    <div class="layers-head">
+      <div>
+        <strong>Navdata Katmanları</strong>
+        <small>MariaDB · viewport bazlı yükleme</small>
+      </div>
+      <button id="layers-close" type="button" aria-label="Katmanları kapat">×</button>
+    </div>
+
+    <div class="layer-group">
+      <span class="layer-group-title">Points</span>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="airport">
+          <span class="legend-dot" style="background:#7ee7ff"></span>
+          Airports
+        </label>
+        <span class="layer-count" data-layer-count="airport">0</span>
+      </div>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="navaid">
+          <span class="legend-dot" style="background:#ffc76b"></span>
+          Navaids
+        </label>
+        <span class="layer-count" data-layer-count="navaid">0</span>
+      </div>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="waypoint">
+          <span class="legend-dot" style="background:#d6e1e7"></span>
+          Waypoints
+        </label>
+        <span class="layer-count" data-layer-count="waypoint">0</span>
+      </div>
+    </div>
+
+    <div class="layer-group">
+      <span class="layer-group-title">Routes</span>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="airway">
+          <span class="legend-line" style="background:#5fdbe8"></span>
+          Airways
+        </label>
+        <span class="layer-count" data-layer-count="airway">0</span>
+      </div>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="sid">
+          <span class="legend-line" style="background:#70e8a7"></span>
+          SID
+        </label>
+        <span class="layer-count" data-layer-count="sid">0</span>
+      </div>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="star">
+          <span class="legend-line" style="background:#bc9cff"></span>
+          STAR
+        </label>
+        <span class="layer-count" data-layer-count="star">0</span>
+      </div>
+    </div>
+
+    <div class="layer-group">
+      <span class="layer-group-title">Airspace</span>
+
+      <div class="layer-row">
+        <label>
+          <input type="checkbox" checked data-nav-layer="airspace">
+          <span class="legend-line" style="background:#ff7f94"></span>
+          Airspace
+        </label>
+        <span class="layer-count" data-layer-count="airspace">0</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="zoom-hint" id="zoom-hint">Navdata için biraz yaklaş · z5+</div>
+
+  <script>
+    (function () {
+      const detail = document.getElementById("boot-detail");
+      const sources = [
+        "https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js",
+        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+      ];
+
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = src;
+          script.async = true;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      }
+
+      async function boot() {
+        for (const src of sources) {
+          try {
+            detail.textContent = "Harita motoru yükleniyor…";
+            await loadScript(src);
+            if (window.maplibregl) break;
+          } catch (error) {
+            console.warn("MapLibre CDN yüklenemedi:", src, error);
+          }
+        }
+
+        if (!window.maplibregl) {
+          detail.textContent = "MapLibre CDN bağlantıları yüklenemedi.";
+          return;
+        }
+
+        try {
+          detail.textContent = "Navdata istemcisi yükleniyor…";
+          await loadScript("/main/navmap/navmap.js?v=1");
+        } catch (error) {
+          console.error(error);
+          detail.textContent = "/main/navmap/navmap.js yüklenemedi.";
+        }
+      }
+
+      boot();
+    })();
+  </script>
+</body>
+</html>
