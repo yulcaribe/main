@@ -14,10 +14,13 @@ function navdataPath(): string {
     $env = trim((string)getenv('NAVDATA_SQLITE_PATH'));
     if ($env !== '') return $env;
 
-    $root = dirname(__DIR__);
+    $mainRoot = dirname(__DIR__);
+    $publicHtml = dirname($mainRoot);
+
     $candidates = [
-        $root . DIRECTORY_SEPARATOR . 'navdata_core.sqlite',
-        $root . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'navdata_core.sqlite',
+        $publicHtml . DIRECTORY_SEPARATOR . 'navdata_core.sqlite',
+        $mainRoot . DIRECTORY_SEPARATOR . 'navdata_core.sqlite',
+        $mainRoot . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'navdata_core.sqlite',
     ];
     foreach ($candidates as $candidate) {
         if (is_file($candidate)) return $candidate;
@@ -70,7 +73,7 @@ if (!is_file($path)) {
         'ok' => false,
         'error' => 'navdata_core.sqlite bulunamadı.',
         'expectedDefaultPath' => $path,
-        'hint' => 'Dosyayı /main/navdata_core.sqlite olarak yükle veya NAVDATA_SQLITE_PATH tanımla.'
+        'hint' => 'Dosyayı public_html/navdata_core.sqlite olarak yükle veya NAVDATA_SQLITE_PATH tanımla.'
     ]);
 }
 
