@@ -193,7 +193,7 @@ function nmsUpsertRecord(PDO $pdo, array $r): void {
                 :estimated, :schedule, :lower_limit, :upper_limit,
                 :coordinates_raw, :radius_nm, :notam_text, :last_updated,
                 :status,
-                ST_GeomFromGeoJSON(NULLIF(:geometry_json_value, '')),
+                NULL,
                 :raw_json, :source, :environment
             )
             ON DUPLICATE KEY UPDATE
@@ -231,10 +231,27 @@ function nmsUpsertRecord(PDO $pdo, array $r): void {
         );
     }
 
+    $geometryJson = $r['geometry_json'] ?? null;
     $params = $r;
-    $params['geometry_json_value'] = $r['geometry_json'];
     unset($params['geometry_json']);
     $stmt->execute($params);
+
+    if (is_string($geometryJson) && $geometryJson !== '') {
+        try {
+            $geomStmt = $pdo->prepare(
+                'UPDATE notams
+                 SET geometry = ST_GeomFromGeoJSON(:geometry_json)
+                 WHERE nms_id = :nms_id'
+            );
+            $geomStmt->execute([
+                'geometry_json' => $geometryJson,
+                'nms_id' => $r['nms_id'],
+            ]);
+        } catch (Throwable) {
+            // Keep the normalized NOTAM and raw GeoJSON even if one geometry
+            // cannot be represented by this MariaDB build.
+        }
+    }
 }
 
 function nmsApplyCancellationReference(PDO $pdo, array $record): ?string {
@@ -407,6 +424,7 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds = 600): array {
             'environment' => $environment,
             'since' => $sinceIso,
             'error' => 'Local NOTAM sync failed.',
+            'detail' => $environment === 'staging' ? $e->getMessage() : null,
         ];
     }
 
