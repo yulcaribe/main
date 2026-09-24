@@ -490,7 +490,12 @@
       rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
       rows += infoRow("Lower", p.lower_limit);
       rows += infoRow("Upper", p.upper_limit);
-      rows += infoRow("Map source", p.geometry_source === "airport-location" ? "Airport marker fallback" : "FAA geometry");
+      const mapSource = p.geometry_source === "airport-location"
+        ? "Airport marker fallback"
+        : p.geometry_source === "qline-coordinate"
+          ? "Q-line / NOTAM coordinate"
+          : "FAA geometry";
+      rows += infoRow("Map source", mapSource);
       detailText = p.text || "";
     }
 
@@ -522,7 +527,7 @@
       const n = Number(counts.notam || 0);
       notamTimeStatus.textContent = selectedLayers().includes("notam")
         ? new Intl.NumberFormat("tr-TR").format(n) + " NOTAM · " + formatSelectedUtc()
-        : "FAA geometry veya meydan konumu bulunan NOTAM'lar gösterilir.";
+        : "FAA geometry, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.";
     }
   }
 
