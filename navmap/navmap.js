@@ -36,6 +36,8 @@
     airspace: "#ff7f94"
   };
 
+  const HIT_TOLERANCE = window.matchMedia("(pointer: coarse)").matches ? 18 : 11;
+
   let requestController = null;
   let searchController = null;
   let loadTimer = null;
@@ -94,6 +96,7 @@
     const ids = [
       `nav-${name}-fill`,
       `nav-${name}-line`,
+      `nav-${name}-hit`,
       `nav-${name}-circle`,
       `nav-${name}-label`
     ];
@@ -136,22 +139,51 @@
     });
 
     for (const type of ["airway", "sid", "star"]) {
+      const minZoom = type === "airway" ? 5 : 8;
+
+      // Invisible wide line makes thin aviation routes easy to select without
+      // visually bloating the chart.
+      map.addLayer({
+        id: `nav-${type}-hit`,
+        type: "line",
+        source: sourceId,
+        filter: ["==", ["get", "layer"], type],
+        minzoom: minZoom,
+        paint: {
+          "line-color": palette[type],
+          "line-width": [
+            "interpolate", ["linear"], ["zoom"],
+            minZoom, type === "airway" ? 12 : 15,
+            10, type === "airway" ? 15 : 18,
+            15, type === "airway" ? 18 : 22
+          ],
+          "line-opacity": 0.01
+        },
+        layout: { visibility: visibilityFor(type) }
+      });
+
       map.addLayer({
         id: `nav-${type}-line`,
         type: "line",
         source: sourceId,
         filter: ["==", ["get", "layer"], type],
-        minzoom: type === "airway" ? 5 : 8,
+        minzoom: minZoom,
         paint: {
           "line-color": palette[type],
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            type === "airway" ? 5 : 8, type === "airway" ? 0.75 : 1.0,
-            12, type === "airway" ? 1.7 : 2.2
+            minZoom, type === "airway" ? 1.15 : 2.1,
+            10, type === "airway" ? 1.8 : 3.1,
+            12, type === "airway" ? 2.35 : 4.2,
+            15, type === "airway" ? 3.0 : 5.7
           ],
-          "line-opacity": type === "airway" ? 0.72 : 0.82
+          "line-opacity": type === "airway" ? 0.76 : 0.9
         },
-        layout: { visibility: visibilityFor(type) }
+        layout: {
+          visibility: visibilityFor(type),
+          "line-cap": "round",
+          "line-join": "round"
+        }
       });
 
       map.addLayer({
@@ -163,23 +195,55 @@
         layout: {
           visibility: visibilityFor(type),
           "symbol-placement": "line",
-          "symbol-spacing": 420,
+          "symbol-spacing": type === "airway" ? 520 : 380,
           "text-field": ["coalesce", ["get", "ident"], ""],
-          "text-size": 10,
+          "text-size": [
+            "interpolate", ["linear"], ["zoom"],
+            type === "airway" ? 7 : 9, type === "airway" ? 10 : 11,
+            12, type === "airway" ? 11.5 : 13,
+            15, type === "airway" ? 13 : 15
+          ],
           "text-font": ["Noto Sans Regular"],
-          "text-keep-upright": true
+          "text-keep-upright": true,
+          "text-optional": true
         },
         paint: {
           "text-color": palette[type],
           "text-halo-color": "#06111a",
-          "text-halo-width": 1.25
+          "text-halo-width": 1.5
         }
       });
     }
 
     for (const type of ["airport", "navaid", "waypoint"]) {
       const minZoom = type === "airport" ? 5 : type === "navaid" ? 6 : 8;
-      const radius = type === "airport" ? 4.8 : type === "navaid" ? 3.8 : 2.4;
+      const sizes = type === "airport"
+        ? [6.0, 8.0, 10.5, 13.0]
+        : type === "navaid"
+          ? [5.0, 6.7, 8.8, 11.0]
+          : [4.0, 5.5, 7.5, 9.5];
+
+      // Large, nearly transparent click target. The visible symbol remains
+      // chart-like while the interaction area stays comfortable on mouse/touch.
+      map.addLayer({
+        id: `nav-${type}-hit`,
+        type: "circle",
+        source: sourceId,
+        filter: ["==", ["get", "layer"], type],
+        minzoom: minZoom,
+        paint: {
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            minZoom, type === "waypoint" ? 11 : 13,
+            10, type === "waypoint" ? 14 : 16,
+            15, type === "waypoint" ? 18 : 21
+          ],
+          "circle-color": palette[type],
+          "circle-opacity": 0.01,
+          "circle-stroke-opacity": 0
+        },
+        layout: { visibility: visibilityFor(type) }
+      });
 
       map.addLayer({
         id: `nav-${type}-circle`,
@@ -190,13 +254,20 @@
         paint: {
           "circle-radius": [
             "interpolate", ["linear"], ["zoom"],
-            minZoom, radius * 0.78,
-            12, radius * 1.25
+            minZoom, sizes[0],
+            9, sizes[1],
+            12, sizes[2],
+            15, sizes[3]
           ],
           "circle-color": palette[type],
-          "circle-opacity": type === "waypoint" ? 0.78 : 0.95,
+          "circle-opacity": type === "waypoint" ? 0.9 : 0.98,
           "circle-stroke-color": "#06111a",
-          "circle-stroke-width": 1
+          "circle-stroke-width": [
+            "interpolate", ["linear"], ["zoom"],
+            minZoom, 1.1,
+            12, 1.6,
+            15, 2.0
+          ]
         },
         layout: { visibility: visibilityFor(type) }
       });
@@ -210,35 +281,80 @@
         layout: {
           visibility: visibilityFor(type),
           "text-field": ["coalesce", ["get", "ident"], ""],
-          "text-size": type === "airport" ? 11 : 9,
+          "text-size": [
+            "interpolate", ["linear"], ["zoom"],
+            type === "airport" ? 6 : type === "navaid" ? 7 : 9,
+            type === "airport" ? 11.5 : type === "navaid" ? 10.5 : 10,
+            12,
+            type === "airport" ? 13.5 : type === "navaid" ? 12.5 : 12,
+            15,
+            type === "airport" ? 15.5 : type === "navaid" ? 14.5 : 14
+          ],
           "text-font": ["Noto Sans Regular"],
-          "text-offset": [0.75, 0],
+          "text-offset": [0.9, 0],
           "text-anchor": "left",
           "text-optional": true
         },
         paint: {
           "text-color": palette[type],
           "text-halo-color": "#06111a",
-          "text-halo-width": 1.35
+          "text-halo-width": 1.55
         }
       });
     }
 
-    const clickable = [
-      "nav-airspace-fill", "nav-airspace-line",
-      "nav-airway-line", "nav-sid-line", "nav-star-line",
-      "nav-airport-circle", "nav-navaid-circle", "nav-waypoint-circle"
+    const interactiveLayerIds = [
+      "nav-airport-hit",
+      "nav-navaid-hit",
+      "nav-waypoint-hit",
+      "nav-sid-hit",
+      "nav-star-hit",
+      "nav-airway-hit",
+      "nav-airspace-fill",
+      "nav-airspace-line"
     ];
 
-    for (const id of clickable) {
-      map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
-      map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
-      map.on("click", id, event => {
-        const feature = event.features && event.features[0];
-        if (!feature) return;
-        showPopup(feature, event.lngLat);
+    const priority = {
+      airport: 0,
+      navaid: 1,
+      waypoint: 2,
+      sid: 3,
+      star: 4,
+      airway: 5,
+      airspace: 6
+    };
+
+    function pickInteractiveFeature(point) {
+      const box = [
+        [point.x - HIT_TOLERANCE, point.y - HIT_TOLERANCE],
+        [point.x + HIT_TOLERANCE, point.y + HIT_TOLERANCE]
+      ];
+
+      const features = map.queryRenderedFeatures(box, {
+        layers: interactiveLayerIds.filter(id => map.getLayer(id))
       });
+
+      if (!features.length) return null;
+
+      features.sort((a, b) => {
+        const pa = priority[a.properties?.layer] ?? 99;
+        const pb = priority[b.properties?.layer] ?? 99;
+        return pa - pb;
+      });
+
+      return features[0];
     }
+
+    map.on("mousemove", event => {
+      map.getCanvas().style.cursor = pickInteractiveFeature(event.point) ? "pointer" : "";
+    });
+
+    map.on("click", event => {
+      const feature = pickInteractiveFeature(event.point);
+      if (!feature) return;
+      showPopup(feature, event.lngLat);
+    });
+
   }
 
   function esc(value) {
