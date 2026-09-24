@@ -474,7 +474,7 @@
       rows += infoRow("Type", p.type_code);
       rows += infoRow("Usage", p.usage_code);
       rows += infoRow("Control", p.control_type);
-     else if (p.layer === "notam") {
+    } else if (p.layer === "notam") {
       rows += infoRow("Location", p.icao_location || p.location);
       rows += infoRow("Class", p.classification);
       rows += infoRow("Valid from", p.effective_start);
