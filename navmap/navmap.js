@@ -509,9 +509,11 @@
               ? "Airport + radius circle"
               : sourceKey === "qline-radius-circle"
                 ? "Q-line + radius circle"
-                : sourceKey === "derived-radius-circle"
-                  ? "Derived radius circle"
-                  : "FAA geometry";
+                : sourceKey === "faa-radius-circle"
+                  ? "FAA point + radius circle"
+                  : sourceKey === "derived-radius-circle"
+                    ? "Derived radius circle"
+                    : "FAA geometry";
       rows += infoRow("Map source", mapSource);
       detailText = p.text || "";
     }
