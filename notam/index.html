@@ -70,6 +70,17 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 <div class="row"><span>Son hata</span><strong id="error">—</strong></div>
 </div></section>
 
+<section class="panel"><div class="kicker">INITIAL LOAD CACHE</div><h2>Snapshot / Progress</h2><div class="rows">
+<div class="row"><span>Cache klasörü</span><strong id="cache-dir">—</strong></div>
+<div class="row"><span>Progress dosyası</span><strong id="progress-file">—</strong></div>
+<div class="row"><span>Snapshot dosyası</span><strong id="snapshot-file">—</strong></div>
+<div class="row"><span>Snapshot boyutu</span><strong id="snapshot-size">—</strong></div>
+<div class="row"><span>Snapshot zamanı</span><strong id="snapshot-time">—</strong></div>
+<div class="row"><span>Byte offset</span><strong id="snapshot-offset">—</strong></div>
+<div class="row"><span>İşlenen / skipped / expected</span><strong id="snapshot-progress">—</strong></div>
+<div class="row"><span>Kaynak</span><strong id="snapshot-source">—</strong></div>
+</div></section>
+
 <section class="panel"><div class="kicker">CLASSIFICATION</div><h2>Dağılım</h2><div class="classes" id="classes">—</div></section>
 <section class="panel"><div class="kicker">NOTES</div><h2>Çalışma şekli</h2><div class="rows">
 <div class="row"><span>Initial Load</span><strong>Cron/CLI · bir kez baseline</strong></div>
@@ -85,6 +96,7 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 const $=id=>document.getElementById(id),fmt=v=>new Intl.NumberFormat('tr-TR').format(Number(v||0));
 const dt=v=>{if(!v)return'—';const s=String(v),d=new Date(s.includes('T')?s:s.replace(' ','T')+'Z');return Number.isNaN(d.getTime())?s:d.toLocaleString('tr-TR',{timeZone:'UTC'})+'Z'};
 const age=s=>s==null?'—':s<60?s+' sn':s<3600?Math.floor(s/60)+' dk':Math.floor(s/3600)+' sa '+Math.floor((s%3600)/60)+' dk';
+const bytes=v=>{if(v==null)return'—';let n=Number(v);if(!Number.isFinite(n))return String(v);const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return (i? n.toFixed(n>=100?0:n>=10?1:2):Math.round(n))+' '+u[i]};
 const saved=sessionStorage.getItem('nmsAdminKey');if(saved)$('admin-key').value=saved;
 $('admin-key').addEventListener('change',()=>{const v=$('admin-key').value.trim();v?sessionStorage.setItem('nmsAdminKey',v):sessionStorage.removeItem('nmsAdminKey')});
 
@@ -94,6 +106,15 @@ function paint(d){
  $('cred').textContent=d.credentialsConfigured?'OK':'Eksik';$('cred').className=d.credentialsConfigured?'ok':'badtext';
  $('remote').textContent=r.checked?(r.ok?'Bağlantı başarılı':'Bağlantı başarısız'):'Test edilmedi';$('remote').className=r.checked?(r.ok?'ok':'badtext'):'';
  $('http').textContent=r.upstreamStatus??'—';const ec=l.environmentCounts||{},cr=l.cronState||null;$('env-counts').textContent=fmt(ec.staging)+' / '+fmt(ec.production);if(cr){const cp=cr.progressPercent!=null?' · %'+cr.progressPercent:'';$('cron-state').textContent=(cr.mode||'cron')+cp+' · '+dt(cr.updatedAt);$('cron-state').className=cr.ok===false?'badtext':(cr.running?'warntext':'ok')}else{$('cron-state').textContent='Henüz çalışmadı';$('cron-state').className=''}$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
+ const fd=l.fullLoadDiagnostics||{},snapshotPath=(fd.cacheDir&&fd.snapshotFile)?fd.cacheDir.replace(/\/$/,'')+'/'+fd.snapshotFile:'—';
+ $('cache-dir').textContent=fd.cacheDir||'—';
+ $('progress-file').textContent=fd.progressExists?(fd.progressFile||'Var'):'Yok';
+ $('snapshot-file').textContent=snapshotPath;
+ $('snapshot-size').textContent=bytes(fd.snapshotBytes);
+ $('snapshot-time').textContent=dt(fd.snapshotModifiedAt);
+ $('snapshot-offset').textContent=fd.byteOffset==null?'—':fmt(fd.byteOffset);
+ $('snapshot-progress').textContent=(fd.processed==null?'—':fmt(fd.processed))+' / '+(fd.skipped==null?'—':fmt(fd.skipped))+' / '+(fd.expected==null?'—':fmt(fd.expected));
+ $('snapshot-source').textContent=fd.source||'—';
  $('ext').textContent=Object.entries(l.extensions||{}).map(([k,v])=>k+':'+(v?'ok':'yok')).join(' · ')||'—';
  $('classes').innerHTML=(l.classifications||[]).map(x=>'<div class="class-row"><span>'+String(x.classification).replace(/[&<>"]/g,'')+'</span><strong>'+fmt(x.total)+'</strong></div>').join('')||'Henüz veri yok.';
  const b=$('banner');b.className='banner';
