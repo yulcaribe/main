@@ -95,8 +95,8 @@
     "wafs-panel": 72
   };
   let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
-  let chartViewportCache = null;
-  let notamViewportCache = null;
+  const chartViewportCache = new Map();
+  const notamViewportCache = new Map();
   let chartCountsState = {};
   let notamCountsState = {};
   let chartTruncated = false;
@@ -686,6 +686,26 @@
       && inner.north <= outer.north;
   }
 
+  function viewportCacheGet(cache, key, exactBounds, maxAgeMs = Infinity) {
+    const entry = cache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.fetchedAt > maxAgeMs || !bboxContains(entry.bounds, exactBounds)) {
+      return null;
+    }
+    cache.delete(key);
+    cache.set(key, entry);
+    return entry;
+  }
+
+  function viewportCachePut(cache, key, entry, maxEntries = 8) {
+    cache.delete(key);
+    cache.set(key, { ...entry, fetchedAt: Date.now() });
+    while (cache.size > maxEntries) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
+  }
+
   function inputValueFromDate(date) {
     return date.toISOString().slice(0, 16);
   }
@@ -771,8 +791,7 @@
     }
 
     if (reload && map.loaded()) {
-      notamViewportCache = null;
-      scheduleNotamLoad(0, true);
+      scheduleNotamLoad(0, false);
       loadWeatherOverlays().catch(console.error);
     }
   }
@@ -1004,17 +1023,21 @@
       map.getSource(CHART_SOURCE_ID)?.setData(emptyGeojson());
       chartCountsState = {};
       chartTruncated = false;
-      chartViewportCache = null;
       refreshViewportStatus();
       return;
     }
 
     const layerKey = layers.slice().sort().join(",");
-    if (!force
-      && chartViewportCache
-      && chartViewportCache.z === z
-      && chartViewportCache.layerKey === layerKey
-      && bboxContains(chartViewportCache.bounds, exactBounds)) {
+    const cacheKey = `${z}|${layerKey}`;
+    const cached = force ? null : viewportCacheGet(chartViewportCache, cacheKey, exactBounds);
+    if (cached) {
+      map.getSource(CHART_SOURCE_ID)?.setData(cached.data);
+      chartCountsState = cached.counts;
+      chartTruncated = cached.truncated;
+      refreshViewportStatus();
+      statusText.textContent = "CHARTS · local cache";
+      statusDot.classList.add("ok");
+      statusDot.classList.remove("bad");
       return;
     }
 
@@ -1040,7 +1063,12 @@
         [...CHART_LAYER_NAMES].map(name => [name, Number(payload.counts?.[name] || 0)])
       );
       chartTruncated = Boolean(payload.truncated);
-      chartViewportCache = { z, layerKey, bounds: requestBounds };
+      viewportCachePut(chartViewportCache, cacheKey, {
+        bounds: requestBounds,
+        data: payload.data,
+        counts: chartCountsState,
+        truncated: chartTruncated
+      });
       refreshViewportStatus();
 
       statusText.textContent = chartTruncated
@@ -1064,17 +1092,21 @@
       map.getSource(NOTAM_SOURCE_ID)?.setData(emptyGeojson());
       notamCountsState = {};
       notamTruncated = false;
-      notamViewportCache = null;
       refreshViewportStatus();
       return;
     }
 
     const timeKey = selectedTimeIso().slice(0, 16);
-    if (!force
-      && notamViewportCache
-      && notamViewportCache.z === z
-      && notamViewportCache.timeKey === timeKey
-      && bboxContains(notamViewportCache.bounds, exactBounds)) {
+    const cacheKey = `${z}|${timeKey}`;
+    const cached = force ? null : viewportCacheGet(notamViewportCache, cacheKey, exactBounds, 120000);
+    if (cached) {
+      map.getSource(NOTAM_SOURCE_ID)?.setData(cached.data);
+      notamCountsState = cached.counts;
+      notamTruncated = cached.truncated;
+      refreshViewportStatus();
+      statusText.textContent = "NOTAM · local cache";
+      statusDot.classList.add("ok");
+      statusDot.classList.remove("bad");
       return;
     }
 
@@ -1098,7 +1130,12 @@
       map.getSource(NOTAM_SOURCE_ID)?.setData(payload.data);
       notamCountsState = { notam: Number(payload.counts?.notam || 0) };
       notamTruncated = Boolean(payload.truncated);
-      notamViewportCache = { z, timeKey, bounds: requestBounds };
+      viewportCachePut(notamViewportCache, cacheKey, {
+        bounds: requestBounds,
+        data: payload.data,
+        counts: notamCountsState,
+        truncated: notamTruncated
+      });
       refreshViewportStatus();
 
       const cacheState = response.headers.get("x-yc-navmap-cache");
@@ -1213,11 +1250,9 @@
       setLayerVisibility(layer);
 
       if (layer === "notam") {
-        notamViewportCache = null;
-        scheduleNotamLoad(0, true);
+        scheduleNotamLoad(0, false);
       } else {
-        chartViewportCache = null;
-        scheduleChartLoad(0, true);
+        scheduleChartLoad(0, false);
       }
     });
   });
@@ -1285,6 +1320,11 @@
       modeButtons.forEach(b => b.classList.remove("active"));
     });
   });
+
+  setInterval(() => {
+    if (!map.loaded() || !notamEnabled()) return;
+    scheduleNotamLoad(0, true);
+  }, 300000);
 
   wafsEnabled?.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
   wafsFL?.addEventListener("input", () => {
