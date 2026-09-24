@@ -32,7 +32,9 @@
   const timeSlider = document.getElementById("map-time-slider");
   const timeLabel = document.getElementById("selected-time-label");
   const timelineOffset = document.getElementById("timeline-offset");
+  const timelineScale = document.getElementById("timeline-scale");
   const timeNowButton = document.getElementById("time-now");
+  const timeStepButtons = [...document.querySelectorAll("[data-time-step]")];
   const notamTimeStatus = document.getElementById("notam-time-status");
   const wafsEnabled = document.getElementById("wafs-enabled");
   const wafsFL = document.getElementById("wafs-fl");
@@ -65,6 +67,12 @@
   let weatherController = null;
   let weatherGeneration = 0;
   let timelineAnchor = null;
+  const PANEL_TIMELINE_RANGES = {
+    "chart-panel": 24,
+    "notam-panel": 24,
+    "wafs-panel": 72
+  };
+  let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
   const weatherOverlays = new Map();
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
@@ -332,7 +340,7 @@
       type: "fill",
       source: sourceId,
       filter: ["all", ["==", ["get", "layer"], "notam"], ["==", ["geometry-type"], "Polygon"]],
-      paint: { "fill-color": palette.notam, "fill-opacity": 0.13 },
+      paint: { "fill-color": palette.notam, "fill-opacity": 0.17 },
       layout: { visibility: visibilityFor("notam") }
     });
 
@@ -343,7 +351,7 @@
       filter: ["==", ["get", "layer"], "notam"],
       paint: {
         "line-color": palette.notam,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.2, 10, 2.1],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.5, 10, 2.6],
         "line-opacity": 0.9
       },
       layout: { visibility: visibilityFor("notam") }
@@ -490,11 +498,20 @@
       rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
       rows += infoRow("Lower", p.lower_limit);
       rows += infoRow("Upper", p.upper_limit);
-      const mapSource = p.geometry_source === "airport-location"
-        ? "Airport marker fallback"
-        : p.geometry_source === "qline-coordinate"
-          ? "Q-line / NOTAM coordinate"
-          : "FAA geometry";
+      rows += infoRow("Radius", p.radius_nm ? `${p.radius_nm} NM` : null);
+      const sourceKey = String(p.geometry_source || "");
+      const mapSource =
+        sourceKey === "airport-location"
+          ? "Airport marker fallback"
+          : sourceKey === "qline-coordinate"
+            ? "Q-line / NOTAM coordinate"
+            : sourceKey === "airport-radius-circle"
+              ? "Airport + radius circle"
+              : sourceKey === "qline-radius-circle"
+                ? "Q-line + radius circle"
+                : sourceKey === "derived-radius-circle"
+                  ? "Derived radius circle"
+                  : "FAA geometry";
       rows += infoRow("Map source", mapSource);
       detailText = p.text || "";
     }
@@ -527,7 +544,7 @@
       const n = Number(counts.notam || 0);
       notamTimeStatus.textContent = selectedLayers().includes("notam")
         ? new Intl.NumberFormat("tr-TR").format(n) + " NOTAM · " + formatSelectedUtc()
-        : "FAA geometry, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.";
+        : "FAA geometry, radius circle, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.";
     }
   }
 
@@ -576,25 +593,75 @@
     return selectedTimeDate().toISOString();
   }
 
-  function formatSelectedUtc() {
-    return selectedTimeDate().toISOString().slice(0, 16).replace("T", " ") + "Z";
+  function formatSelectedUtc(date = selectedTimeDate()) {
+    return date.toISOString().slice(0, 16).replace("T", " ") + "Z";
+  }
+
+  function clampTimelineHours(hours) {
+    return Math.max(-currentTimelineRange, Math.min(currentTimelineRange, hours));
+  }
+
+  function renderTimelineScale(range = currentTimelineRange) {
+    if (!timelineScale) return;
+    const labels = range <= 24
+      ? [-24, -12, -6, 0, 6, 12, 24]
+      : [-72, -48, -24, 0, 24, 48, 72];
+
+    timelineScale.innerHTML = labels
+      .map(value => {
+        const label = value === 0 ? "NOW" : (value > 0 ? `+${value}h` : `${value}h`);
+        return `<span>${label}</span>`;
+      })
+      .join("");
+  }
+
+  function clampDateToTimelineRange(date) {
+    if (!timelineAnchor) return date;
+    const hours = Math.round((date.getTime() - timelineAnchor.getTime()) / 3600000);
+    const clamped = clampTimelineHours(hours);
+    if (clamped === hours) return date;
+    return new Date(timelineAnchor.getTime() + clamped * 3600000);
   }
 
   function updateTimelineOffset(date) {
     if (!timelineAnchor || !timelineOffset) return;
     const hours = Math.round((date.getTime() - timelineAnchor.getTime()) / 3600000);
-    timelineOffset.textContent = hours === 0 ? "NOW" : (hours > 0 ? "+" + hours + "h" : hours + "h");
+    timelineOffset.textContent = hours > 0 ? `+${hours}h` : `${hours}h`;
+  }
+
+  function setTimelineRange(rangeHours, reload = false) {
+    currentTimelineRange = Number(rangeHours) >= 72 ? 72 : 24;
+    renderTimelineScale(currentTimelineRange);
+
+    if (timeSlider) {
+      timeSlider.min = String(-currentTimelineRange);
+      timeSlider.max = String(currentTimelineRange);
+    }
+
+    const current = clampDateToTimelineRange(selectedTimeDate());
+    setSelectedTime(current, reload, true);
+  }
+
+  function shiftSelectedTime(hoursDelta) {
+    if (!timelineAnchor) return;
+    const currentHours = Math.round((selectedTimeDate().getTime() - timelineAnchor.getTime()) / 3600000);
+    const nextHours = clampTimelineHours(currentHours + hoursDelta);
+    const nextDate = new Date(timelineAnchor.getTime() + nextHours * 3600000);
+    setSelectedTime(nextDate, true, true);
   }
 
   function setSelectedTime(date, reload = true, syncSlider = true) {
     if (!timeInput) return;
-    timeInput.value = inputValueFromDate(date);
-    if (timeLabel) timeLabel.textContent = formatSelectedUtc();
-    updateTimelineOffset(date);
+    const normalized = clampDateToTimelineRange(date);
+    timeInput.value = inputValueFromDate(normalized);
+    if (timeLabel) timeLabel.textContent = formatSelectedUtc(normalized);
+    updateTimelineOffset(normalized);
+
     if (syncSlider && timeSlider && timelineAnchor) {
-      const hours = Math.round((date.getTime() - timelineAnchor.getTime()) / 3600000);
-      timeSlider.value = String(Math.max(-72, Math.min(72, hours)));
+      const hours = Math.round((normalized.getTime() - timelineAnchor.getTime()) / 3600000);
+      timeSlider.value = String(clampTimelineHours(hours));
     }
+
     if (reload && map.loaded()) {
       scheduleViewportLoad(0);
       loadWeatherOverlays().catch(console.error);
@@ -607,6 +674,7 @@
     timelineAnchor = now;
     if (timeSlider) timeSlider.value = "0";
     setSelectedTime(now, false, false);
+    setTimelineRange(PANEL_TIMELINE_RANGES["chart-panel"], false);
   }
 
   function wafsSourceId(product) {
@@ -965,6 +1033,14 @@
     setSelectedTime(date, true, true);
   });
 
+  timeStepButtons.forEach(button => {
+    button.addEventListener("click", () => {
+      const hours = Number(button.dataset.timeStep || 0);
+      if (!Number.isFinite(hours) || hours === 0) return;
+      shiftSelectedTime(hours);
+    });
+  });
+
   timeNowButton?.addEventListener("click", () => {
     const now = new Date();
     now.setUTCSeconds(0, 0);
@@ -973,17 +1049,25 @@
     setSelectedTime(now, true, false);
   });
 
+  function activatePanel(target, allowToggle = true) {
+    const panel = document.getElementById(target);
+    const button = modeButtons.find(b => b.dataset.panelTarget === target);
+    const wasOpen = panel?.classList.contains("open");
+
+    toolPanels.forEach(p => p.classList.remove("open"));
+    modeButtons.forEach(b => b.classList.remove("active"));
+
+    if (allowToggle && wasOpen) return;
+
+    if (panel) panel.classList.add("open");
+    if (button) button.classList.add("active");
+
+    setTimelineRange(PANEL_TIMELINE_RANGES[target] || 24, false);
+  }
+
   modeButtons.forEach(button => {
     button.addEventListener("click", () => {
-      const target = button.dataset.panelTarget;
-      const panel = document.getElementById(target);
-      const wasOpen = panel?.classList.contains("open");
-      toolPanels.forEach(p => p.classList.remove("open"));
-      modeButtons.forEach(b => b.classList.remove("active"));
-      if (!wasOpen && panel) {
-        panel.classList.add("open");
-        button.classList.add("active");
-      }
+      activatePanel(button.dataset.panelTarget, true);
     });
   });
 
