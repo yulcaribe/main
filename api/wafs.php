@@ -216,7 +216,14 @@ function snapshotCandidates(int $requested): array {
 }
 
 $action = strtolower(trim((string)($_GET['action'] ?? 'status')));
-$fl = max(50, min(600, (int)($_GET['fl'] ?? 360)));
+$flRaw = trim((string)($_GET['fl'] ?? '360'));
+if ($flRaw === '' || !preg_match('/^\d{1,3}$/', $flRaw)) {
+    jsonOut(400, ['ok'=>false,'error'=>'Flight level tam sayı olmalı (örn. 100, 360).']);
+}
+$fl = (int)$flRaw;
+if ($fl < 50 || $fl > 600) {
+    jsonOut(400, ['ok'=>false,'error'=>'Flight level FL050 ile FL600 arasında olmalı.','requestedFL'=>$fl]);
+}
 
 if ($action === 'status') {
     $products = [];
@@ -249,7 +256,22 @@ $cfg = productConfig($product);
 if ($cfg === null) jsonOut(400, ['ok'=>false,'error'=>'Geçersiz WAFS product.']);
 
 $requested = parseUtc((string)($_GET['valid'] ?? ''));
-$layerFL = is_array($cfg['levels']) ? nearestLevel($fl, $cfg['levels']) : null;
+
+if (is_array($cfg['levels']) && !in_array($fl, $cfg['levels'], true)) {
+    $minLevel = min($cfg['levels']);
+    $maxLevel = max($cfg['levels']);
+    jsonOut(400, [
+        'ok'=>false,
+        'error'=>$cfg['label'].' için FL'.$fl.' desteklenmiyor. Desteklenen seviyeler: '.implode(', ', array_map(static fn(int $v): string => 'FL'.$v, $cfg['levels'])).'.',
+        'product'=>$product,
+        'requestedFL'=>$fl,
+        'minimumFL'=>$minLevel,
+        'maximumFL'=>$maxLevel,
+        'supportedLevels'=>$cfg['levels'],
+    ]);
+}
+
+$layerFL = is_array($cfg['levels']) ? $fl : null;
 $pressure = $layerFL === null ? 0 : pressureFromFL($layerFL);
 $suffix = $cfg['suffix']($pressure, $layerFL ?? 0);
 
