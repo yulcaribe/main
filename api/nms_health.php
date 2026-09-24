@@ -90,6 +90,14 @@ function nmsHealthLocal(string $environment): array {
         else $syncHealth = 'stale';
     }
 
+    $cronState = null;
+    $cronPath = nmsCacheDir() . DIRECTORY_SEPARATOR . 'cron_state_' . $environment . '.json';
+    if (is_file($cronPath)) {
+        $cronRaw = @file_get_contents($cronPath);
+        $cronJson = is_string($cronRaw) ? json_decode($cronRaw, true) : null;
+        if (is_array($cronJson)) $cronState = $cronJson;
+    }
+
     return [
         'state' => $state,
         'syncHealth' => $syncHealth,
@@ -108,6 +116,7 @@ function nmsHealthLocal(string $environment): array {
         'classifications' => $classifications,
         'environmentCounts' => $environmentCounts,
         'latestNotamUpdate' => $raw['latest_notam_update'] ?: null,
+        'cronState' => $cronState,
         'extensions' => [
             'pdo_mysql' => extension_loaded('pdo_mysql'),
             'curl' => extension_loaded('curl'),
