@@ -14,6 +14,25 @@ function nmsRespond(int $status, array $payload): never {
     exit;
 }
 
+function nmsAdminKey(): string {
+    $envKey = trim((string)(getenv('NMS_ADMIN_KEY') ?: ''));
+    if ($envKey !== '') return $envKey;
+
+    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $configPath = $homeRoot . '/data.php';
+    if (!is_file($configPath)) return '';
+
+    $root = require $configPath;
+    if (!is_array($root) || !isset($root['nms']) || !is_array($root['nms'])) return '';
+    return trim((string)($root['nms']['admin_key'] ?? ''));
+}
+
+function nmsReadJsonBody(): array {
+    $raw = file_get_contents('php://input');
+    $body = json_decode((string)$raw, true);
+    return is_array($body) ? $body : $_POST;
+}
+
 $action = strtolower(trim((string)($_GET['action'] ?? 'status')));
 
 if ($action === 'status') {
@@ -22,6 +41,37 @@ if ($action === 'status') {
         'service' => 'faa-nms',
         'config' => nmsPublicStatus(),
     ]);
+}
+
+if ($action === 'admin-delta') {
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        nmsRespond(405, ['ok' => false, 'error' => 'POST required.']);
+    }
+
+    $body = nmsReadJsonBody();
+    $expected = nmsAdminKey();
+    $provided = trim((string)($body['adminKey'] ?? ''));
+
+    if ($expected === '') {
+        nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
+    }
+    if ($provided === '' || !hash_equals($expected, $provided)) {
+        usleep(250000);
+        nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+    }
+
+    try {
+        $result = nmsRunDeltaSync();
+    } catch (Throwable $e) {
+        $cfg = nmsPrivateConfig();
+        nmsRespond(500, [
+            'ok' => false,
+            'error' => 'Delta sync failed before completion.',
+            'detail' => $cfg['env'] === 'staging' ? $e->getMessage() : null,
+        ]);
+    }
+
+    nmsRespond(($result['ok'] ?? false) ? 200 : 502, $result);
 }
 
 if ($action === 'health') {
@@ -236,5 +286,5 @@ if ($action === 'probe-notams') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'health', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
+    'allowedActions' => ['status', 'health', 'admin-delta', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
 ]);
