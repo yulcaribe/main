@@ -56,25 +56,40 @@ function nmsFullNormalizeMessage(string $xml, string $environment): ?array {
         throw new RuntimeException('PHP DOM extension is not enabled.');
     }
 
+    $wrapped = '<nmswrap'
+        . ' xmlns="http://www.aixm.aero/schema/5.1/message"'
+        . ' xmlns:aixm="http://www.aixm.aero/schema/5.1"'
+        . ' xmlns:event="http://www.aixm.aero/schema/5.1/event"'
+        . ' xmlns:xlink="http://www.w3.org/1999/xlink"'
+        . ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        . ' xmlns:gml="http://www.opengis.net/gml/3.2"'
+        . ' xmlns:fnse="http://www.aixm.aero/schema/5.1/extensions/FAA/FNSE"'
+        . ' xmlns:fns="urn:us.gov.dot.faa.aim.fns"'
+        . '>' . $xml . '</nmswrap>';
+
     $doc = new DOMDocument();
     $previous = libxml_use_internal_errors(true);
-    $loaded = $doc->loadXML($xml, LIBXML_NONET | LIBXML_COMPACT | LIBXML_PARSEHUGE);
+    $loaded = $doc->loadXML($wrapped, LIBXML_NONET | LIBXML_COMPACT | LIBXML_PARSEHUGE);
     libxml_clear_errors();
     libxml_use_internal_errors($previous);
     if (!$loaded || !$doc->documentElement) return null;
 
-    $root = $doc->documentElement;
+    $xp = new DOMXPath($doc);
+    $messages = $xp->query('//*[local-name()="AIXMBasicMessage"]');
+    if (!$messages || $messages->length === 0) return null;
+    $root = $messages->item(0);
+    if (!$root instanceof DOMElement) return null;
+
     $nmsId = trim($root->getAttributeNS('http://www.opengis.net/gml/3.2', 'id'));
     if ($nmsId === '') $nmsId = trim($root->getAttribute('gml:id'));
     if ($nmsId === '') return null;
 
-    $xp = new DOMXPath($doc);
-    $notams = $xp->query('//*[local-name()="NOTAM"]');
+    $notams = $xp->query('.//*[local-name()="NOTAM"]', $root);
     if (!$notams || $notams->length === 0) return null;
     $notam = $notams->item(0);
     if (!$notam instanceof DOMNode) return null;
 
-    $extensions = $xp->query('//*[local-name()="EventExtension"]');
+    $extensions = $xp->query('.//*[local-name()="EventExtension"]', $root);
     $extension = ($extensions && $extensions->length > 0) ? $extensions->item(0) : null;
 
     $effectiveStartRaw = nmsFullChildText($notam, 'effectiveStart');
