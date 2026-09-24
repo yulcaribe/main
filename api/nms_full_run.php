@@ -295,7 +295,7 @@ function nmsRunFullLoadSlice(int $limit = 250, int $maxSeconds = 7): array {
             'complete' => false,
             'environment' => $environment,
             'error' => 'FAA NMS full load slice failed.',
-            'detail' => $environment === 'staging' ? $e->getMessage() : null,
+            'detail' => $e->getMessage(),
         ];
     }
 }
