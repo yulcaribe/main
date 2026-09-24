@@ -222,6 +222,13 @@ function nmsRunFullLoadSlice(int $limit = 250, int $maxSeconds = 7): array {
         if ($pdo->inTransaction()) $pdo->commit();
         fclose($fh);
 
+        $clearError = $pdo->prepare(
+            "UPDATE notam_sync_state
+             SET last_error = NULL
+             WHERE source = 'FAA_NMS' AND environment = :environment"
+        );
+        $clearError->execute(['environment' => $environment]);
+
         $state['byteOffset'] = $offset;
         $state['processed'] = (int)($state['processed'] ?? 0) + $sliceProcessed;
         $state['skipped'] = (int)($state['skipped'] ?? 0) + $sliceSkipped;
