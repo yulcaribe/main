@@ -65,7 +65,9 @@ function nmsStoreText(mixed $value): ?string {
 function nmsStoreShortText(mixed $value, int $maxLength): ?string {
     $text = nmsStoreText($value);
     if ($text === null) return null;
-    return mb_substr($text, 0, $maxLength);
+    return function_exists('mb_substr')
+        ? mb_substr($text, 0, $maxLength)
+        : substr($text, 0, $maxLength);
 }
 
 function nmsStoreDate(mixed $value): ?string {
@@ -294,7 +296,9 @@ function nmsStoreSyncError(PDO $pdo, string $environment, string $message): void
          WHERE source = \'FAA_NMS\' AND environment = :environment'
     );
     $stmt->execute([
-        'error' => mb_substr($message, 0, 65535),
+        'error' => function_exists('mb_substr')
+            ? mb_substr($message, 0, 65535)
+            : substr($message, 0, 65535),
         'environment' => $environment,
     ]);
 }
