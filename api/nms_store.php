@@ -191,7 +191,7 @@ function nmsUpsertRecord(PDO $pdo, array $r): void {
                 :estimated, :schedule, :lower_limit, :upper_limit,
                 :coordinates_raw, :radius_nm, :notam_text, :last_updated,
                 :status,
-                CASE WHEN :geometry_json IS NULL OR :geometry_json = "" THEN NULL ELSE ST_GeomFromGeoJSON(:geometry_json_value) END,
+                ST_GeomFromGeoJSON(NULLIF(:geometry_json_value, '')),
                 :raw_json, :source, :environment
             )
             ON DUPLICATE KEY UPDATE
@@ -231,6 +231,7 @@ function nmsUpsertRecord(PDO $pdo, array $r): void {
 
     $params = $r;
     $params['geometry_json_value'] = $r['geometry_json'];
+    unset($params['geometry_json']);
     $stmt->execute($params);
 }
 
