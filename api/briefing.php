@@ -185,7 +185,15 @@ function isProcedureDesignator(string $token): bool {
     return (bool)preg_match('/^[A-Z]{3,6}\d[A-Z]$/', $token);
 }
 
+function normalizeRouteWhitespace(string $raw): string {
+    // OFP/PDF copy-paste frequently contains NBSP and other Unicode spaces.
+    $raw=preg_replace('/[\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{202F}\\x{205F}\\x{3000}]/u', ' ', $raw) ?? $raw;
+    $raw=preg_replace('/[ \\t]+/u', ' ', $raw) ?? $raw;
+    return trim($raw);
+}
+
 function splitRouteSections(string $raw): array {
+    $raw=normalizeRouteWhitespace($raw);
     $marked=preg_replace('/\bDEST\s+ALTN2\s+ROUTE\b/i', "\n@@ALTN2@@\n", $raw) ?? $raw;
     $marked=preg_replace('/\bDEST\s+ALTN\s+ROUTE\b/i', "\n@@ALTN1@@\n", $marked) ?? $marked;
     $buckets=['main'=>[],'altn1'=>[],'altn2'=>[]];
@@ -209,7 +217,7 @@ function splitRouteSections(string $raw): array {
 }
 
 function parseRouteSection(string $raw, string $from, string $to, bool $isAlternate=false): array {
-    $raw=strtoupper(trim($raw));
+    $raw=strtoupper(normalizeRouteWhitespace($raw));
     $raw=preg_replace('/[\r\n\t]+/', ' ', $raw) ?? $raw;
     $tokens=preg_split('/[\s,;]+/', $raw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
     $items=[]; $ignored=[]; $unknown=[];
@@ -1433,7 +1441,7 @@ function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,
 
 $from=strtoupper(trim((string)($_GET['from'] ?? '')));
 $to=strtoupper(trim((string)($_GET['to'] ?? '')));
-$routeRaw=strtoupper(trim((string)($_GET['route'] ?? '')));
+$routeRaw=strtoupper(normalizeRouteWhitespace((string)($_GET['route'] ?? '')));
 if (strlen($routeRaw)>2000) $routeRaw=substr($routeRaw,0,2000);
 $cruiseFL=(int)($_GET['fl'] ?? 360);
 $cruiseFL=max(50,min(600,$cruiseFL));
