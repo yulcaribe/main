@@ -20,6 +20,35 @@ function normalizeLon(float $lon): float {
     return $lon;
 }
 
+function circlePolygon(float $lon, float $lat, float $radiusNm, int $steps = 32): array {
+    $earthRadiusNm = 3440.065;
+    $angularDistance = max(0.0, $radiusNm) / $earthRadiusNm;
+    $latRad = deg2rad($lat);
+    $lonRad = deg2rad($lon);
+    $ring = [];
+
+    for ($i = 0; $i <= $steps; $i++) {
+        $bearing = deg2rad(($i / $steps) * 360.0);
+        $sinLat2 = sin($latRad) * cos($angularDistance)
+            + cos($latRad) * sin($angularDistance) * cos($bearing);
+        $lat2 = asin(max(-1.0, min(1.0, $sinLat2)));
+        $lon2 = $lonRad + atan2(
+            sin($bearing) * sin($angularDistance) * cos($latRad),
+            cos($angularDistance) - sin($latRad) * sin($lat2)
+        );
+
+        $ring[] = [
+            round(normalizeLon(rad2deg($lon2)), 6),
+            round(rad2deg($lat2), 6),
+        ];
+    }
+
+    return [
+        'type' => 'Polygon',
+        'coordinates' => [$ring],
+    ];
+}
+
 function loadDbConfig(): array {
     // /home/<cpanel-user>/public_html/main/api -> /home/<cpanel-user>/data.php
     $homeRoot = dirname(dirname(dirname(__DIR__)));
@@ -156,6 +185,28 @@ function notamFeature(array $row): ?array {
     $geometry = json_decode((string)$row['geometry'], true);
     if (!is_array($geometry) || !isset($geometry['type'])) return null;
 
+    $geometrySource = (string)($row['geometry_source'] ?? 'faa-geometry');
+    $radiusNm = isset($row['radius_nm']) && is_numeric((string)$row['radius_nm'])
+        ? (float)$row['radius_nm']
+        : null;
+
+    if (($geometry['type'] ?? '') === 'Point' && $radiusNm !== null && $radiusNm > 0.0) {
+        $coords = $geometry['coordinates'] ?? null;
+        if (is_array($coords) && count($coords) >= 2) {
+            $geometry = circlePolygon((float)$coords[0], (float)$coords[1], $radiusNm);
+
+            if ($geometrySource === 'airport-location') {
+                $geometrySource = 'airport-radius-circle';
+            } elseif ($geometrySource === 'qline-coordinate') {
+                $geometrySource = 'qline-radius-circle';
+            } elseif ($geometrySource === 'faa-geometry') {
+                $geometrySource = 'faa-radius-circle';
+            } else {
+                $geometrySource = 'derived-radius-circle';
+            }
+        }
+    }
+
     $series = trim((string)($row['series'] ?? ''));
     $number = trim((string)($row['number'] ?? ''));
     $year = trim((string)($row['year'] ?? ''));
@@ -177,8 +228,9 @@ function notamFeature(array $row): ?array {
             'effective_end_raw' => $row['effective_end_raw'],
             'lower_limit' => $row['lower_limit'],
             'upper_limit' => $row['upper_limit'],
+            'radius_nm' => $radiusNm,
             'text' => $row['notam_text'],
-            'geometry_source' => $row['geometry_source'] ?? 'faa-geometry',
+            'geometry_source' => $geometrySource,
         ],
     ];
 }
@@ -521,7 +573,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $sql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.effective_start, n.effective_end,
+                n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 ST_AsGeoJSON(n.geometry, 6) AS geometry,
                 \'faa-geometry\' AS geometry_source
@@ -563,7 +615,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $fallbackSql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.effective_start, n.effective_end,
+                n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 JSON_OBJECT(
                     \'type\', \'Point\',
@@ -621,7 +673,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $coordSql = 'SELECT
             q.nms_id, q.series, q.number, q.year, q.classification,
-            q.location, q.icao_location, q.effective_start, q.effective_end,
+            q.location, q.icao_location, q.radius_nm, q.effective_start, q.effective_end,
             q.effective_end_raw, q.lower_limit, q.upper_limit, q.notam_text,
             JSON_OBJECT(
                 \'type\', \'Point\',
@@ -662,7 +714,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             FROM (
                 SELECT
                     n.nms_id, n.series, n.number, n.year, n.classification,
-                    n.location, n.icao_location, n.effective_start, n.effective_end,
+                    n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
                     n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                     ' . $coordTokenExpr . ' AS coord_token
                 FROM notams n
