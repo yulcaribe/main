@@ -4,6 +4,7 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 
+require_once __DIR__ . '/nms_auth.php';
 require_once __DIR__ . '/nms_client.php';
 require_once __DIR__ . '/nms_store.php';
 require_once __DIR__ . '/nms_health.php';
@@ -16,19 +17,6 @@ function nmsRespond(int $status, array $payload): never {
     http_response_code($status);
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
-}
-
-function nmsAdminKey(): string {
-    $envKey = trim((string)(getenv('NMS_ADMIN_KEY') ?: ''));
-    if ($envKey !== '') return $envKey;
-
-    $homeRoot = dirname(dirname(dirname(__DIR__)));
-    $configPath = $homeRoot . '/data.php';
-    if (!is_file($configPath)) return '';
-
-    $root = require $configPath;
-    if (!is_array($root) || !isset($root['nms']) || !is_array($root['nms'])) return '';
-    return trim((string)($root['nms']['admin_key'] ?? ''));
 }
 
 function nmsReadJsonBody(): array {
@@ -53,15 +41,17 @@ if ($action === 'admin-full') {
     }
 
     $body = nmsReadJsonBody();
-    $expected = nmsAdminKey();
-    $provided = trim((string)($body['adminKey'] ?? ''));
+    if (!nmsHealthAuthenticated()) {
+        $expected = nmsAdminKey();
+        $provided = trim((string)($body['adminKey'] ?? ''));
 
-    if ($expected === '') {
-        nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
-    }
-    if ($provided === '' || !hash_equals($expected, $provided)) {
-        usleep(250000);
-        nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+        if ($expected === '') {
+            nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
+        }
+        if ($provided === '' || !hash_equals($expected, $provided)) {
+            usleep(250000);
+            nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+        }
     }
 
     $cfg = nmsPrivateConfig();
@@ -109,15 +99,17 @@ if ($action === 'admin-delta') {
     }
 
     $body = nmsReadJsonBody();
-    $expected = nmsAdminKey();
-    $provided = trim((string)($body['adminKey'] ?? ''));
+    if (!nmsHealthAuthenticated()) {
+        $expected = nmsAdminKey();
+        $provided = trim((string)($body['adminKey'] ?? ''));
 
-    if ($expected === '') {
-        nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
-    }
-    if ($provided === '' || !hash_equals($expected, $provided)) {
-        usleep(250000);
-        nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+        if ($expected === '') {
+            nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
+        }
+        if ($provided === '' || !hash_equals($expected, $provided)) {
+            usleep(250000);
+            nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+        }
     }
 
     try {
@@ -138,6 +130,10 @@ if ($action === 'admin-delta') {
 }
 
 if ($action === 'health') {
+    if (!nmsHealthAuthenticated()) {
+        nmsRespond(401, ['ok' => false, 'error' => 'Health session authentication required.']);
+    }
+
     $cfg = nmsPrivateConfig();
     $public = nmsPublicStatus();
 
