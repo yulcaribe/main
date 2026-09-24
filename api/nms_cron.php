@@ -107,8 +107,13 @@ try {
 
     $pdo = nmsDb();
     $state = nmsSyncState($pdo, $environment);
+    $countStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM notams WHERE source = 'FAA_NMS' AND environment = :environment"
+    );
+    $countStmt->execute(['environment' => $environment]);
+    $notamCount = (int)$countStmt->fetchColumn();
 
-    if (empty($state['last_full_load'])) {
+    if ($notamCount === 0 || empty($state['last_full_load'])) {
         $result = nmsCronFullLoad($environment);
         nmsCronWriteState($environment, [
             'ok' => (bool)($result['ok'] ?? false),
