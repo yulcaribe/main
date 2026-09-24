@@ -398,25 +398,482 @@ function chooseNavCandidate(array $rows, array $directRoute, float $lastProgress
     return $best;
 }
 
-function resolveUserRoute(string $raw, string $from, string $to, array $departure, array $arrival): array {
+function navDb(): ?PDO {
+    static $pdo = false;
+    if ($pdo instanceof PDO) return $pdo;
+    if ($pdo === null) return null;
+    if (!extension_loaded('pdo_mysql')) { $pdo=null; return null; }
+
+    $homeRoot=dirname(dirname(dirname(__DIR__)));
+    $configPath=$homeRoot.'/data.php';
+    if (!is_file($configPath)) { $pdo=null; return null; }
+
+    $cfg=require $configPath;
+    if (!is_array($cfg)) { $pdo=null; return null; }
+    foreach (['host','port','database','user','password'] as $key) {
+        if (!array_key_exists($key,$cfg)) { $pdo=null; return null; }
+    }
+
+    try {
+        $dsn=sprintf(
+            'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+            $cfg['host'],(int)$cfg['port'],$cfg['database']
+        );
+        $pdo=new PDO($dsn,$cfg['user'],$cfg['password'],[
+            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES=>false
+        ]);
+        return $pdo;
+    } catch (Throwable $e) {
+        $pdo=null;
+        return null;
+    }
+}
+
+function navFetchPointCandidates(PDO $pdo,array $idents): array {
+    $idents=array_values(array_unique(array_filter(array_map(
+        fn($v)=>strtoupper(trim((string)$v)),
+        $idents
+    ))));
+    if (!$idents) return [];
+
+    $placeholders=implode(',',array_fill(0,count($idents),'?'));
+    $stmt=$pdo->prepare(
+        "SELECT id,source_id,kind,ident,name,lat,lon,type_code,frequency_text,channel,provider_status
+         FROM nav_points
+         WHERE ident IN ($placeholders)"
+    );
+    $stmt->execute($idents);
+
+    $out=[];
+    while ($row=$stmt->fetch()) {
+        $id=strtoupper((string)$row['ident']);
+        $out[$id][]=$row;
+    }
+    return $out;
+}
+
+function navGeoLines(?string $json): array {
+    if ($json===null || trim($json)==='') return [];
+    $g=json_decode($json,true);
+    if (!is_array($g)) return [];
+
+    $type=$g['type']??'';
+    $coords=$g['coordinates']??null;
+    if ($type==='LineString' && is_array($coords)) return [$coords];
+    if ($type==='MultiLineString' && is_array($coords)) return $coords;
+
+    if ($type==='GeometryCollection' && is_array($g['geometries']??null)) {
+        $out=[];
+        foreach ($g['geometries'] as $child) {
+            if (!is_array($child)) continue;
+            $ct=$child['type']??'';
+            $cc=$child['coordinates']??null;
+            if ($ct==='LineString' && is_array($cc)) $out[]=$cc;
+            elseif ($ct==='MultiLineString' && is_array($cc)) {
+                foreach ($cc as $line) if (is_array($line)) $out[]=$line;
+            }
+        }
+        return $out;
+    }
+    return [];
+}
+
+function navBestGeometryLine(array $lines): array {
+    $best=[]; $score=-1.0;
+    foreach ($lines as $line) {
+        if (!is_array($line) || count($line)<2) continue;
+        $length=0.0;
+        for ($i=0;$i<count($line)-1;$i++) {
+            $a=$line[$i]; $b=$line[$i+1];
+            if (!is_array($a)||!is_array($b)||count($a)<2||count($b)<2) continue;
+            $length+=haversineNm((float)$a[1],(float)$a[0],(float)$b[1],(float)$b[0]);
+        }
+        if ($length>$score) { $score=$length; $best=$line; }
+    }
+    return $best;
+}
+
+function navLoadRoute(PDO $pdo,string $ident,string $type): ?array {
+    static $cache=[];
+    $ident=strtoupper(trim($ident));
+    $type=strtolower(trim($type));
+    $key=$type.'|'.$ident;
+    if (array_key_exists($key,$cache)) return $cache[$key];
+
+    $stmt=$pdo->prepare(
+        "SELECT
+            r.id AS route_id,r.ident AS route_ident,r.type AS route_type,
+            rm.id AS membership_id,rm.member_index,rm.forward,rm.backward,
+            rm.lower_text AS membership_lower_text,
+            rm.upper_text AS membership_upper_text,
+            rm.upper_unlimited AS membership_upper_unlimited,
+            s.id AS segment_id,s.from_ident,s.to_ident,
+            s.lower_text AS segment_lower_text,
+            s.upper_text AS segment_upper_text,
+            s.upper_unlimited AS segment_upper_unlimited,
+            rg.id AS geometry_id,rg.geometry_json
+         FROM nav_routes r
+         JOIN nav_route_memberships rm ON rm.route_id=r.id
+         JOIN nav_route_segments s ON s.id=rm.segment_id
+         LEFT JOIN nav_route_geometry rg ON rg.segment_id=s.id
+         WHERE r.ident=? AND r.type=?
+         ORDER BY rm.member_index,rm.id,rg.id"
+    );
+    $stmt->execute([$ident,$type]);
+
+    $segments=[];
+    $routeId=null;
+    while ($row=$stmt->fetch()) {
+        $routeId=(int)$row['route_id'];
+        $segKey=(string)$row['membership_id'].':'.(string)$row['segment_id'];
+        if (!isset($segments[$segKey])) {
+            $segments[$segKey]=[
+                'membershipId'=>(int)$row['membership_id'],
+                'memberIndex'=>(int)$row['member_index'],
+                'segmentId'=>(int)$row['segment_id'],
+                'from'=>strtoupper((string)$row['from_ident']),
+                'to'=>strtoupper((string)$row['to_ident']),
+                'forward'=>$row['forward']===null?null:(int)$row['forward'],
+                'backward'=>$row['backward']===null?null:(int)$row['backward'],
+                'lowerText'=>$row['membership_lower_text'] ?: $row['segment_lower_text'],
+                'upperText'=>$row['membership_upper_text'] ?: $row['segment_upper_text'],
+                'upperUnlimited'=>(int)($row['membership_upper_unlimited'] ?: $row['segment_upper_unlimited']),
+                'geometryLines'=>[]
+            ];
+        }
+        foreach (navGeoLines($row['geometry_json']??null) as $line) {
+            $segments[$segKey]['geometryLines'][]=$line;
+        }
+    }
+
+    if ($routeId===null) {
+        $cache[$key]=null;
+        return null;
+    }
+
+    $nodes=[]; $adj=[]; $undirected=[]; $indegree=[]; $outdegree=[];
+    foreach ($segments as &$seg) {
+        $seg['geometry']=navBestGeometryLine($seg['geometryLines']);
+        unset($seg['geometryLines']);
+
+        $from=$seg['from']; $to=$seg['to'];
+        if ($from==='') $from='@'.$seg['segmentId'].'A';
+        if ($to==='') $to='@'.$seg['segmentId'].'B';
+        $seg['from']=$from; $seg['to']=$to;
+
+        if ($seg['geometry']) {
+            $first=$seg['geometry'][0];
+            $last=$seg['geometry'][count($seg['geometry'])-1];
+            if (is_array($first)&&count($first)>=2) $nodes[$from]=['lat'=>(float)$first[1],'lon'=>(float)$first[0]];
+            if (is_array($last)&&count($last)>=2) $nodes[$to]=['lat'=>(float)$last[1],'lon'=>(float)$last[0]];
+        }
+
+        $f=$seg['forward']; $b=$seg['backward'];
+        $allowForward=$f===null&&$b===null ? true : $f===1;
+        $allowBackward=$f===null&&$b===null ? true : $b===1;
+
+        if ($allowForward) {
+            $adj[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false]);
+            $outdegree[$from]=($outdegree[$from]??0)+1;
+            $indegree[$to]=($indegree[$to]??0)+1;
+        }
+        if ($allowBackward) {
+            $adj[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true]);
+            $outdegree[$to]=($outdegree[$to]??0)+1;
+            $indegree[$from]=($indegree[$from]??0)+1;
+        }
+
+        $undirected[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false]);
+        $undirected[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true]);
+        $indegree[$from]=$indegree[$from]??0; $indegree[$to]=$indegree[$to]??0;
+        $outdegree[$from]=$outdegree[$from]??0; $outdegree[$to]=$outdegree[$to]??0;
+    }
+    unset($seg);
+
+    $cache[$key]=[
+        'id'=>$routeId,
+        'ident'=>$ident,
+        'type'=>$type,
+        'segments'=>array_values($segments),
+        'nodes'=>$nodes,
+        'adj'=>$adj,
+        'undirected'=>$undirected,
+        'indegree'=>$indegree,
+        'outdegree'=>$outdegree
+    ];
+    return $cache[$key];
+}
+
+function navRouteHasNode(?array $route,string $ident): bool {
+    if (!$route) return false;
+    $ident=strtoupper($ident);
+    return isset($route['indegree'][$ident]) || isset($route['outdegree'][$ident]) || isset($route['nodes'][$ident]);
+}
+
+function navNearestRouteNode(array $route,array $coord,string $mode='any'): ?string {
+    $candidates=array_unique(array_merge(
+        array_keys($route['indegree']??[]),
+        array_keys($route['outdegree']??[]),
+        array_keys($route['nodes']??[])
+    ));
+    if (!$candidates) return null;
+
+    if ($mode==='source') {
+        $preferred=array_values(array_filter($candidates,fn($n)=>(($route['indegree'][$n]??0)===0 && ($route['outdegree'][$n]??0)>0)));
+        if ($preferred) $candidates=$preferred;
+    } elseif ($mode==='sink') {
+        $preferred=array_values(array_filter($candidates,fn($n)=>(($route['outdegree'][$n]??0)===0 && ($route['indegree'][$n]??0)>0)));
+        if ($preferred) $candidates=$preferred;
+    }
+
+    $best=null; $bestD=INF;
+    foreach ($candidates as $node) {
+        $p=$route['nodes'][$node]??null;
+        if (!$p) continue;
+        $d=haversineNm((float)$coord['lat'],(float)$coord['lon'],(float)$p['lat'],(float)$p['lon']);
+        if ($d<$bestD) { $bestD=$d; $best=$node; }
+    }
+    return $best;
+}
+
+function navGraphPath(array $graph,string $start,string $end): ?array {
+    if ($start===$end) return [];
+    $queue=[[$start,[]]];
+    $seen=[$start=>true];
+
+    while ($queue) {
+        [$node,$path]=array_shift($queue);
+        foreach ($graph[$node]??[] as $edge) {
+            $next=(string)$edge['next'];
+            if (isset($seen[$next])) continue;
+            $nextPath=$path; $nextPath[]=$edge;
+            if ($next===$end) return $nextPath;
+            $seen[$next]=true;
+            $queue[]=[$next,$nextPath];
+        }
+    }
+    return null;
+}
+
+function navFindRoutePath(
+    array $route,
+    ?string $startIdent,
+    ?string $endIdent,
+    ?array $startCoord,
+    ?array $endCoord,
+    bool $preferSource=false,
+    bool $preferSink=false
+): ?array {
+    $start=$startIdent!==null?strtoupper($startIdent):null;
+    $end=$endIdent!==null?strtoupper($endIdent):null;
+
+    if (!$start || !navRouteHasNode($route,$start)) {
+        if (!$startCoord) return null;
+        $start=navNearestRouteNode($route,$startCoord,$preferSource?'source':'any');
+    }
+    if (!$end || !navRouteHasNode($route,$end)) {
+        if (!$endCoord) return null;
+        $end=navNearestRouteNode($route,$endCoord,$preferSink?'sink':'any');
+    }
+    if (!$start || !$end) return null;
+
+    $path=navGraphPath($route['adj'],$start,$end);
+    $directionFallback=false;
+    if ($path===null) {
+        $path=navGraphPath($route['undirected'],$start,$end);
+        $directionFallback=$path!==null;
+    }
+    if ($path===null) return null;
+
+    return [
+        'start'=>$start,
+        'end'=>$end,
+        'edges'=>$path,
+        'directionFallback'=>$directionFallback
+    ];
+}
+
+function navAppendLatLon(array &$route,float $lat,float $lon): void {
+    if ($route) {
+        $last=$route[count($route)-1];
+        if (haversineNm((float)$last[0],(float)$last[1],$lat,$lon)<0.02) return;
+    }
+    $route[]=[round($lat,6),round($lon,6)];
+}
+
+function navAppendDirect(array &$route,array $from,array $to): void {
+    $d=haversineNm((float)$from['lat'],(float)$from['lon'],(float)$to['lat'],(float)$to['lon']);
+    $count=max(2,min(80,(int)ceil($d/18)+1));
+    foreach (greatCircle((float)$from['lat'],(float)$from['lon'],(float)$to['lat'],(float)$to['lon'],$count) as $p) {
+        navAppendLatLon($route,(float)$p[0],(float)$p[1]);
+    }
+}
+
+function navAppendPath(array &$route,array $path,array $routeDef): ?array {
+    $lastCoord=null;
+    foreach ($path['edges'] as $edge) {
+        $line=$edge['geometry']??[];
+        if ($line && ($edge['reverse']??false)) $line=array_reverse($line);
+
+        if ($line) {
+            foreach ($line as $coord) {
+                if (!is_array($coord)||count($coord)<2) continue;
+                navAppendLatLon($route,(float)$coord[1],(float)$coord[0]);
+                $lastCoord=['lat'=>(float)$coord[1],'lon'=>(float)$coord[0]];
+            }
+        } else {
+            $a=$routeDef['nodes'][$edge['reverse']?$edge['to']:$edge['from']]??null;
+            $b=$routeDef['nodes'][$edge['reverse']?$edge['from']:$edge['to']]??null;
+            if ($a&&$b) {
+                navAppendDirect($route,$a,$b);
+                $lastCoord=$b;
+            }
+        }
+    }
+    if ($lastCoord===null) $lastCoord=$routeDef['nodes'][$path['end']]??null;
+    return $lastCoord;
+}
+
+function navPolylineDistance(array $route): float {
+    $d=0.0;
+    for ($i=0;$i<count($route)-1;$i++) {
+        $d+=haversineNm((float)$route[$i][0],(float)$route[$i][1],(float)$route[$i+1][0],(float)$route[$i+1][1]);
+    }
+    return $d;
+}
+
+function navChoosePoint(
+    string $ident,
+    array $rows,
+    array $directRoute,
+    float $lastProgress,
+    ?array $currentCoord,
+    array $contextRoutes=[]
+): ?array {
+    $ident=strtoupper($ident);
+    $best=null; $bestScore=INF;
+
+    foreach ($rows as $row) {
+        if (!isset($row['lat'],$row['lon'])) continue;
+        $lat=(float)$row['lat']; $lon=(float)$row['lon'];
+        [$offRoute,$progress]=nearestRoute($directRoute,$lat,$lon);
+        $score=$offRoute;
+
+        if ($progress+0.10<$lastProgress) $score+=650.0;
+        if ($currentCoord) {
+            $score+=min(400.0,haversineNm(
+                (float)$currentCoord['lat'],(float)$currentCoord['lon'],$lat,$lon
+            ))*0.08;
+        }
+
+        foreach ($contextRoutes as $route) {
+            if (!$route || !isset($route['nodes'][$ident])) continue;
+            $rp=$route['nodes'][$ident];
+            $score+=haversineNm($lat,$lon,(float)$rp['lat'],(float)$rp['lon'])*5.0;
+        }
+
+        if ($score<$bestScore) {
+            $bestScore=$score;
+            $best=[
+                'id'=>$ident,
+                'type'=>($row['kind']??'designatedpoint')==='designatedpoint'?'fix':($row['kind']??'fix'),
+                'lat'=>$lat,'lon'=>$lon,
+                'progress'=>$progress,
+                'sourceId'=>(int)$row['id'],
+                'kind'=>$row['kind']??null
+            ];
+        }
+    }
+    return $best;
+}
+
+function navRouteTypeForItem(array $item,int $index,int $count): ?string {
+    $kind=$item['kind']??'';
+    if ($kind==='airway') return 'airway';
+    if ($kind!=='procedure') return null;
+    $role=strtolower((string)($item['role']??''));
+    if ($role==='sid') return 'sid';
+    if ($role==='star') return 'star';
+    if ($index < max(2,(int)floor($count*0.35))) return 'sid';
+    if ($index > min($count-3,(int)ceil($count*0.65))) return 'star';
+    return null;
+}
+
+function resolveUserRoute(string $raw,string $from,string $to,array $departure,array $arrival): array {
     $parsed=parseRouteTokens($raw,$from,$to);
     $items=$parsed['parsed'];
-    $fixIds=[]; $navaidIds=[];
-    foreach ($items as $item) {
-        if (($item['kind']??'')==='fix') $fixIds[]=$item['token'];
-        if (($item['kind']??'')==='navaid') $navaidIds[]=$item['token'];
-    }
-    $fixIds=array_values(array_unique($fixIds));
-    $navaidIds=array_values(array_unique($navaidIds));
+    $pdo=navDb();
 
-    $fixRows=[]; $navaidRows=[];
-    if ($fixIds) {
-        $res=awcGet('fix',['ids'=>implode(',',$fixIds),'format'=>'json']);
-        if ($res['ok'] && is_array($res['data'])) $fixRows=groupNavRows($res['data']);
+    // If navdata DB is unavailable, retain the previous AWC point-only resolver.
+    if (!$pdo) {
+        $fixIds=[]; $navaidIds=[];
+        foreach ($items as $item) {
+            if (($item['kind']??'')==='fix') $fixIds[]=$item['token'];
+            if (($item['kind']??'')==='navaid') $navaidIds[]=$item['token'];
+        }
+        $fixRows=[]; $navaidRows=[];
+        if ($fixIds) {
+            $res=awcGet('fix',['ids'=>implode(',',array_values(array_unique($fixIds))),'format'=>'json']);
+            if ($res['ok']&&is_array($res['data'])) $fixRows=groupNavRows($res['data']);
+        }
+        if ($navaidIds) {
+            $res=awcGet('navaid',['ids'=>implode(',',array_values(array_unique($navaidIds))),'format'=>'json']);
+            if ($res['ok']&&is_array($res['data'])) $navaidRows=groupNavRows($res['data']);
+        }
+
+        $directDistance=haversineNm((float)$departure['lat'],(float)$departure['lon'],(float)$arrival['lat'],(float)$arrival['lon']);
+        $directRoute=greatCircle((float)$departure['lat'],(float)$departure['lon'],(float)$arrival['lat'],(float)$arrival['lon'],max(40,min(140,(int)ceil($directDistance/18)+1)));
+        $points=[['id'=>$from,'type'=>'departure','lat'=>(float)$departure['lat'],'lon'=>(float)$departure['lon']]];
+        $resolved=$points; $unresolved=[]; $pendingNavdata=[]; $lastProgress=0.0;
+        foreach ($items as $item) {
+            $id=(string)($item['token']??''); $kind=(string)($item['kind']??'');
+            if ($kind==='coordinate') {
+                $candidate=['id'=>$id,'type'=>'coordinate','lat'=>(float)$item['coord']['lat'],'lon'=>(float)$item['coord']['lon']];
+                $points[]=$candidate; $resolved[]=$candidate; continue;
+            }
+            if ($kind==='airway'||$kind==='procedure') {
+                $pendingNavdata[]=['token'=>$id,'kind'=>$kind,'role'=>$item['role']??null];
+                continue;
+            }
+            if (!in_array($kind,['fix','navaid'],true)) continue;
+            $rows=$kind==='fix'?($fixRows[$id]??[]):($navaidRows[$id]??[]);
+            $chosen=chooseNavCandidate($rows,$directRoute,$lastProgress,1200.0);
+            if (!$chosen) { $unresolved[]=$id; continue; }
+            $candidate=['id'=>$id,'type'=>$kind,'lat'=>$chosen['lat'],'lon'=>$chosen['lon']];
+            $points[]=$candidate; $resolved[]=$candidate; $lastProgress=max($lastProgress,(float)$chosen['progress']);
+        }
+        $arrivalPoint=['id'=>$to,'type'=>'arrival','lat'=>(float)$arrival['lat'],'lon'=>(float)$arrival['lon']];
+        $points[]=$arrivalPoint; $resolved[]=$arrivalPoint;
+        [$fallbackRoute,$fallbackDistance]=buildRoute($points);
+        return [
+            'usable'=>count($points)>2,'points'=>$points,'route'=>$fallbackRoute,'distanceNm'=>$fallbackDistance,
+            'resolved'=>$resolved,'unresolved'=>array_values(array_unique($unresolved)),'pendingNavdata'=>$pendingNavdata,
+            'ignored'=>$parsed['ignored'],'unknown'=>$parsed['unknown'],'structure'=>$parsed['structure'],
+            'verticalProfile'=>$parsed['verticalProfile'],'alternates'=>$parsed['alternates'],'recognized'=>$items,
+            'engine'=>'awc_fallback','navdataResolved'=>[],'warnings'=>['MariaDB navdata unavailable; AWC point fallback used.']
+        ];
     }
-    if ($navaidIds) {
-        $res=awcGet('navaid',['ids'=>implode(',',$navaidIds),'format'=>'json']);
-        if ($res['ok'] && is_array($res['data'])) $navaidRows=groupNavRows($res['data']);
+
+    $pointIds=[];
+    foreach ($items as $item) {
+        if (in_array($item['kind']??'',['fix','navaid','unknown'],true)) $pointIds[]=$item['token'];
+    }
+    $pointCandidates=navFetchPointCandidates($pdo,$pointIds);
+
+    $routeDefs=[];
+    foreach ($items as $i=>$item) {
+        $type=navRouteTypeForItem($item,$i,count($items));
+        if (!$type) continue;
+        $ident=strtoupper((string)($item['token']??''));
+        $def=navLoadRoute($pdo,$ident,$type);
+        if (!$def && ($item['kind']??'')==='procedure') {
+            $alt=$type==='sid'?'star':'sid';
+            $def=navLoadRoute($pdo,$ident,$alt);
+            if ($def) $type=$alt;
+        }
+        if ($def) $routeDefs[$i]=$def;
     }
 
     $directDistance=haversineNm((float)$departure['lat'],(float)$departure['lon'],(float)$arrival['lat'],(float)$arrival['lon']);
@@ -425,70 +882,158 @@ function resolveUserRoute(string $raw, string $from, string $to, array $departur
         (float)$arrival['lat'],(float)$arrival['lon'],
         max(40,min(140,(int)ceil($directDistance/18)+1))
     );
-    $maxOffRouteNm=max(350.0,min(1200.0,$directDistance*0.35));
 
-    $points=[[
-        'id'=>$from,'type'=>'departure','lat'=>(float)$departure['lat'],'lon'=>(float)$departure['lon']
-    ]];
-    $resolved=$points; $unresolved=[]; $pendingNavdata=[]; $lastProgress=0.0;
+    $depPoint=['id'=>$from,'type'=>'departure','lat'=>(float)$departure['lat'],'lon'=>(float)$departure['lon']];
+    $arrPoint=['id'=>$to,'type'=>'arrival','lat'=>(float)$arrival['lat'],'lon'=>(float)$arrival['lon']];
+    $route=[[$depPoint['lat'],$depPoint['lon']]];
+    $points=[$depPoint]; $resolved=[$depPoint]; $unresolved=[]; $pending=[]; $navResolved=[]; $warnings=[];
+    $currentIdent=$from; $currentCoord=['lat'=>$depPoint['lat'],'lon'=>$depPoint['lon']]; $lastProgress=0.0;
 
-    foreach ($items as $item) {
-        $id=(string)($item['token']??'');
+    $nextPointInfo=function(int $fromIndex) use (&$items,$pointCandidates,$directRoute,&$lastProgress,&$currentCoord,&$routeDefs): ?array {
+        for ($j=$fromIndex+1;$j<count($items);$j++) {
+            $next=$items[$j]; $kind=$next['kind']??'';
+            if ($kind==='coordinate') {
+                return [
+                    'ident'=>null,
+                    'coord'=>['lat'=>(float)$next['coord']['lat'],'lon'=>(float)$next['coord']['lon']],
+                    'itemIndex'=>$j
+                ];
+            }
+            if (in_array($kind,['fix','navaid','unknown'],true)) {
+                $id=strtoupper((string)$next['token']);
+                $contexts=[];
+                if (isset($routeDefs[$fromIndex])) $contexts[]=$routeDefs[$fromIndex];
+                if (isset($routeDefs[$j-1])) $contexts[]=$routeDefs[$j-1];
+                $chosen=navChoosePoint($id,$pointCandidates[$id]??[],$directRoute,$lastProgress,$currentCoord,$contexts);
+                return ['ident'=>$id,'coord'=>$chosen,'itemIndex'=>$j];
+            }
+        }
+        return null;
+    };
+
+    foreach ($items as $i=>$item) {
         $kind=(string)($item['kind']??'');
+        $id=strtoupper((string)($item['token']??''));
+
+        if (in_array($kind,['airport','airport_runway','flight_level','dct'],true)) continue;
+
+        if ($kind==='airway'||$kind==='procedure') {
+            $def=$routeDefs[$i]??null;
+            if (!$def) {
+                $pending[]=['token'=>$id,'kind'=>$kind,'role'=>$item['role']??null,'reason'=>'route_not_found'];
+                continue;
+            }
+
+            $type=$def['type'];
+            $next=$nextPointInfo($i);
+            $startIdent=$currentIdent;
+            $endIdent=$next['ident']??null;
+            $endCoord=$next['coord']??null;
+            $preferSource=$type==='sid';
+            $preferSink=$type==='star';
+
+            if ($type==='star') {
+                $endIdent=$to;
+                $endCoord=['lat'=>$arrPoint['lat'],'lon'=>$arrPoint['lon']];
+            } elseif ($type==='sid' && !$next) {
+                $endIdent=null;
+                $endCoord=['lat'=>$arrPoint['lat'],'lon'=>$arrPoint['lon']];
+            }
+
+            $path=navFindRoutePath(
+                $def,
+                $startIdent,
+                $endIdent,
+                $currentCoord,
+                $endCoord,
+                $preferSource,
+                $preferSink
+            );
+
+            if (!$path) {
+                $pending[]=['token'=>$id,'kind'=>$kind,'role'=>$item['role']??null,'reason'=>'path_not_resolved'];
+                continue;
+            }
+
+            $last=navAppendPath($route,$path,$def);
+            $currentIdent=$path['end'];
+            if ($last) $currentCoord=$last;
+            elseif (isset($def['nodes'][$currentIdent])) $currentCoord=$def['nodes'][$currentIdent];
+
+            $navResolved[]=[
+                'id'=>$id,
+                'type'=>$type,
+                'routeId'=>$def['id'],
+                'start'=>$path['start'],
+                'end'=>$path['end'],
+                'segments'=>count($path['edges']),
+                'directionFallback'=>$path['directionFallback']
+            ];
+            if ($path['directionFallback']) $warnings[]="$type $id yön bilgisiyle doğrudan çözülemedi; topoloji üzerinden ters-yön fallback kullanıldı.";
+            continue;
+        }
 
         if ($kind==='coordinate') {
             $candidate=['id'=>$id,'type'=>'coordinate','lat'=>(float)$item['coord']['lat'],'lon'=>(float)$item['coord']['lon']];
             if (isset($item['levelFL'])) $candidate['levelFL']=$item['levelFL'];
-            [$offRoute,$progress]=nearestRoute($directRoute,$candidate['lat'],$candidate['lon']);
-            if ($offRoute<=$maxOffRouteNm*1.5) {
-                $points[]=$candidate; $resolved[]=$candidate; $lastProgress=max($lastProgress,$progress);
-            } else {
+        } elseif (in_array($kind,['fix','navaid','unknown'],true)) {
+            $contexts=[];
+            if (isset($routeDefs[$i-1])) $contexts[]=$routeDefs[$i-1];
+            if (isset($routeDefs[$i+1])) $contexts[]=$routeDefs[$i+1];
+            $candidate=navChoosePoint($id,$pointCandidates[$id]??[],$directRoute,$lastProgress,$currentCoord,$contexts);
+            if (!$candidate) {
                 $unresolved[]=$id;
+                continue;
             }
+            if (isset($item['levelFL'])) $candidate['levelFL']=$item['levelFL'];
+        } else {
             continue;
         }
 
-        if ($kind==='airway' || $kind==='procedure') {
-            $row=['token'=>$id,'kind'=>$kind];
-            if (isset($item['role'])) $row['role']=$item['role'];
-            $pendingNavdata[]=$row;
+        if ($currentIdent===$candidate['id'] || haversineNm(
+            (float)$currentCoord['lat'],(float)$currentCoord['lon'],
+            (float)$candidate['lat'],(float)$candidate['lon']
+        )<0.3) {
+            $resolved[]=$candidate;
+            $points[]=$candidate;
+            $currentIdent=$candidate['id'];
+            $currentCoord=['lat'=>$candidate['lat'],'lon'=>$candidate['lon']];
+            $lastProgress=max($lastProgress,(float)($candidate['progress']??$lastProgress));
             continue;
         }
 
-        if ($kind==='unknown') {
-            $unresolved[]=$id;
-            continue;
-        }
-
-        if (!in_array($kind,['fix','navaid'],true)) continue;
-
-        $rows=$kind==='fix' ? ($fixRows[$id]??[]) : ($navaidRows[$id]??[]);
-        if (!$rows) { $unresolved[]=$id; continue; }
-        $chosen=chooseNavCandidate($rows,$directRoute,$lastProgress,$maxOffRouteNm);
-        if (!$chosen) { $unresolved[]=$id; continue; }
-
-        $candidate=['id'=>$id,'type'=>$kind,'lat'=>$chosen['lat'],'lon'=>$chosen['lon']];
-        if (isset($item['levelFL'])) $candidate['levelFL']=$item['levelFL'];
-        $prev=end($points);
-        if ($prev && haversineNm((float)$prev['lat'],(float)$prev['lon'],$candidate['lat'],$candidate['lon'])<2.0) continue;
-        $points[]=$candidate; $resolved[]=$candidate; $lastProgress=max($lastProgress,(float)$chosen['progress']);
+        navAppendDirect($route,$currentCoord,$candidate);
+        $currentIdent=$candidate['id'];
+        $currentCoord=['lat'=>$candidate['lat'],'lon'=>$candidate['lon']];
+        $lastProgress=max($lastProgress,(float)($candidate['progress']??$lastProgress));
+        $resolved[]=$candidate; $points[]=$candidate;
     }
 
-    $arrivalPoint=['id'=>$to,'type'=>'arrival','lat'=>(float)$arrival['lat'],'lon'=>(float)$arrival['lon']];
-    $points[]=$arrivalPoint; $resolved[]=$arrivalPoint;
+    if (haversineNm(
+        (float)$currentCoord['lat'],(float)$currentCoord['lon'],
+        (float)$arrPoint['lat'],(float)$arrPoint['lon']
+    )>0.3) {
+        navAppendDirect($route,$currentCoord,['lat'=>$arrPoint['lat'],'lon'=>$arrPoint['lon']]);
+    }
+    $points[]=$arrPoint; $resolved[]=$arrPoint;
 
     return [
-        'usable'=>count($points)>2,
+        'usable'=>count($route)>=2,
         'points'=>$points,
+        'route'=>$route,
+        'distanceNm'=>navPolylineDistance($route),
         'resolved'=>$resolved,
         'unresolved'=>array_values(array_unique($unresolved)),
-        'pendingNavdata'=>$pendingNavdata,
+        'pendingNavdata'=>$pending,
         'ignored'=>$parsed['ignored'],
         'unknown'=>$parsed['unknown'],
         'structure'=>$parsed['structure'],
         'verticalProfile'=>$parsed['verticalProfile'],
         'alternates'=>$parsed['alternates'],
-        'recognized'=>$items
+        'recognized'=>$items,
+        'engine'=>'mariadb_navdata',
+        'navdataResolved'=>$navResolved,
+        'warnings'=>array_values(array_unique($warnings))
     ];
 }
 
@@ -912,8 +1457,16 @@ if ($routeRaw!=='') {
     $routeInput['verticalProfile']=$resolvedRoute['verticalProfile'];
     $routeInput['alternates']=$resolvedRoute['alternates'];
     $routeInput['recognized']=$resolvedRoute['recognized'];
+    $routeInput['engine']=$resolvedRoute['engine']??null;
+    $routeInput['navdataResolved']=$resolvedRoute['navdataResolved']??[];
+    $routeInput['warnings']=$resolvedRoute['warnings']??[];
     if ($resolvedRoute['usable']) {
-        [$route,$distanceNm]=buildRoute($resolvedRoute['points']);
+        if (!empty($resolvedRoute['route']) && is_array($resolvedRoute['route'])) {
+            $route=$resolvedRoute['route'];
+            $distanceNm=(float)($resolvedRoute['distanceNm']??navPolylineDistance($route));
+        } else {
+            [$route,$distanceNm]=buildRoute($resolvedRoute['points']);
+        }
         $routeMode='user_route';
     }
 }
@@ -1048,6 +1601,11 @@ $payload=[
     'to'=>$toBase,
     'route'=>$route,
     'routeInput'=>$routeInput,
+    'routeEngine'=>[
+        'name'=>$resolvedRoute['engine']??($routeRaw!==''?'legacy':'great_circle'),
+        'navdataResolved'=>$resolvedRoute['navdataResolved']??[],
+        'warnings'=>$resolvedRoute['warnings']??[]
+    ],
     'stations'=>$stations,
     'flight'=>[
         'etdUtc'=>gmdate('c',$etdEpoch),
