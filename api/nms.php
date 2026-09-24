@@ -64,17 +64,38 @@ if ($action === 'admin-full') {
         nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
     }
 
+    $cfg = nmsPrivateConfig();
+
+    if ($cfg['env'] === 'production') {
+        $pdo = nmsDb();
+        $state = nmsSyncState($pdo, $cfg['env']);
+        $progress = nmsFullReadProgress($cfg['env']);
+
+        nmsRespond(200, [
+            'ok' => true,
+            'managedByCron' => true,
+            'complete' => !empty($state['last_full_load']),
+            'environment' => $cfg['env'],
+            'lastFullLoad' => $state['last_full_load'] ?? null,
+            'processed' => (int)($progress['processed'] ?? 0),
+            'skipped' => (int)($progress['skipped'] ?? 0),
+            'expected' => $progress['expected'] ?? null,
+            'message' => empty($state['last_full_load'])
+                ? 'Production Initial Load is handled automatically by the CLI cron worker.'
+                : 'Production Initial Load is already complete; cron is maintaining deltas.',
+        ]);
+    }
+
     @set_time_limit(20);
 
     try {
         $result = nmsRunFullLoadSlice(250, 7);
     } catch (Throwable $e) {
-        $cfg = nmsPrivateConfig();
         nmsRespond(500, [
             'ok' => false,
             'complete' => false,
             'error' => 'Initial load slice failed before completion.',
-            'detail' => $cfg['env'] === 'staging' ? $e->getMessage() : null,
+            'detail' => $e->getMessage(),
         ]);
     }
 
