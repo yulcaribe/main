@@ -927,6 +927,13 @@
     if (!timelineAnchor) return;
     const hours = Number(timeSlider.value || 0);
     const date = new Date(timelineAnchor.getTime() + hours * 3600000);
+    setSelectedTime(date, false, false);
+  });
+
+  timeSlider?.addEventListener("change", () => {
+    if (!timelineAnchor) return;
+    const hours = Number(timeSlider.value || 0);
+    const date = new Date(timelineAnchor.getTime() + hours * 3600000);
     setSelectedTime(date, true, false);
   });
 
