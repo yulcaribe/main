@@ -265,16 +265,6 @@
     for(const c of vp.changes||[]) vertical.push(`${c.at}: FL${String(Number(c.fl)).padStart(3,"0")}`);
     if(vertical.length) lines.push("VERTICAL: "+vertical.join(" · "));
 
-    for(const alt of meta.alternates||[]){
-      const route=(alt.items||[]).filter(x=>!["flight_level","airport"].includes(x.kind)).map(x=>{
-        if(x.kind==="airway") return `AIRWAY ${x.token}`;
-        if(x.kind==="dct") return "DCT";
-        return x.token;
-      }).filter(Boolean);
-      const endpoints=[alt.departure,alt.destination].filter(Boolean).join(" → ");
-      lines.push(`${alt.name}: ${endpoints||"ayrı rota"}${route.length?" · "+route.join(" → "):""}`);
-    }
-
     const navSolved=(meta.navdataResolved||[]).map(x=>{
       const dir=x.directionFallback?" · DIR FALLBACK":"";
       return `${String(x.type||"route").toUpperCase()} ${x.id}: ${x.start} → ${x.end} · ${x.segments} SEG${dir}`;
