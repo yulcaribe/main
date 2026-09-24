@@ -8,7 +8,27 @@
 
   const API = "/main/api/navmap.php";
   const WAFS_API = "/main/api/wafs.php";
-  const sourceId = "navdata";
+  const CHART_SOURCE_ID = "navdata-charts";
+  const NOTAM_SOURCE_ID = "navdata-notams";
+  const CHART_LAYER_NAMES = new Set(["airport", "navaid", "waypoint", "airway", "sid", "star", "airspace"]);
+  const NOTAM_APPROX_SOURCES = [
+    "qline-radius-circle",
+    "airport-radius-circle",
+    "faa-radius-circle",
+    "derived-radius-circle"
+  ];
+  const NOTAM_COLOR = [
+    "match", ["get", "category"],
+    "RWY", "#ff7a8b",
+    "TWY", "#ffc46b",
+    "UAV", "#b696ff",
+    "PARACHUTE", "#70e8a7",
+    "OBSTACLE", "#ff9d66",
+    "NAV", "#5fe0ef",
+    "COM", "#55b8ff",
+    "AIRSPACE", "#ffd35f",
+    "#ffd35f"
+  ];
   const WAFS_PRODUCTS = {
     edr: { label: "Turbulence / EDR", levels: [140,180,240,270,300,340,390,450] },
     icing: { label: "Icing severity", levels: [60,100,140,180,240,300] },
@@ -60,9 +80,11 @@
 
   const HIT_TOLERANCE = window.matchMedia("(pointer: coarse)").matches ? 18 : 11;
 
-  let requestController = null;
+  let chartRequestController = null;
+  let notamRequestController = null;
   let searchController = null;
-  let loadTimer = null;
+  let chartLoadTimer = null;
+  let notamLoadTimer = null;
   let searchTimer = null;
   let weatherController = null;
   let weatherGeneration = 0;
@@ -73,6 +95,12 @@
     "wafs-panel": 72
   };
   let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
+  let chartViewportCache = null;
+  let notamViewportCache = null;
+  let chartCountsState = {};
+  let notamCountsState = {};
+  let chartTruncated = false;
+  let notamTruncated = false;
   const weatherOverlays = new Map();
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
@@ -120,6 +148,14 @@
       .map(input => input.dataset.navLayer);
   }
 
+  function selectedChartLayers() {
+    return selectedLayers().filter(name => CHART_LAYER_NAMES.has(name));
+  }
+
+  function notamEnabled() {
+    return selectedLayers().includes("notam");
+  }
+
   function visibilityFor(name) {
     return selectedLayers().includes(name) ? "visible" : "none";
   }
@@ -130,7 +166,8 @@
       `nav-${name}-line`,
       `nav-${name}-hit`,
       `nav-${name}-circle`,
-      `nav-${name}-label`
+      `nav-${name}-label`,
+      `nav-${name}-approx-line`
     ];
     for (const id of ids) {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibilityFor(name));
@@ -138,9 +175,14 @@
   }
 
   function addNavLayers() {
-    if (map.getSource(sourceId)) return;
+    if (map.getSource(CHART_SOURCE_ID) || map.getSource(NOTAM_SOURCE_ID)) return;
 
-    map.addSource(sourceId, {
+    map.addSource(CHART_SOURCE_ID, {
+      type: "geojson",
+      data: emptyGeojson()
+    });
+
+    map.addSource(NOTAM_SOURCE_ID, {
       type: "geojson",
       data: emptyGeojson()
     });
@@ -148,7 +190,7 @@
     map.addLayer({
       id: "nav-airspace-fill",
       type: "fill",
-      source: sourceId,
+      source: CHART_SOURCE_ID,
       filter: ["all", ["==", ["get", "layer"], "airspace"], ["==", ["geometry-type"], "Polygon"]],
       paint: {
         "fill-color": palette.airspace,
@@ -160,7 +202,7 @@
     map.addLayer({
       id: "nav-airspace-line",
       type: "line",
-      source: sourceId,
+      source: CHART_SOURCE_ID,
       filter: ["==", ["get", "layer"], "airspace"],
       paint: {
         "line-color": palette.airspace,
@@ -178,7 +220,7 @@
       map.addLayer({
         id: `nav-${type}-hit`,
         type: "line",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: minZoom,
         paint: {
@@ -197,7 +239,7 @@
       map.addLayer({
         id: `nav-${type}-line`,
         type: "line",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: minZoom,
         paint: {
@@ -221,7 +263,7 @@
       map.addLayer({
         id: `nav-${type}-label`,
         type: "symbol",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: type === "airway" ? 7 : 9,
         layout: {
@@ -260,7 +302,7 @@
       map.addLayer({
         id: `nav-${type}-hit`,
         type: "circle",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: minZoom,
         paint: {
@@ -280,7 +322,7 @@
       map.addLayer({
         id: `nav-${type}-circle`,
         type: "circle",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: minZoom,
         paint: {
@@ -307,7 +349,7 @@
       map.addLayer({
         id: `nav-${type}-label`,
         type: "symbol",
-        source: sourceId,
+        source: CHART_SOURCE_ID,
         filter: ["==", ["get", "layer"], type],
         minzoom: type === "airport" ? 6 : type === "navaid" ? 7 : 9,
         layout: {
@@ -338,21 +380,51 @@
     map.addLayer({
       id: "nav-notam-fill",
       type: "fill",
-      source: sourceId,
+      source: NOTAM_SOURCE_ID,
       filter: ["all", ["==", ["get", "layer"], "notam"], ["==", ["geometry-type"], "Polygon"]],
-      paint: { "fill-color": palette.notam, "fill-opacity": 0.17 },
+      paint: {
+        "fill-color": NOTAM_COLOR,
+        "fill-opacity": [
+          "interpolate", ["linear"], ["zoom"],
+          5, ["case", ["in", ["get", "geometry_source"], ["literal", NOTAM_APPROX_SOURCES]], 0.01, 0.025],
+          8, ["case", ["in", ["get", "geometry_source"], ["literal", NOTAM_APPROX_SOURCES]], 0.025, 0.065],
+          11, ["case", ["in", ["get", "geometry_source"], ["literal", NOTAM_APPROX_SOURCES]], 0.045, 0.14]
+        ]
+      },
       layout: { visibility: visibilityFor("notam") }
     });
 
     map.addLayer({
       id: "nav-notam-line",
       type: "line",
-      source: sourceId,
-      filter: ["==", ["get", "layer"], "notam"],
+      source: NOTAM_SOURCE_ID,
+      filter: [
+        "all",
+        ["==", ["get", "layer"], "notam"],
+        ["!", ["in", ["get", "geometry_source"], ["literal", NOTAM_APPROX_SOURCES]]]
+      ],
       paint: {
-        "line-color": palette.notam,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.5, 10, 2.6],
-        "line-opacity": 0.9
+        "line-color": NOTAM_COLOR,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.0, 8, 1.5, 11, 2.4],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.62, 9, 0.9]
+      },
+      layout: { visibility: visibilityFor("notam") }
+    });
+
+    map.addLayer({
+      id: "nav-notam-approx-line",
+      type: "line",
+      source: NOTAM_SOURCE_ID,
+      filter: [
+        "all",
+        ["==", ["get", "layer"], "notam"],
+        ["in", ["get", "geometry_source"], ["literal", NOTAM_APPROX_SOURCES]]
+      ],
+      paint: {
+        "line-color": NOTAM_COLOR,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.9, 8, 1.3, 11, 2.0],
+        "line-opacity": 0.7,
+        "line-dasharray": [2.0, 1.8]
       },
       layout: { visibility: visibilityFor("notam") }
     });
@@ -360,13 +432,14 @@
     map.addLayer({
       id: "nav-notam-circle",
       type: "circle",
-      source: sourceId,
+      source: NOTAM_SOURCE_ID,
       filter: ["all", ["==", ["get", "layer"], "notam"], ["==", ["geometry-type"], "Point"]],
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 10, 7],
-        "circle-color": palette.notam,
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 8, 5, 11, 7],
+        "circle-color": NOTAM_COLOR,
+        "circle-opacity": 0.9,
         "circle-stroke-color": "#06111a",
-        "circle-stroke-width": 1.4
+        "circle-stroke-width": 1.35
       },
       layout: { visibility: visibilityFor("notam") }
     });
@@ -374,21 +447,25 @@
     map.addLayer({
       id: "nav-notam-label",
       type: "symbol",
-      source: sourceId,
+      source: NOTAM_SOURCE_ID,
       filter: ["==", ["get", "layer"], "notam"],
-      minzoom: 7,
+      minzoom: 8,
       layout: {
         visibility: visibilityFor("notam"),
-        "text-field": ["coalesce", ["get", "ident"], "NOTAM"],
-        "text-size": 10,
+        "text-field": [
+          "step", ["zoom"],
+          ["coalesce", ["get", "category"], "NOTAM"],
+          10, ["coalesce", ["get", "ident"], "NOTAM"]
+        ],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 8, 8.5, 10, 10, 13, 11.5],
         "text-font": ["Noto Sans Regular"],
-        "text-offset": [0.8, 0.8],
+        "text-offset": [0.75, 0.75],
         "text-optional": true
       },
       paint: {
-        "text-color": palette.notam,
+        "text-color": NOTAM_COLOR,
         "text-halo-color": "#06111a",
-        "text-halo-width": 1.5
+        "text-halo-width": 1.6
       }
     });
 
@@ -403,6 +480,7 @@
       "nav-airspace-line",
       "nav-notam-fill",
       "nav-notam-line",
+      "nav-notam-approx-line",
       "nav-notam-circle",
       "nav-notam-label"
     ];
@@ -498,6 +576,7 @@
       rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
       rows += infoRow("Lower", p.lower_limit);
       rows += infoRow("Upper", p.upper_limit);
+      rows += infoRow("Category", p.category);
       rows += infoRow("Radius", p.radius_nm ? `${p.radius_nm} NM` : null);
       const sourceKey = String(p.geometry_source || "");
       const mapSource =
@@ -510,11 +589,16 @@
               : sourceKey === "qline-radius-circle"
                 ? "Q-line + radius circle"
                 : sourceKey === "faa-radius-circle"
-                  ? "FAA point + radius circle"
+                  ? "FAA point + approximate radius"
                   : sourceKey === "derived-radius-circle"
-                    ? "Derived radius circle"
-                    : "FAA geometry";
+                    ? "Derived approximate radius"
+                    : sourceKey === "notam-area-polygon"
+                      ? "NOTAM AREA polygon"
+                      : sourceKey === "coordinates-polygon"
+                        ? "NOTAM coordinate polygon"
+                        : "FAA geometry";
       rows += infoRow("Map source", mapSource);
+      rows += infoRow("Geometry", p.geometry_accuracy);
       detailText = p.text || "";
     }
 
@@ -532,8 +616,10 @@
       .addTo(map);
   }
 
-  function updateCounts(counts = {}) {
+  function updateCounts() {
+    const counts = { ...chartCountsState, ...notamCountsState };
     let total = 0;
+
     for (const key of countKeys) {
       const count = Number(counts[key] || 0);
       total += count;
@@ -541,12 +627,14 @@
         el.textContent = new Intl.NumberFormat("tr-TR").format(count);
       });
     }
+
     featureCount.textContent = new Intl.NumberFormat("tr-TR").format(total) + " obje";
+
     if (notamTimeStatus) {
       const n = Number(counts.notam || 0);
-      notamTimeStatus.textContent = selectedLayers().includes("notam")
+      notamTimeStatus.textContent = notamEnabled()
         ? new Intl.NumberFormat("tr-TR").format(n) + " NOTAM · " + formatSelectedUtc()
-        : "FAA geometry, radius circle, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.";
+        : "FAA geometry, NOTAM AREA polygonları ve kontrollü fallback geometrileri gösterilir.";
     }
   }
 
@@ -570,14 +658,32 @@
     zoomHint.style.display = "none";
   }
 
-  function bboxParams() {
+  function bboxParams(paddingFactor = 0) {
     const b = map.getBounds();
-    return {
-      west: b.getWest(),
-      south: b.getSouth(),
-      east: b.getEast(),
-      north: b.getNorth()
-    };
+    let west = b.getWest();
+    let south = b.getSouth();
+    let east = b.getEast();
+    let north = b.getNorth();
+
+    if (paddingFactor > 0 && west <= east) {
+      const lonPad = Math.max(0.02, (east - west) * paddingFactor);
+      const latPad = Math.max(0.02, (north - south) * paddingFactor);
+      west = Math.max(-180, west - lonPad);
+      east = Math.min(180, east + lonPad);
+      south = Math.max(-85, south - latPad);
+      north = Math.min(85, north + latPad);
+    }
+
+    return { west, south, east, north };
+  }
+
+  function bboxContains(outer, inner) {
+    if (!outer || !inner) return false;
+    if (outer.west > outer.east || inner.west > inner.east) return false;
+    return inner.west >= outer.west
+      && inner.east <= outer.east
+      && inner.south >= outer.south
+      && inner.north <= outer.north;
   }
 
   function inputValueFromDate(date) {
@@ -665,7 +771,8 @@
     }
 
     if (reload && map.loaded()) {
-      scheduleViewportLoad(0);
+      notamViewportCache = null;
+      scheduleNotamLoad(0, true);
       loadWeatherOverlays().catch(console.error);
     }
   }
@@ -845,7 +952,7 @@
       const layer = {
         id: layerId,
         type: "raster",
-        source: sourceIdForProduct,
+        source: CHART_SOURCE_IDForProduct,
         paint: {
           "raster-opacity": wafsOpacity(product),
           "raster-fade-duration": 0
@@ -869,42 +976,58 @@
     }
   }
 
-  async function loadViewport() {
-    clearTimeout(loadTimer);
-
-    if (requestController) requestController.abort();
-    requestController = new AbortController();
-
-    const z = Math.floor(map.getZoom());
-    const selected = selectedLayers();
-    const bounds = bboxParams();
-
-    statusText.textContent = "Navdata yükleniyor…";
-    statusDot.classList.remove("ok", "bad");
-
-    if (z < 5 || !selected.length) {
-      map.getSource(sourceId)?.setData(emptyGeojson());
-      updateCounts({});
-      statusText.textContent = z < 5 ? "Zoom z5 bekleniyor" : "Katman kapalı";
-      updateZoomHint(false);
-      return;
-    }
-
+  function viewportQuery(bounds, z, layers, includeTime = false) {
     const q = new URLSearchParams({
       action: "viewport",
       z: String(z),
-      layers: selected.join(","),
+      layers: layers.join(","),
       west: String(bounds.west),
       south: String(bounds.south),
       east: String(bounds.east),
-      north: String(bounds.north),
-      at: selectedTimeIso()
+      north: String(bounds.north)
     });
+    if (includeTime) q.set("at", selectedTimeIso());
+    return q;
+  }
+
+  function refreshViewportStatus() {
+    updateCounts();
+    updateZoomHint(chartTruncated || notamTruncated);
+  }
+
+  async function loadChartViewport(force = false) {
+    const z = Math.floor(map.getZoom());
+    const layers = selectedChartLayers();
+    const exactBounds = bboxParams();
+
+    if (z < 5 || !layers.length) {
+      map.getSource(CHART_SOURCE_ID)?.setData(emptyGeojson());
+      chartCountsState = {};
+      chartTruncated = false;
+      chartViewportCache = null;
+      refreshViewportStatus();
+      return;
+    }
+
+    const layerKey = layers.slice().sort().join(",");
+    if (!force
+      && chartViewportCache
+      && chartViewportCache.z === z
+      && chartViewportCache.layerKey === layerKey
+      && bboxContains(chartViewportCache.bounds, exactBounds)) {
+      return;
+    }
+
+    chartRequestController?.abort();
+    chartRequestController = new AbortController();
+
+    const requestBounds = bboxParams(0.32);
+    const q = viewportQuery(requestBounds, z, layers, false);
 
     try {
       const response = await fetch(`${API}?${q}`, {
-        cache: "no-store",
-        signal: requestController.signal
+        cache: "default",
+        signal: chartRequestController.signal
       });
       const payload = await response.json().catch(() => null);
 
@@ -912,26 +1035,101 @@
         throw new Error(payload?.error || `HTTP ${response.status}`);
       }
 
-      map.getSource(sourceId).setData(payload.data);
-      updateCounts(payload.counts || {});
-      updateZoomHint(Boolean(payload.truncated));
+      map.getSource(CHART_SOURCE_ID)?.setData(payload.data);
+      chartCountsState = Object.fromEntries(
+        [...CHART_LAYER_NAMES].map(name => [name, Number(payload.counts?.[name] || 0)])
+      );
+      chartTruncated = Boolean(payload.truncated);
+      chartViewportCache = { z, layerKey, bounds: requestBounds };
+      refreshViewportStatus();
 
-      statusText.textContent = payload.truncated
-        ? "Yoğun görünüm · veri sınırlandı"
-        : "MariaDB · canlı görünüm";
+      statusText.textContent = chartTruncated
+        ? "CHARTS · yoğun görünüm"
+        : "MariaDB · görünüm hazır";
       statusDot.classList.add("ok");
+      statusDot.classList.remove("bad");
     } catch (error) {
       if (error.name === "AbortError") return;
-      console.error("[NavMap]", error);
-      statusText.textContent = "Navdata API hatası";
+      console.error("[NavMap charts]", error);
+      statusText.textContent = "CHARTS API hatası";
       statusDot.classList.add("bad");
-      updateZoomHint(false);
     }
   }
 
-  function scheduleViewportLoad(delay = 180) {
-    clearTimeout(loadTimer);
-    loadTimer = setTimeout(loadViewport, delay);
+  async function loadNotamViewport(force = false) {
+    const z = Math.floor(map.getZoom());
+    const exactBounds = bboxParams();
+
+    if (z < 5 || !notamEnabled()) {
+      map.getSource(NOTAM_SOURCE_ID)?.setData(emptyGeojson());
+      notamCountsState = {};
+      notamTruncated = false;
+      notamViewportCache = null;
+      refreshViewportStatus();
+      return;
+    }
+
+    const timeKey = selectedTimeIso().slice(0, 16);
+    if (!force
+      && notamViewportCache
+      && notamViewportCache.z === z
+      && notamViewportCache.timeKey === timeKey
+      && bboxContains(notamViewportCache.bounds, exactBounds)) {
+      return;
+    }
+
+    notamRequestController?.abort();
+    notamRequestController = new AbortController();
+
+    const requestBounds = bboxParams(0.38);
+    const q = viewportQuery(requestBounds, z, ["notam"], true);
+
+    try {
+      const response = await fetch(`${API}?${q}`, {
+        cache: "default",
+        signal: notamRequestController.signal
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok || !payload?.data) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      map.getSource(NOTAM_SOURCE_ID)?.setData(payload.data);
+      notamCountsState = { notam: Number(payload.counts?.notam || 0) };
+      notamTruncated = Boolean(payload.truncated);
+      notamViewportCache = { z, timeKey, bounds: requestBounds };
+      refreshViewportStatus();
+
+      const cacheState = response.headers.get("x-yc-navmap-cache");
+      statusText.textContent = notamTruncated
+        ? "NOTAM · yoğun görünüm"
+        : cacheState === "HIT"
+          ? "NOTAM · cache"
+          : "NOTAM · canlı görünüm";
+      statusDot.classList.add("ok");
+      statusDot.classList.remove("bad");
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      console.error("[NavMap NOTAM]", error);
+      statusText.textContent = "NOTAM API hatası";
+      statusDot.classList.add("bad");
+    }
+  }
+
+  function scheduleChartLoad(delay = 180, force = false) {
+    clearTimeout(chartLoadTimer);
+    chartLoadTimer = setTimeout(() => loadChartViewport(force), delay);
+  }
+
+  function scheduleNotamLoad(delay = 180, force = false) {
+    clearTimeout(notamLoadTimer);
+    notamLoadTimer = setTimeout(() => loadNotamViewport(force), delay);
+  }
+
+  function scheduleViewportLoad(delay = 180, force = false) {
+    scheduleChartLoad(delay, force);
+    scheduleNotamLoad(delay, force);
   }
 
   async function search(q) {
@@ -1002,17 +1200,25 @@
   map.on("load", () => {
     addNavLayers();
     boot.classList.add("hidden");
-    scheduleViewportLoad(0);
+    scheduleViewportLoad(0, true);
     loadWeatherOverlays().catch(console.error);
   });
 
   map.on("moveend", () => scheduleViewportLoad());
-  map.on("zoomend", () => updateZoomHint(false));
+  map.on("zoomend", () => updateZoomHint(chartTruncated || notamTruncated));
 
   layerInputs.forEach(input => {
     input.addEventListener("change", () => {
-      setLayerVisibility(input.dataset.navLayer);
-      scheduleViewportLoad(0);
+      const layer = input.dataset.navLayer;
+      setLayerVisibility(layer);
+
+      if (layer === "notam") {
+        notamViewportCache = null;
+        scheduleNotamLoad(0, true);
+      } else {
+        chartViewportCache = null;
+        scheduleChartLoad(0, true);
+      }
     });
   });
 
