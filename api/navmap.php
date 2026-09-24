@@ -178,6 +178,7 @@ function notamFeature(array $row): ?array {
             'lower_limit' => $row['lower_limit'],
             'upper_limit' => $row['upper_limit'],
             'text' => $row['notam_text'],
+            'geometry_source' => $row['geometry_source'] ?? 'faa-geometry',
         ],
     ];
 }
@@ -502,36 +503,31 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
     $atSql = $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
+    $baseTimeWhere = "
+              n.source = 'FAA_NMS'
+              AND n.environment = :environment
+              AND n.status <> 'cancelled'
+              AND (n.effective_start IS NULL OR n.effective_start <= :at_start)
+              AND (
+                    UPPER(COALESCE(n.effective_end_raw, '')) = 'PERM'
+                    OR n.effective_end IS NULL
+                    OR n.effective_end >= :at_end
+                  )";
+
+    // 1) Use authoritative FAA geometry when available.
     $params = ['at_start' => $atSql, 'at_end' => $atSql, 'environment' => 'production'];
     $bboxExpr = bboxGeometrySql($west, $south, $east, $north, $params);
     $bboxExpr = sprintf($bboxExpr, 'n.geometry', 'n.geometry');
 
     $sql = 'SELECT
-                n.nms_id,
-                n.series,
-                n.number,
-                n.year,
-                n.classification,
-                n.location,
-                n.icao_location,
-                n.effective_start,
-                n.effective_end,
-                n.effective_end_raw,
-                n.lower_limit,
-                n.upper_limit,
-                n.notam_text,
-                ST_AsGeoJSON(n.geometry, 6) AS geometry
+                n.nms_id, n.series, n.number, n.year, n.classification,
+                n.location, n.icao_location, n.effective_start, n.effective_end,
+                n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                ST_AsGeoJSON(n.geometry, 6) AS geometry,
+                \'faa-geometry\' AS geometry_source
             FROM notams n
-            WHERE n.source = \'FAA_NMS\'
-              AND n.environment = :environment
+            WHERE ' . $baseTimeWhere . '
               AND n.geometry IS NOT NULL
-              AND n.status <> \'cancelled\'
-              AND (n.effective_start IS NULL OR n.effective_start <= :at_start)
-              AND (
-                    UPPER(COALESCE(n.effective_end_raw, \'\')) = \'PERM\'
-                    OR n.effective_end IS NULL
-                    OR n.effective_end >= :at_end
-                  )
               AND ' . $bboxExpr . '
             ORDER BY n.effective_start DESC
             LIMIT 5000';
@@ -540,13 +536,64 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $stmt->execute($params);
 
     $notamCount = 0;
+    $seenNotams = [];
     while ($row = $stmt->fetch()) {
         $feature = notamFeature($row);
         if (!$feature) continue;
+        $seenNotams[(string)$row['nms_id']] = true;
         $features[] = $feature;
         $counts['notam']++;
         $notamCount++;
     }
+
+    // 2) Many Initial Load AIXM records have no GeoJSON geometry. Anchor those
+    // airport NOTAMs to the matching navdata airport instead of silently hiding them.
+    $whereLon = $west <= $east
+        ? 'p.lon BETWEEN :west AND :east'
+        : '(p.lon >= :west OR p.lon <= :east)';
+    $fallbackParams = [
+        'at_start' => $atSql,
+        'at_end' => $atSql,
+        'environment' => 'production',
+        'south' => $south,
+        'north' => $north,
+        'west' => $west,
+        'east' => $east,
+    ];
+
+    $fallbackSql = 'SELECT
+                n.nms_id, n.series, n.number, n.year, n.classification,
+                n.location, n.icao_location, n.effective_start, n.effective_end,
+                n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                JSON_OBJECT(
+                    \'type\', \'Point\',
+                    \'coordinates\', JSON_ARRAY(p.lon, p.lat)
+                ) AS geometry,
+                \'airport-location\' AS geometry_source
+            FROM notams n
+            JOIN nav_points p
+              ON p.kind = \'airport\'
+             AND p.ident = COALESCE(NULLIF(n.icao_location, \'\'), NULLIF(n.location, \'\'))
+            WHERE ' . $baseTimeWhere . '
+              AND n.geometry IS NULL
+              AND p.lat BETWEEN :south AND :north
+              AND ' . $whereLon . '
+            ORDER BY n.effective_start DESC
+            LIMIT 5000';
+
+    $fallbackStmt = $pdo->prepare($fallbackSql);
+    $fallbackStmt->execute($fallbackParams);
+    while ($row = $fallbackStmt->fetch()) {
+        $id = (string)$row['nms_id'];
+        if (isset($seenNotams[$id])) continue;
+        $feature = notamFeature($row);
+        if (!$feature) continue;
+        $seenNotams[$id] = true;
+        $features[] = $feature;
+        $counts['notam']++;
+        $notamCount++;
+    }
+
     if ($notamCount >= 5000) $truncated = true;
 }
 
