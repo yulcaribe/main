@@ -550,7 +550,8 @@
 
   function selectedTimeDate() {
     const raw = timeInput?.value || "";
-    const parsed = raw ? new Date(raw + ":00Z") : new Date();
+    const utcRaw = raw ? (raw.length === 16 ? raw + ":00Z" : raw + "Z") : "";
+    const parsed = utcRaw ? new Date(utcRaw) : new Date();
     return Number.isFinite(parsed.getTime()) ? parsed : new Date();
   }
 
