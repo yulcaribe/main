@@ -110,7 +110,10 @@ if ($action === 'admin-delta') {
         ]);
     }
 
-    nmsRespond(($result['ok'] ?? false) ? 200 : 502, $result);
+    $status = ($result['ok'] ?? false)
+        ? 200
+        : (($result['rateLimitedLocally'] ?? false) ? 429 : 502);
+    nmsRespond($status, $result);
 }
 
 if ($action === 'health') {
