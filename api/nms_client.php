@@ -54,11 +54,32 @@ function nmsPrivateConfig(): array {
 function nmsPublicStatus(): array {
     $cfg = nmsPrivateConfig();
 
+    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $configPath = $homeRoot . '/data.php';
+    $configFileFound = is_file($configPath);
+    $rootArrayLoaded = false;
+    $nmsSectionFound = false;
+
+    if ($configFileFound) {
+        $root = require $configPath;
+        $rootArrayLoaded = is_array($root);
+        $nmsSectionFound = $rootArrayLoaded
+            && isset($root['nms'])
+            && is_array($root['nms']);
+    }
+
     return [
         'environment' => $cfg['env'],
         'apiBase' => $cfg['api_base'],
         'authUrl' => $cfg['auth_url'],
         'credentialsConfigured' => $cfg['client_id'] !== '' && $cfg['client_secret'] !== '',
+        'diagnostics' => [
+            'configFileFound' => $configFileFound,
+            'rootArrayLoaded' => $rootArrayLoaded,
+            'nmsSectionFound' => $nmsSectionFound,
+            'clientIdConfigured' => $cfg['client_id'] !== '',
+            'clientSecretConfigured' => $cfg['client_secret'] !== '',
+        ],
     ];
 }
 
