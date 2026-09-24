@@ -172,6 +172,20 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
 .field-row select{width:165px;height:32px;padding:0 8px}
 .card-note{margin-top:9px;color:#78909d;font-size:8.5px;line-height:1.45}
 .notam-swatch{background:#ffd35f}
+.notam-legend{
+  display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:10px;padding:9px 10px;
+  border:1px solid rgba(255,255,255,.055);border-radius:10px;background:rgba(255,255,255,.02)
+}
+.notam-legend span{
+  display:flex;align-items:center;gap:5px;color:#8fa5b0;font:800 7px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.04em
+}
+.notam-legend i{width:8px;height:8px;border-radius:3px;display:inline-block}
+.notam-legend i[data-notam-color="airspace"]{background:#ffd35f}
+.notam-legend i[data-notam-color="rwy"]{background:#ff7a8b}
+.notam-legend i[data-notam-color="uav"]{background:#b696ff}
+.notam-legend i[data-notam-color="obstacle"]{background:#ff9d66}
+.notam-legend i[data-notam-color="nav"]{background:#5fe0ef}
 .notam-card{border-color:rgba(255,211,95,.16)}
 .weather-card{border-color:rgba(88,239,208,.16)}
 .notam-text{
@@ -184,7 +198,7 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
 .panel-toggle,.layers-panel{display:none!important}
 
 .map-mode-dock{
-  position:fixed;z-index:1100;left:50%;bottom:112px;transform:translateX(-50%);
+  position:fixed;z-index:1100;left:50%;bottom:154px;transform:translateX(-50%);
   display:flex;gap:8px;padding:6px;border:1px solid var(--line);border-radius:14px;
   background:rgba(6,17,26,.94);backdrop-filter:blur(16px);box-shadow:var(--shadow)
 }
@@ -236,7 +250,7 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
   color:var(--cyan);font:800 11px ui-monospace,SFMono-Regular,Menlo,monospace
 }
 .timeline-actions{
-  display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end
+  display:flex;flex-wrap:nowrap;gap:8px;justify-content:flex-end
 }
 .timeline-actions button{
   height:30px;padding:0 10px;border:1px solid var(--line);border-radius:9px;
@@ -297,17 +311,19 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
   .timeline-head span{font-size:10px}
   .timeline-actions button{height:28px;padding:0 9px;font-size:9px}
   .timeline-scale{font-size:9px}
-  .map-mode-dock{bottom:118px}
+  .map-mode-dock{bottom:172px}
   .mode-btn{min-width:86px;padding:0 10px}
-  .tool-panel{right:8px;top:132px;width:min(330px,calc(100vw - 16px));max-height:calc(100vh - 260px)}
-  .zoom-hint{bottom:170px}
+  .tool-panel{right:8px;top:132px;width:min(330px,calc(100vw - 16px));max-height:calc(100vh - 300px)}
+  .zoom-hint{bottom:214px}
 }
 @media(max-width:560px){
   .timeline-head{gap:10px}
   .timeline-head-main{width:100%;justify-content:space-between}
-  .timeline-actions{justify-content:flex-start}
+  .timeline-actions{width:100%;justify-content:center;gap:6px}
+  .timeline-actions button{flex:1;min-width:0;padding:0 5px}
   .timeline-scale{font-size:8px}
   #map-time{width:100%}
-  .map-mode-dock{width:calc(100vw - 20px)}
+  .map-mode-dock{width:calc(100vw - 20px);bottom:212px}
   .mode-btn{flex:1;min-width:0}
+  .zoom-hint{bottom:254px}
 }
