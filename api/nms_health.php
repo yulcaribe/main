@@ -98,6 +98,46 @@ function nmsHealthLocal(string $environment): array {
         if (is_array($cronJson)) $cronState = $cronJson;
     }
 
+    $cacheDir = nmsCacheDir();
+    $progressPath = nmsFullProgressPath($environment);
+    $progress = nmsFullReadProgress($environment);
+    $fullLoadDiagnostics = [
+        'cacheDir' => $cacheDir,
+        'progressFile' => basename($progressPath),
+        'progressExists' => is_file($progressPath),
+        'snapshotFile' => null,
+        'snapshotBytes' => null,
+        'snapshotModifiedAt' => null,
+        'downloadFile' => null,
+        'downloadBytes' => null,
+        'byteOffset' => null,
+        'processed' => null,
+        'skipped' => null,
+        'expected' => null,
+        'startedAt' => null,
+        'updatedAt' => null,
+        'source' => null,
+    ];
+
+    if (is_array($progress)) {
+        $xmlPath = (string)($progress['xmlPath'] ?? '');
+        $downloadPath = (string)($progress['downloadPath'] ?? '');
+        $xmlMtime = $xmlPath !== '' && is_file($xmlPath) ? @filemtime($xmlPath) : false;
+
+        $fullLoadDiagnostics['snapshotFile'] = $xmlPath !== '' ? basename($xmlPath) : null;
+        $fullLoadDiagnostics['snapshotBytes'] = $xmlPath !== '' && is_file($xmlPath) ? (int)@filesize($xmlPath) : null;
+        $fullLoadDiagnostics['snapshotModifiedAt'] = $xmlMtime !== false ? gmdate('Y-m-d\\TH:i:s\\Z', $xmlMtime) : null;
+        $fullLoadDiagnostics['downloadFile'] = $downloadPath !== '' ? basename($downloadPath) : null;
+        $fullLoadDiagnostics['downloadBytes'] = $downloadPath !== '' && is_file($downloadPath) ? (int)@filesize($downloadPath) : null;
+        $fullLoadDiagnostics['byteOffset'] = isset($progress['byteOffset']) ? (int)$progress['byteOffset'] : null;
+        $fullLoadDiagnostics['processed'] = isset($progress['processed']) ? (int)$progress['processed'] : null;
+        $fullLoadDiagnostics['skipped'] = isset($progress['skipped']) ? (int)$progress['skipped'] : null;
+        $fullLoadDiagnostics['expected'] = isset($progress['expected']) ? (int)$progress['expected'] : null;
+        $fullLoadDiagnostics['startedAt'] = $progress['startedAt'] ?? null;
+        $fullLoadDiagnostics['updatedAt'] = $progress['updatedAt'] ?? null;
+        $fullLoadDiagnostics['source'] = $progress['source'] ?? null;
+    }
+
     return [
         'state' => $state,
         'syncHealth' => $syncHealth,
@@ -117,6 +157,7 @@ function nmsHealthLocal(string $environment): array {
         'environmentCounts' => $environmentCounts,
         'latestNotamUpdate' => $raw['latest_notam_update'] ?: null,
         'cronState' => $cronState,
+        'fullLoadDiagnostics' => $fullLoadDiagnostics,
         'extensions' => [
             'pdo_mysql' => extension_loaded('pdo_mysql'),
             'curl' => extension_loaded('curl'),
