@@ -1444,7 +1444,8 @@ $a=$airports[$from]; $b=$airports[$to];
 $lat1=(float)$a['lat']; $lon1=(float)$a['lon']; $lat2=(float)$b['lat']; $lon2=(float)$b['lon'];
 
 $routeMode='great_circle';
-$routeInput=['raw'=>$routeRaw!==''?$routeRaw:null,'parserVersion'=>'2.0','resolved'=>[],'unresolved'=>[],'pendingNavdata'=>[],'ignored'=>[],'unknown'=>[],'structure'=>null,'verticalProfile'=>null,'alternates'=>[],'recognized'=>[]];
+$resolvedRoute=[];
+$routeInput=['raw'=>$routeRaw!==''?$routeRaw:null,'parserVersion'=>'3.0','resolved'=>[],'unresolved'=>[],'pendingNavdata'=>[],'ignored'=>[],'unknown'=>[],'structure'=>null,'verticalProfile'=>null,'alternates'=>[],'recognized'=>[],'engine'=>null,'navdataResolved'=>[],'warnings'=>[]];
 
 if ($routeRaw!=='') {
     $resolvedRoute=resolveUserRoute($routeRaw,$from,$to,$a,$b);
