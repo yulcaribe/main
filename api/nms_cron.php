@@ -17,6 +17,11 @@ function nmsCronStatePath(string $environment): string {
     return nmsCacheDir() . DIRECTORY_SEPARATOR . 'cron_state_' . $environment . '.json';
 }
 
+function nmsCronLog(string $message): void {
+    fwrite(STDOUT, '[' . gmdate('Y-m-d\\TH:i:s\\Z') . '] ' . $message . PHP_EOL);
+    fflush(STDOUT);
+}
+
 function nmsCronWriteState(string $environment, array $state): void {
     $state['updatedAt'] = gmdate('Y-m-d\TH:i:s\Z');
     @file_put_contents(
@@ -108,6 +113,19 @@ try {
     $notamCount = (int)$countStmt->fetchColumn();
 
     if ($notamCount === 0 || empty($state['last_full_load'])) {
+        nmsCronWriteState($environment, [
+            'ok' => true,
+            'mode' => 'initial-download',
+            'running' => true,
+            'complete' => false,
+            'processed' => 0,
+            'skipped' => 0,
+            'expected' => null,
+            'progressPercent' => null,
+            'message' => 'FAA Initial Load snapshot is being downloaded/prepared.',
+        ]);
+        nmsCronLog('Production baseline missing; Initial Load starting.');
+        nmsCronLog('Downloading/preparing FAA Initial Load snapshot. No DB progress is expected until this step finishes.');
         $result = nmsCronFullLoad($environment);
         nmsCronWriteState($environment, [
             'ok' => (bool)($result['ok'] ?? false),
@@ -122,6 +140,7 @@ try {
             'error' => $result['error'] ?? $result['detail'] ?? null,
         ]);
     } else {
+        nmsCronLog('Baseline present; Delta Sync starting.');
         $result = nmsRunDeltaSync();
 
         if (($result['needsFullLoad'] ?? false) === true) {
@@ -144,7 +163,7 @@ try {
         ]);
     }
 
-    echo json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL;
+    nmsCronLog('Result: ' . json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     exit(($result['ok'] ?? false) ? 0 : 1);
 } catch (Throwable $e) {
     $result = [
