@@ -257,13 +257,33 @@ function nmsUpsertRecord(PDO $pdo, array $r): void {
 function nmsApplyCancellationReference(PDO $pdo, array $record): ?string {
     if (($record['status'] ?? '') !== 'cancelled') return null;
     $text = (string)($record['notam_text'] ?? '');
-    if (!preg_match('/\bNOTAMC\s+([A-Z][0-9]{4}\/\d{2})\b/i', $text, $m)) return null;
+    if (!preg_match('/\\bNOTAMC\\s+([A-Z])([0-9]{4})\\/(\\d{2})\\b/i', $text, $m)) return null;
 
-    $target = strtoupper($m[1]);
+    $series = strtoupper($m[1]);
+    $serial = $m[2];
+    $year2 = (int)$m[3];
+    $year4 = 2000 + $year2;
+    $target = $series . $serial . '/' . $m[3];
+
     $stmt = $pdo->prepare(
-        "UPDATE notams SET status = 'cancelled' WHERE number = :number AND source = 'FAA_NMS'"
+        "UPDATE notams
+         SET status = 'cancelled'
+         WHERE source = 'FAA_NMS'
+           AND environment = :environment
+           AND series = :series
+           AND (number = :serial OR number = :serial_slash OR number = :target)
+           AND (year = :year4 OR year = :year2 OR year IS NULL)"
     );
-    $stmt->execute(['number' => $target]);
+    $stmt->execute([
+        'environment' => (string)($record['environment'] ?? ''),
+        'series' => $series,
+        'serial' => $serial,
+        'serial_slash' => $serial . '/' . $m[3],
+        'target' => $target,
+        'year4' => $year4,
+        'year2' => $year2,
+    ]);
+
     return $target;
 }
 
