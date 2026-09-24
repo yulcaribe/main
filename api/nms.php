@@ -153,6 +153,8 @@ if ($action === 'health') {
         'service' => 'faa-nms',
         'environment' => $cfg['env'],
         'credentialsConfigured' => (bool)($public['credentialsConfigured'] ?? false),
+        'apiBase' => $public['apiBase'] ?? null,
+        'authUrl' => $public['authUrl'] ?? null,
         'configDiagnostics' => $public['diagnostics'] ?? [],
         'local' => $local,
         'remote' => $remote,
