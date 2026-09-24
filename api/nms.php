@@ -64,16 +64,16 @@ if ($action === 'admin-full') {
         nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
     }
 
-    ignore_user_abort(true);
-    @set_time_limit(0);
+    @set_time_limit(20);
 
     try {
-        $result = nmsRunFullLoad();
+        $result = nmsRunFullLoadSlice(250, 7);
     } catch (Throwable $e) {
         $cfg = nmsPrivateConfig();
         nmsRespond(500, [
             'ok' => false,
-            'error' => 'Initial load failed before completion.',
+            'complete' => false,
+            'error' => 'Initial load slice failed before completion.',
             'detail' => $cfg['env'] === 'staging' ? $e->getMessage() : null,
         ]);
     }
