@@ -51,6 +51,7 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 <div class="grid">
 <section class="panel"><div class="kicker">CONNECTION</div><h2>FAA NMS</h2><div class="rows">
 <div class="row"><span>Environment</span><strong id="env">—</strong></div>
+<div class="row"><span>API Base</span><strong id="api-base">—</strong></div>
 <div class="row"><span>Credentials</span><strong id="cred">—</strong></div>
 <div class="row"><span>FAA canlı test</span><strong id="remote">Test edilmedi</strong></div>
 <div class="row"><span>HTTP</span><strong id="http">—</strong></div>
@@ -64,6 +65,7 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 <div class="row"><span>Son NOTAM update</span><strong id="latest">—</strong></div>
 <div class="row"><span>Geometry var / yok</span><strong id="geom">—</strong></div>
 <div class="row"><span>Belirsiz durum</span><strong id="unknown">—</strong></div>
+<div class="row"><span>DB staging / production</span><strong id="env-counts">—</strong></div>
 <div class="row"><span>Son hata</span><strong id="error">—</strong></div>
 </div></section>
 
@@ -87,16 +89,17 @@ $('admin-key').addEventListener('change',()=>{const v=$('admin-key').value.trim(
 
 function paint(d){
  const l=d.local||{},c=l.counts||{},s=l.state||{},r=d.remote||{};
- $('env').textContent=(d.environment||'—').toUpperCase();$('total').textContent=fmt(c.total);$('active').textContent=fmt(c.active);$('future').textContent=fmt(c.future);$('expired').textContent=fmt(c.expired);$('cancelled').textContent=fmt(c.cancelled);$('perm').textContent=fmt(c.permanent);$('unknown').textContent=fmt(c.unknown);
+ $('env').textContent=(d.environment||'—').toUpperCase();$('env').className=d.environment==='production'?'ok':'warntext';$('api-base').textContent=d.apiBase||'—';$('total').textContent=fmt(c.total);$('active').textContent=fmt(c.active);$('future').textContent=fmt(c.future);$('expired').textContent=fmt(c.expired);$('cancelled').textContent=fmt(c.cancelled);$('perm').textContent=fmt(c.permanent);$('unknown').textContent=fmt(c.unknown);
  $('cred').textContent=d.credentialsConfigured?'OK':'Eksik';$('cred').className=d.credentialsConfigured?'ok':'badtext';
  $('remote').textContent=r.checked?(r.ok?'Bağlantı başarılı':'Bağlantı başarısız'):'Test edilmedi';$('remote').className=r.checked?(r.ok?'ok':'badtext'):'';
- $('http').textContent=r.upstreamStatus??'—';$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
+ $('http').textContent=r.upstreamStatus??'—';const ec=l.environmentCounts||{};$('env-counts').textContent=fmt(ec.staging)+' / '+fmt(ec.production);$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
  $('ext').textContent=Object.entries(l.extensions||{}).map(([k,v])=>k+':'+(v?'ok':'yok')).join(' · ')||'—';
  $('classes').innerHTML=(l.classifications||[]).map(x=>'<div class="class-row"><span>'+String(x.classification).replace(/[&<>"]/g,'')+'</span><strong>'+fmt(x.total)+'</strong></div>').join('')||'Henüz veri yok.';
  const b=$('banner');b.className='banner';
  if(!d.credentialsConfigured){b.classList.add('bad');$('banner-title').textContent='FAA credentials eksik';$('banner-detail').textContent='NMS config kontrol edilmeli.'}
  else if(s.last_error){b.classList.add('bad');$('banner-title').textContent='Son sync hata verdi';$('banner-detail').textContent=s.last_error}
- else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Baseline Initial Load bekliyor';$('banner-detail').textContent='DB’de '+fmt(c.total)+' local NOTAM var · Initial Load tamamlanmadı.'}
+ else if(d.environment!=='production'){b.classList.add('warn');$('banner-title').textContent='STAGING ortamındasın';$('banner-detail').textContent='Production credential geçişi henüz yapılmamış.'}
+ else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Production bağlı · baseline bekliyor';$('banner-detail').textContent='DB’de '+fmt(c.total)+' production NOTAM var · Initial Load tamamlanmadı.'}
  else if(l.syncHealth==='stale'){b.classList.add('warn');$('banner-title').textContent='Delta sync eski';$('banner-detail').textContent='Son sync '+age(l.syncAgeSeconds)+' önce.'}
  else{b.classList.add('good');$('banner-title').textContent='NOTAM veritabanı sağlıklı';$('banner-detail').textContent=fmt(c.active)+' aktif NOTAM · son sync '+age(l.syncAgeSeconds)+' önce.'}
  $('generated').textContent='Health snapshot: '+dt(d.generatedAt);
