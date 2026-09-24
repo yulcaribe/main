@@ -5,6 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 
 require_once __DIR__ . '/nms_client.php';
+require_once __DIR__ . '/nms_store.php';
 
 function nmsRespond(int $status, array $payload): never {
     http_response_code($status);
@@ -19,6 +20,28 @@ if ($action === 'status') {
         'ok' => true,
         'service' => 'faa-nms',
         'config' => nmsPublicStatus(),
+    ]);
+}
+
+if ($action === 'sync-status') {
+    $cfg = nmsPrivateConfig();
+
+    try {
+        $local = nmsLocalStatus($cfg['env']);
+    } catch (Throwable) {
+        nmsRespond(500, [
+            'ok' => false,
+            'service' => 'faa-nms',
+            'environment' => $cfg['env'],
+            'error' => 'Local NMS database status could not be read.',
+        ]);
+    }
+
+    nmsRespond(200, [
+        'ok' => true,
+        'service' => 'faa-nms',
+        'environment' => $cfg['env'],
+        'local' => $local,
     ]);
 }
 
@@ -120,5 +143,5 @@ if ($action === 'probe-notams') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'ping', 'probe-notams'],
+    'allowedActions' => ['status', 'sync-status', 'ping', 'probe-notams'],
 ]);
