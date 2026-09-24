@@ -44,7 +44,7 @@ if ($action === 'ping') {
     ]);
 }
 
-if ($action === 'probe-ltai') {
+if ($action === 'probe-notams') {
     $cfg = nmsPrivateConfig();
 
     if ($cfg['env'] !== 'staging') {
@@ -54,15 +54,23 @@ if ($action === 'probe-ltai') {
         ]);
     }
 
-    $result = nmsGet('/notams', ['location' => 'LTAI'], 'GEOJSON');
+    $location = strtoupper(trim((string)($_GET['location'] ?? 'LTAI')));
+    if (!in_array($location, ['LTAI', 'EDDK'], true)) {
+        nmsRespond(400, [
+            'ok' => false,
+            'error' => 'Allowed test locations: LTAI, EDDK.',
+        ]);
+    }
+
+    $result = nmsGet('/notams', ['location' => $location], 'GEOJSON');
 
     if (!($result['ok'] ?? false)) {
         nmsRespond((int)($result['status'] ?? 502), [
             'ok' => false,
             'service' => 'faa-nms',
             'environment' => $cfg['env'],
-            'location' => 'LTAI',
-            'error' => $result['error'] ?? 'NMS LTAI probe failed.',
+            'location' => $location,
+            'error' => $result['error'] ?? 'NMS NOTAM probe failed.',
             'upstreamStatus' => $result['status'] ?? null,
         ]);
     }
@@ -100,7 +108,7 @@ if ($action === 'probe-ltai') {
         'ok' => true,
         'service' => 'faa-nms',
         'environment' => $cfg['env'],
-        'location' => 'LTAI',
+        'location' => $location,
         'upstreamStatus' => $result['status'] ?? 200,
         'apiStatus' => $apiResponse['status'] ?? null,
         'count' => count($features),
@@ -112,5 +120,5 @@ if ($action === 'probe-ltai') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'ping', 'probe-ltai'],
+    'allowedActions' => ['status', 'ping', 'probe-notams'],
 ]);
