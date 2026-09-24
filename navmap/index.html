@@ -8,7 +8,7 @@
   <title>Navdata Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/navmap/navmap.css?v=1">
+  <link rel="stylesheet" href="/main/navmap/navmap.css?v=2">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -53,91 +53,84 @@
     </div>
   </section>
 
-  <button class="panel-toggle" id="layers-toggle" type="button">Katmanlar</button>
+  <button class="panel-toggle" id="layers-toggle" type="button">Harita</button>
 
   <aside class="layers-panel" id="layers-panel">
     <div class="layers-head">
       <div>
-        <strong>Navdata Katmanları</strong>
-        <small>MariaDB · viewport bazlı yükleme</small>
+        <strong>Harita Katmanları</strong>
+        <small>Chart · NOTAM · AWC WAFS</small>
       </div>
       <button id="layers-close" type="button" aria-label="Katmanları kapat">×</button>
     </div>
 
-    <div class="layer-group">
-      <span class="layer-group-title">Points</span>
+    <section class="map-layer-card time-card">
+      <div class="map-layer-card-head">
+        <div><strong>Zaman</strong><small>NOTAM + Weather ortak UTC</small></div>
+        <span id="selected-time-label">—</span>
+      </div>
+      <input id="map-time" class="time-input" type="datetime-local" step="60" aria-label="Harita UTC zamanı">
+      <div class="time-buttons">
+        <button type="button" data-time-shift="-6">−6h</button>
+        <button type="button" data-time-shift="-3">−3h</button>
+        <button type="button" id="time-now">Şimdi</button>
+        <button type="button" data-time-shift="3">+3h</button>
+        <button type="button" data-time-shift="6">+6h</button>
+      </div>
+    </section>
 
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="airport">
-          <span class="legend-dot" style="background:#7ee7ff"></span>
-          Airports
-        </label>
-        <span class="layer-count" data-layer-count="airport">0</span>
+    <section class="map-layer-card">
+      <div class="map-layer-card-head">
+        <div><strong>Chart</strong><small>Aeronautical navdata</small></div>
+        <span>MariaDB</span>
       </div>
 
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="navaid">
-          <span class="legend-dot" style="background:#ffc76b"></span>
-          Navaids
-        </label>
-        <span class="layer-count" data-layer-count="navaid">0</span>
+      <div class="layer-group">
+        <span class="layer-group-title">Points</span>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airport"><span class="legend-dot" style="background:#7ee7ff"></span>Airports</label><span class="layer-count" data-layer-count="airport">0</span></div>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="navaid"><span class="legend-dot" style="background:#ffc76b"></span>Navaids</label><span class="layer-count" data-layer-count="navaid">0</span></div>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="waypoint"><span class="legend-dot" style="background:#d6e1e7"></span>Waypoints</label><span class="layer-count" data-layer-count="waypoint">0</span></div>
       </div>
 
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="waypoint">
-          <span class="legend-dot" style="background:#d6e1e7"></span>
-          Waypoints
-        </label>
-        <span class="layer-count" data-layer-count="waypoint">0</span>
-      </div>
-    </div>
-
-    <div class="layer-group">
-      <span class="layer-group-title">Routes</span>
-
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="airway">
-          <span class="legend-line" style="background:#5fdbe8"></span>
-          Airways
-        </label>
-        <span class="layer-count" data-layer-count="airway">0</span>
+      <div class="layer-group">
+        <span class="layer-group-title">Routes</span>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airway"><span class="legend-line" style="background:#5fdbe8"></span>Airways</label><span class="layer-count" data-layer-count="airway">0</span></div>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="sid"><span class="legend-line" style="background:#70e8a7"></span>SID</label><span class="layer-count" data-layer-count="sid">0</span></div>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="star"><span class="legend-line" style="background:#bc9cff"></span>STAR</label><span class="layer-count" data-layer-count="star">0</span></div>
       </div>
 
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="sid">
-          <span class="legend-line" style="background:#70e8a7"></span>
-          SID
-        </label>
-        <span class="layer-count" data-layer-count="sid">0</span>
+      <div class="layer-group">
+        <span class="layer-group-title">Airspace</span>
+        <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airspace"><span class="legend-line" style="background:#ff7f94"></span>Airspace</label><span class="layer-count" data-layer-count="airspace">0</span></div>
       </div>
+    </section>
 
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="star">
-          <span class="legend-line" style="background:#bc9cff"></span>
-          STAR
-        </label>
-        <span class="layer-count" data-layer-count="star">0</span>
+    <section class="map-layer-card notam-card">
+      <div class="map-layer-card-head">
+        <div><strong>NOTAM</strong><small>FAA NMS · seçilen UTC'de geçerli</small></div>
+        <span class="layer-count" data-layer-count="notam">0</span>
       </div>
-    </div>
+      <label class="master-row"><span><i class="legend-line notam-swatch"></i>NOTAM geometry</span><input type="checkbox" data-nav-layer="notam"></label>
+      <div class="card-note" id="notam-time-status">Geometry bulunan production NOTAM'lar gösterilir.</div>
+    </section>
 
-    <div class="layer-group">
-      <span class="layer-group-title">Airspace</span>
-
-      <div class="layer-row">
-        <label>
-          <input type="checkbox" checked data-nav-layer="airspace">
-          <span class="legend-line" style="background:#ff7f94"></span>
-          Airspace
-        </label>
-        <span class="layer-count" data-layer-count="airspace">0</span>
+    <section class="map-layer-card weather-card">
+      <div class="map-layer-card-head">
+        <div><strong>Weather</strong><small>AviationWeather.gov · WAFS visual forecast</small></div>
+        <span>AWC</span>
       </div>
-    </div>
+      <label class="master-row"><span>WAFS overlay</span><input id="weather-enabled" type="checkbox"></label>
+      <label class="field-row"><span>Ürün</span><select id="weather-product">
+        <option value="cbextent">CB horizontal extent</option>
+        <option value="cbtop">CB tops</option>
+        <option value="edr">Turbulence / EDR</option>
+        <option value="icing">Icing severity</option>
+        <option value="wind">Wind speed</option>
+      </select></label>
+      <label class="field-row"><span>Flight level</span><input id="weather-fl" type="number" min="50" max="600" step="10" value="360"></label>
+      <label class="field-row"><span>Opacity</span><input id="weather-opacity" type="range" min="10" max="85" value="48"></label>
+      <div class="card-note" id="weather-status">Weather kapalı.</div>
+    </section>
   </aside>
 
   <div class="zoom-hint" id="zoom-hint">Navdata için biraz yaklaş · z5+</div>
@@ -179,7 +172,7 @@
 
         try {
           detail.textContent = "Navdata istemcisi yükleniyor…";
-          await loadScript("/main/navmap/navmap.js?v=1");
+          await loadScript("/main/navmap/navmap.js?v=2");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/navmap/navmap.js yüklenemedi.";
