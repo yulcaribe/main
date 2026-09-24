@@ -205,6 +205,17 @@ function navmapCacheWrite(string $path, array $payload): void {
     } else {
         @unlink($tmp);
     }
+
+    $dir = dirname($path);
+    $cleanupMarker = $dir . DIRECTORY_SEPARATOR . '.cleanup';
+    $markerAge = is_file($cleanupMarker) ? time() - (int)@filemtime($cleanupMarker) : PHP_INT_MAX;
+    if ($markerAge > 3600) {
+        @touch($cleanupMarker);
+        foreach ((array)glob($dir . DIRECTORY_SEPARATOR . 'notam_*.json') as $candidate) {
+            $mtime = @filemtime($candidate);
+            if ($mtime !== false && time() - $mtime > 21600) @unlink($candidate);
+        }
+    }
 }
 
 function loadDbConfig(): array {
@@ -393,6 +404,11 @@ function notamFeature(array $row): ?array {
         default => 'derived',
     };
 
+    $category = notamCategory($row);
+    if ($category === 'GENERAL' && in_array($geometrySource, ['notam-area-polygon', 'coordinates-polygon'], true)) {
+        $category = 'AIRSPACE';
+    }
+
     $series = trim((string)($row['series'] ?? ''));
     $number = trim((string)($row['number'] ?? ''));
     $year = trim((string)($row['year'] ?? ''));
@@ -416,7 +432,7 @@ function notamFeature(array $row): ?array {
             'upper_limit' => $row['upper_limit'],
             'radius_nm' => $radiusNm,
             'selection_code' => $row['selection_code'] ?? null,
-            'category' => notamCategory($row),
+            'category' => $category,
             'text' => $row['notam_text'],
             'geometry_source' => $geometrySource,
             'geometry_accuracy' => $geometryAccuracy,
