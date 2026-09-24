@@ -113,19 +113,32 @@ try {
     $notamCount = (int)$countStmt->fetchColumn();
 
     if ($notamCount === 0 || empty($state['last_full_load'])) {
+        $existingProgress = nmsFullReadProgress($environment);
+        $resuming = is_array($existingProgress);
         nmsCronWriteState($environment, [
             'ok' => true,
-            'mode' => 'initial-download',
+            'mode' => $resuming ? 'initial-load' : 'initial-download',
             'running' => true,
             'complete' => false,
-            'processed' => 0,
-            'skipped' => 0,
-            'expected' => null,
+            'processed' => (int)($existingProgress['processed'] ?? 0),
+            'skipped' => (int)($existingProgress['skipped'] ?? 0),
+            'expected' => $existingProgress['expected'] ?? null,
             'progressPercent' => null,
-            'message' => 'FAA Initial Load snapshot is being downloaded/prepared.',
+            'message' => $resuming
+                ? 'Existing FAA Initial Load snapshot is being resumed from saved progress.'
+                : 'FAA Initial Load snapshot is being downloaded/prepared.',
         ]);
         nmsCronLog('Production baseline missing; Initial Load starting.');
-        nmsCronLog('Downloading/preparing FAA Initial Load snapshot. No DB progress is expected until this step finishes.');
+        if ($resuming) {
+            nmsCronLog(
+                'Resuming existing Initial Load snapshot from saved progress'
+                . ' · processed=' . (int)($existingProgress['processed'] ?? 0)
+                . ' · byteOffset=' . (int)($existingProgress['byteOffset'] ?? 0)
+                . '.'
+            );
+        } else {
+            nmsCronLog('Downloading/preparing FAA Initial Load snapshot. No DB progress is expected until this step finishes.');
+        }
         $result = nmsCronFullLoad($environment);
         nmsCronWriteState($environment, [
             'ok' => (bool)($result['ok'] ?? false),
@@ -137,7 +150,7 @@ try {
             'expected' => $result['expected'] ?? null,
             'progressPercent' => $result['progressPercent'] ?? null,
             'pausedForNextCron' => (bool)($result['pausedForNextCron'] ?? false),
-            'error' => $result['error'] ?? $result['detail'] ?? null,
+            'error' => $result['detail'] ?? $result['error'] ?? null,
         ]);
     } else {
         nmsCronLog('Baseline present; Delta Sync starting.');
