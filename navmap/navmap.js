@@ -10,11 +10,11 @@
   const WAFS_API = "/main/api/wafs.php";
   const sourceId = "navdata";
   const WAFS_PRODUCTS = {
-    edr: { label: "Turbulence / EDR" },
-    icing: { label: "Icing severity" },
-    cbextent: { label: "CB horizontal extent" },
-    cbtop: { label: "CB tops" },
-    wind: { label: "Wind speed" }
+    edr: { label: "Turbulence / EDR", levels: [140,180,240,270,300,340,390,450] },
+    icing: { label: "Icing severity", levels: [60,100,140,180,240,300] },
+    cbextent: { label: "CB horizontal extent", levels: null },
+    cbtop: { label: "CB tops", levels: null },
+    wind: { label: "Wind speed", levels: [100,140,180,240,270,300,340,390,450] }
   };
   const mapEl = document.getElementById("map");
   const boot = document.getElementById("boot");
@@ -651,6 +651,13 @@
   }
 
   async function fetchWafsFrame(product, fl, signal) {
+    const cfg = WAFS_PRODUCTS[product];
+    if (Array.isArray(cfg?.levels) && !cfg.levels.includes(fl)) {
+      throw new Error(
+        `FL${fl} desteklenmiyor · ${cfg.levels.map(v => "FL" + v).join(", ")}`
+      );
+    }
+
     const valid = selectedTimeIso().slice(0, 16).replace("T", " ");
     const q = new URLSearchParams({ action: "image", product, fl: String(fl), valid });
     const response = await fetch(`${WAFS_API}?${q}`, { cache: "no-store", signal });
@@ -703,7 +710,18 @@
       return;
     }
 
-    const fl = Math.max(50, Math.min(600, Number(wafsFL?.value || 360)));
+    const rawFl = String(wafsFL?.value ?? "").trim();
+    const fl = Number(rawFl);
+    if (!/^\d{1,3}$/.test(rawFl) || !Number.isInteger(fl) || fl < 50 || fl > 600) {
+      clearWeatherOverlays();
+      if (wafsStatus) wafsStatus.textContent = "Hata: Flight level FL050 ile FL600 arasında tam sayı olmalı.";
+      wafsProductInputs.forEach(input => {
+        const meta = document.querySelector(`[data-wafs-meta="${input.dataset.wafsProduct}"]`);
+        if (meta) meta.textContent = "geçersiz FL";
+      });
+      return;
+    }
+
     if (wafsStatus) wafsStatus.textContent = active.length + " WAFS katmanı yükleniyor…";
     for (const product of active) {
       const meta = document.querySelector(`[data-wafs-meta="${product}"]`);
@@ -972,7 +990,29 @@
   });
 
   wafsEnabled?.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
-  wafsFL?.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
+  wafsFL?.addEventListener("input", () => {
+    const raw = String(wafsFL.value || "").trim();
+    const fl = Number(raw);
+    const active = activeWafsProducts();
+    const invalid = active
+      .map(product => ({ product, cfg: WAFS_PRODUCTS[product] }))
+      .filter(({ cfg }) => Array.isArray(cfg?.levels) && Number.isInteger(fl) && !cfg.levels.includes(fl));
+
+    if (!/^\d{1,3}$/.test(raw) || !Number.isInteger(fl) || fl < 50 || fl > 600) {
+      wafsFL.setCustomValidity("Flight level FL050 ile FL600 arasında tam sayı olmalı.");
+    } else if (invalid.length) {
+      const first = invalid[0];
+      wafsFL.setCustomValidity(
+        `${first.cfg.label}: FL${fl} desteklenmiyor. ${first.cfg.levels.map(v => "FL" + v).join(", ")}`
+      );
+    } else {
+      wafsFL.setCustomValidity("");
+    }
+  });
+  wafsFL?.addEventListener("change", () => {
+    wafsFL.reportValidity();
+    loadWeatherOverlays().catch(console.error);
+  });
   wafsProductInputs.forEach(input => {
     input.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
   });
