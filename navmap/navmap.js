@@ -9,8 +9,13 @@
   const API = "/main/api/navmap.php";
   const WAFS_API = "/main/api/wafs.php";
   const sourceId = "navdata";
-  const weatherSourceId = "wafs-weather";
-  const weatherLayerId = "wafs-weather-layer";
+  const WAFS_PRODUCTS = {
+    edr: { label: "Turbulence / EDR" },
+    icing: { label: "Icing severity" },
+    cbextent: { label: "CB horizontal extent" },
+    cbtop: { label: "CB tops" },
+    wind: { label: "Wind speed" }
+  };
   const mapEl = document.getElementById("map");
   const boot = document.getElementById("boot");
   const bootDetail = document.getElementById("boot-detail");
@@ -18,25 +23,27 @@
   const statusText = document.getElementById("status-text");
   const featureCount = document.getElementById("feature-count");
   const zoomHint = document.getElementById("zoom-hint");
-  const layerToggle = document.getElementById("layers-toggle");
-  const layersPanel = document.getElementById("layers-panel");
-  const layersClose = document.getElementById("layers-close");
   const searchInput = document.getElementById("nav-search");
   const searchResults = document.getElementById("search-results");
+  const modeButtons = [...document.querySelectorAll("[data-panel-target]")];
+  const toolPanels = [...document.querySelectorAll(".tool-panel")];
+  const panelCloseButtons = [...document.querySelectorAll("[data-panel-close]")];
   const timeInput = document.getElementById("map-time");
+  const timeSlider = document.getElementById("map-time-slider");
   const timeLabel = document.getElementById("selected-time-label");
+  const timelineOffset = document.getElementById("timeline-offset");
   const timeNowButton = document.getElementById("time-now");
   const notamTimeStatus = document.getElementById("notam-time-status");
-  const weatherEnabled = document.getElementById("weather-enabled");
-  const weatherProduct = document.getElementById("weather-product");
-  const weatherFL = document.getElementById("weather-fl");
-  const weatherOpacity = document.getElementById("weather-opacity");
-  const weatherStatus = document.getElementById("weather-status");
+  const wafsEnabled = document.getElementById("wafs-enabled");
+  const wafsFL = document.getElementById("wafs-fl");
+  const wafsStatus = document.getElementById("wafs-status");
+  const wafsProductInputs = [...document.querySelectorAll("[data-wafs-product]")];
+  const wafsOpacityInputs = [...document.querySelectorAll("[data-wafs-opacity]")];
 
   const layerInputs = [...document.querySelectorAll("[data-nav-layer]")];
-  const countEls = Object.fromEntries(
-    [...document.querySelectorAll("[data-layer-count]")].map(el => [el.dataset.layerCount, el])
-  );
+  const countKeys = [...new Set(
+    [...document.querySelectorAll("[data-layer-count]")].map(el => el.dataset.layerCount)
+  )];
 
   const palette = {
     airport: "#7ee7ff",
@@ -56,7 +63,9 @@
   let loadTimer = null;
   let searchTimer = null;
   let weatherController = null;
-  let weatherObjectUrl = null;
+  let weatherGeneration = 0;
+  let timelineAnchor = null;
+  const weatherOverlays = new Map();
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
 
@@ -481,6 +490,7 @@
       rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
       rows += infoRow("Lower", p.lower_limit);
       rows += infoRow("Upper", p.upper_limit);
+      rows += infoRow("Map source", p.geometry_source === "airport-location" ? "Airport marker fallback" : "FAA geometry");
       detailText = p.text || "";
     }
 
@@ -500,17 +510,19 @@
 
   function updateCounts(counts = {}) {
     let total = 0;
-    for (const key of Object.keys(countEls)) {
+    for (const key of countKeys) {
       const count = Number(counts[key] || 0);
       total += count;
-      countEls[key].textContent = new Intl.NumberFormat("tr-TR").format(count);
+      document.querySelectorAll(`[data-layer-count="${key}"]`).forEach(el => {
+        el.textContent = new Intl.NumberFormat("tr-TR").format(count);
+      });
     }
     featureCount.textContent = new Intl.NumberFormat("tr-TR").format(total) + " obje";
     if (notamTimeStatus) {
       const n = Number(counts.notam || 0);
       notamTimeStatus.textContent = selectedLayers().includes("notam")
-        ? new Intl.NumberFormat("tr-TR").format(n) + " geometry · " + formatSelectedUtc()
-        : "Geometry bulunan production NOTAM'lar gösterilir.";
+        ? new Intl.NumberFormat("tr-TR").format(n) + " NOTAM · " + formatSelectedUtc()
+        : "FAA geometry veya meydan konumu bulunan NOTAM'lar gösterilir.";
     }
   }
 
@@ -563,28 +575,67 @@
     return selectedTimeDate().toISOString().slice(0, 16).replace("T", " ") + "Z";
   }
 
-  function setSelectedTime(date, reload = true) {
+  function updateTimelineOffset(date) {
+    if (!timelineAnchor || !timelineOffset) return;
+    const hours = Math.round((date.getTime() - timelineAnchor.getTime()) / 3600000);
+    timelineOffset.textContent = hours === 0 ? "NOW" : (hours > 0 ? "+" + hours + "h" : hours + "h");
+  }
+
+  function setSelectedTime(date, reload = true, syncSlider = true) {
     if (!timeInput) return;
     timeInput.value = inputValueFromDate(date);
     if (timeLabel) timeLabel.textContent = formatSelectedUtc();
+    updateTimelineOffset(date);
+    if (syncSlider && timeSlider && timelineAnchor) {
+      const hours = Math.round((date.getTime() - timelineAnchor.getTime()) / 3600000);
+      timeSlider.value = String(Math.max(-72, Math.min(72, hours)));
+    }
     if (reload && map.loaded()) {
       scheduleViewportLoad(0);
-      loadWeatherOverlay().catch(console.error);
+      loadWeatherOverlays().catch(console.error);
     }
   }
 
   function initializeTime() {
     const now = new Date();
     now.setUTCSeconds(0, 0);
-    setSelectedTime(now, false);
+    timelineAnchor = now;
+    if (timeSlider) timeSlider.value = "0";
+    setSelectedTime(now, false, false);
   }
 
-  function clearWeatherOverlay() {
-    if (map.getLayer(weatherLayerId)) map.removeLayer(weatherLayerId);
-    if (map.getSource(weatherSourceId)) map.removeSource(weatherSourceId);
-    if (weatherObjectUrl) {
-      URL.revokeObjectURL(weatherObjectUrl);
-      weatherObjectUrl = null;
+  function wafsSourceId(product) {
+    return `wafs-${product}-source`;
+  }
+
+  function wafsLayerId(product) {
+    return `wafs-${product}-layer`;
+  }
+
+  function wafsOpacity(product) {
+    const input = document.querySelector(`[data-wafs-opacity="${product}"]`);
+    const n = Number(input?.value || 40);
+    return Math.max(0.1, Math.min(0.85, n / 100));
+  }
+
+  function activeWafsProducts() {
+    if (!wafsEnabled?.checked) return [];
+    return wafsProductInputs.filter(input => input.checked).map(input => input.dataset.wafsProduct);
+  }
+
+  function clearWeatherProduct(product) {
+    const layerId = wafsLayerId(product);
+    const sourceIdForProduct = wafsSourceId(product);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceIdForProduct)) map.removeSource(sourceIdForProduct);
+    const state = weatherOverlays.get(product);
+    if (state?.url) URL.revokeObjectURL(state.url);
+    weatherOverlays.delete(product);
+  }
+
+  function clearWeatherOverlays(keep = new Set()) {
+    for (const product of [...weatherOverlays.keys()]) {
+      if (!keep.has(product)) clearWeatherProduct(product);
     }
   }
 
@@ -599,74 +650,129 @@
     });
   }
 
-  async function loadWeatherOverlay() {
+  async function fetchWafsFrame(product, fl, signal) {
+    const valid = selectedTimeIso().slice(0, 16).replace("T", " ");
+    const q = new URLSearchParams({ action: "image", product, fl: String(fl), valid });
+    const response = await fetch(`${WAFS_API}?${q}`, { cache: "no-store", signal });
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null);
+      throw new Error(errorPayload?.error || `WAFS HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await loadImage(url, signal);
+      const yMax = Math.PI * (img.naturalHeight / img.naturalWidth);
+      const maxLat = 180 / Math.PI * Math.atan(Math.sinh(yMax));
+      return {
+        product,
+        url,
+        maxLat,
+        validUtc: response.headers.get("x-yc-wafs-valid-utc"),
+        runUtc: response.headers.get("x-yc-wafs-run"),
+        layerFL: response.headers.get("x-yc-wafs-layer-fl"),
+        forecastHour: response.headers.get("x-yc-wafs-forecast-hour")
+      };
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    }
+  }
+
+  async function loadWeatherOverlays() {
     if (!map.loaded()) return;
+
+    const generation = ++weatherGeneration;
     weatherController?.abort();
     weatherController = new AbortController();
 
-    if (!weatherEnabled?.checked) {
-      clearWeatherOverlay();
-      if (weatherStatus) weatherStatus.textContent = "Weather kapalı.";
+    const active = activeWafsProducts();
+    const activeSet = new Set(active);
+    clearWeatherOverlays(activeSet);
+
+    if (!wafsEnabled?.checked) {
+      clearWeatherOverlays();
+      if (wafsStatus) wafsStatus.textContent = "WAFS kapalı.";
       return;
     }
 
-    const product = weatherProduct?.value || "cbextent";
-    const fl = Math.max(50, Math.min(600, Number(weatherFL?.value || 360)));
-    const valid = selectedTimeIso().slice(0, 16).replace("T", " ");
-    const q = new URLSearchParams({ action: "image", product, fl: String(fl), valid });
+    if (!active.length) {
+      clearWeatherOverlays();
+      if (wafsStatus) wafsStatus.textContent = "WAFS açık ama ürün seçili değil.";
+      return;
+    }
 
-    if (weatherStatus) weatherStatus.textContent = "AWC WAFS frame yükleniyor…";
+    const fl = Math.max(50, Math.min(600, Number(wafsFL?.value || 360)));
+    if (wafsStatus) wafsStatus.textContent = active.length + " WAFS katmanı yükleniyor…";
+    for (const product of active) {
+      const meta = document.querySelector(`[data-wafs-meta="${product}"]`);
+      if (meta) meta.textContent = "yükleniyor…";
+    }
 
-    try {
-      const response = await fetch(`${WAFS_API}?${q}`, { cache: "no-store", signal: weatherController.signal });
-      if (!response.ok) {
-        const errorPayload = await response.json().catch(() => null);
-        throw new Error(errorPayload?.error || `WAFS HTTP ${response.status}`);
+    const results = await Promise.all(active.map(async product => {
+      try {
+        return { product, frame: await fetchWafsFrame(product, fl, weatherController.signal), error: null };
+      } catch (error) {
+        return { product, frame: null, error };
+      }
+    }));
+
+    if (generation !== weatherGeneration) {
+      for (const result of results) if (result.frame?.url) URL.revokeObjectURL(result.frame.url);
+      return;
+    }
+
+    let success = 0;
+    for (const result of results) {
+      const product = result.product;
+      const meta = document.querySelector(`[data-wafs-meta="${product}"]`);
+      clearWeatherProduct(product);
+
+      if (result.error || !result.frame) {
+        if (meta) meta.textContent = result.error?.message || "frame yok";
+        continue;
       }
 
-      const blob = await response.blob();
-      const nextUrl = URL.createObjectURL(blob);
-      const img = await loadImage(nextUrl, weatherController.signal);
-      const yMax = Math.PI * (img.naturalHeight / img.naturalWidth);
-      const maxLat = 180 / Math.PI * Math.atan(Math.sinh(yMax));
+      const frame = result.frame;
+      const sourceIdForProduct = wafsSourceId(product);
+      const layerId = wafsLayerId(product);
 
-      clearWeatherOverlay();
-      weatherObjectUrl = nextUrl;
-
-      map.addSource(weatherSourceId, {
+      map.addSource(sourceIdForProduct, {
         type: "image",
-        url: weatherObjectUrl,
+        url: frame.url,
         coordinates: [
-          [-180, maxLat],
-          [180, maxLat],
-          [180, -maxLat],
-          [-180, -maxLat]
+          [-180, frame.maxLat],
+          [180, frame.maxLat],
+          [180, -frame.maxLat],
+          [-180, -frame.maxLat]
         ]
       });
 
       const layer = {
-        id: weatherLayerId,
+        id: layerId,
         type: "raster",
-        source: weatherSourceId,
+        source: sourceIdForProduct,
         paint: {
-          "raster-opacity": Math.max(0.1, Math.min(0.85, Number(weatherOpacity?.value || 48) / 100)),
+          "raster-opacity": wafsOpacity(product),
           "raster-fade-duration": 0
         }
       };
       const before = map.getLayer("nav-airspace-fill") ? "nav-airspace-fill" : undefined;
       if (before) map.addLayer(layer, before); else map.addLayer(layer);
 
-      const validUtc = response.headers.get("x-yc-wafs-valid-utc");
-      const runUtc = response.headers.get("x-yc-wafs-run");
-      const layerFL = response.headers.get("x-yc-wafs-layer-fl");
-      const level = layerFL && layerFL !== "NA" ? ` · FL${layerFL}` : "";
-      if (weatherStatus) {
-        weatherStatus.textContent = `${validUtc ? validUtc.slice(0,16).replace("T"," ")+"Z" : formatSelectedUtc()}${level} · run ${runUtc ? runUtc.slice(0,13).replace("T"," ")+"Z" : "—"}`;
-      }
-    } catch (error) {
-      if (error?.name === "AbortError") return;
-      clearWeatherOverlay();
-      if (weatherStatus) weatherStatus.textContent = error.message || "WAFS frame alınamadı.";
+      weatherOverlays.set(product, { url: frame.url });
+      success++;
+
+      const level = frame.layerFL && frame.layerFL !== "NA" ? `FL${frame.layerFL}` : "whole";
+      const valid = frame.validUtc ? frame.validUtc.slice(0,16).replace("T"," ") + "Z" : formatSelectedUtc();
+      if (meta) meta.textContent = `${valid} · ${level} · F${frame.forecastHour || "?"}`;
+    }
+
+    if (wafsStatus) {
+      wafsStatus.textContent = success
+        ? `${success}/${active.length} WAFS katmanı · ${formatSelectedUtc()}`
+        : "Seçilen UTC için public AWC WAFS frame bulunamadı.";
     }
   }
 
@@ -804,7 +910,7 @@
     addNavLayers();
     boot.classList.add("hidden");
     scheduleViewportLoad(0);
-    loadWeatherOverlay().catch(console.error);
+    loadWeatherOverlays().catch(console.error);
   });
 
   map.on("moveend", () => scheduleViewportLoad());
@@ -817,36 +923,59 @@
     });
   });
 
-  timeInput?.addEventListener("change", () => {
-    if (timeLabel) timeLabel.textContent = formatSelectedUtc();
-    scheduleViewportLoad(0);
-    loadWeatherOverlay().catch(console.error);
+  timeSlider?.addEventListener("input", () => {
+    if (!timelineAnchor) return;
+    const hours = Number(timeSlider.value || 0);
+    const date = new Date(timelineAnchor.getTime() + hours * 3600000);
+    setSelectedTime(date, true, false);
   });
 
-  document.querySelectorAll("[data-time-shift]").forEach(button => {
-    button.addEventListener("click", () => {
-      const hours = Number(button.dataset.timeShift || 0);
-      setSelectedTime(new Date(selectedTimeDate().getTime() + hours * 3600000));
-    });
+  timeInput?.addEventListener("change", () => {
+    const date = selectedTimeDate();
+    setSelectedTime(date, true, true);
   });
 
   timeNowButton?.addEventListener("click", () => {
     const now = new Date();
     now.setUTCSeconds(0, 0);
-    setSelectedTime(now);
+    timelineAnchor = now;
+    if (timeSlider) timeSlider.value = "0";
+    setSelectedTime(now, true, false);
   });
 
-  weatherEnabled?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
-  weatherProduct?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
-  weatherFL?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
-  weatherOpacity?.addEventListener("input", () => {
-    if (map.getLayer(weatherLayerId)) {
-      map.setPaintProperty(weatherLayerId, "raster-opacity", Math.max(0.1, Math.min(0.85, Number(weatherOpacity.value || 48) / 100)));
-    }
+  modeButtons.forEach(button => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.panelTarget;
+      const panel = document.getElementById(target);
+      const wasOpen = panel?.classList.contains("open");
+      toolPanels.forEach(p => p.classList.remove("open"));
+      modeButtons.forEach(b => b.classList.remove("active"));
+      if (!wasOpen && panel) {
+        panel.classList.add("open");
+        button.classList.add("active");
+      }
+    });
   });
 
-  layerToggle.addEventListener("click", () => layersPanel.classList.toggle("open"));
-  layersClose.addEventListener("click", () => layersPanel.classList.remove("open"));
+  panelCloseButtons.forEach(button => {
+    button.addEventListener("click", () => {
+      button.closest(".tool-panel")?.classList.remove("open");
+      modeButtons.forEach(b => b.classList.remove("active"));
+    });
+  });
+
+  wafsEnabled?.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
+  wafsFL?.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
+  wafsProductInputs.forEach(input => {
+    input.addEventListener("change", () => loadWeatherOverlays().catch(console.error));
+  });
+  wafsOpacityInputs.forEach(input => {
+    input.addEventListener("input", () => {
+      const product = input.dataset.wafsOpacity;
+      const layerId = wafsLayerId(product);
+      if (map.getLayer(layerId)) map.setPaintProperty(layerId, "raster-opacity", wafsOpacity(product));
+    });
+  });
 
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimer);
