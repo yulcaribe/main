@@ -99,6 +99,19 @@ function nmsStoreFloat(mixed $value): ?float {
     return null;
 }
 
+function nmsCanonicalClassification(mixed $value): ?string {
+    $text = strtoupper(trim((string)($value ?? '')));
+    if ($text === '') return null;
+
+    return match ($text) {
+        'DOM' => 'DOMESTIC',
+        'INTL' => 'INTERNATIONAL',
+        'MIL' => 'MILITARY',
+        'LMIL', 'LOCAL_MIL' => 'LOCAL_MILITARY',
+        default => $text,
+    };
+}
+
 function nmsRecordStatus(?string $type, ?string $effectiveStart, ?string $effectiveEndRaw): string {
     if (strtoupper((string)$type) === 'C') return 'cancelled';
 
@@ -141,7 +154,7 @@ function nmsNormalizeFeature(array $feature, string $environment): ?array {
         'number' => nmsStoreShortText($notam['number'] ?? null, 30),
         'year' => nmsStoreInt($notam['year'] ?? null),
         'notam_type' => $type,
-        'classification' => nmsStoreShortText($notam['classification'] ?? null, 30),
+        'classification' => nmsCanonicalClassification($notam['classification'] ?? null),
         'affected_fir' => nmsStoreShortText($notam['affectedFir'] ?? null, 20),
         'location' => nmsStoreShortText($notam['location'] ?? null, 20),
         'icao_location' => nmsStoreShortText($notam['icaoLocation'] ?? null, 20),
@@ -157,8 +170,8 @@ function nmsNormalizeFeature(array $feature, string $environment): ?array {
         'effective_end_raw' => nmsStoreShortText($effectiveEndRaw, 50),
         'estimated' => nmsStoreShortText($notam['estimated'] ?? null, 20),
         'schedule' => nmsStoreText($notam['schedule'] ?? null),
-        'lower_limit' => nmsStoreShortText($notam['lowerLimit'] ?? null, 100),
-        'upper_limit' => nmsStoreShortText($notam['upperLimit'] ?? null, 100),
+        'lower_limit' => nmsStoreText($notam['lowerLimit'] ?? null),
+        'upper_limit' => nmsStoreText($notam['upperLimit'] ?? null),
         'coordinates_raw' => nmsStoreText($notam['coordinates'] ?? null),
         'radius_nm' => nmsStoreFloat($notam['radius'] ?? null),
         'notam_text' => nmsStoreText($notam['text'] ?? null),
