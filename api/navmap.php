@@ -502,7 +502,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
     $atSql = $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
-    $params = ['at' => $atSql, 'environment' => 'production'];
+    $params = ['at_start' => $atSql, 'at_end' => $atSql, 'environment' => 'production'];
     $bboxExpr = bboxGeometrySql($west, $south, $east, $north, $params);
     $bboxExpr = sprintf($bboxExpr, 'n.geometry', 'n.geometry');
 
@@ -526,11 +526,11 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
               AND n.environment = :environment
               AND n.geometry IS NOT NULL
               AND n.status <> \'cancelled\'
-              AND (n.effective_start IS NULL OR n.effective_start <= :at)
+              AND (n.effective_start IS NULL OR n.effective_start <= :at_start)
               AND (
                     UPPER(COALESCE(n.effective_end_raw, \'\')) = \'PERM\'
                     OR n.effective_end IS NULL
-                    OR n.effective_end >= :at
+                    OR n.effective_end >= :at_end
                   )
               AND ' . $bboxExpr . '
             ORDER BY n.effective_start DESC
