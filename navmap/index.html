@@ -8,7 +8,7 @@
   <title>Navdata Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/navmap/navmap.css?v=5">
+  <link rel="stylesheet" href="/main/navmap/navmap.css?v=6">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -89,8 +89,15 @@
     </div>
     <label class="master-row"><span><i class="legend-line notam-swatch"></i>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
     <div class="notam-stat"><strong data-layer-count="notam">0</strong><span>haritada gösterilen NOTAM</span></div>
-    <div class="card-note" id="notam-time-status">FAA geometry, radius circle, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.</div>
-    <div class="card-note">Öncelik gerçek FAA geometry. Radius varsa circle overlay çizilir; yoksa ICAO meydanı, o da yoksa NOTAM coordinates/Q-line koordinatı kullanılır.</div>
+    <div class="card-note" id="notam-time-status">FAA geometry, NOTAM AREA polygonları ve kontrollü fallback geometrileri gösterilir.</div>
+    <div class="notam-legend" aria-label="NOTAM harita lejandı">
+      <span><i data-notam-color="airspace"></i>AIRSPACE</span>
+      <span><i data-notam-color="rwy"></i>RWY/TWY</span>
+      <span><i data-notam-color="uav"></i>UAV/PARA</span>
+      <span><i data-notam-color="obstacle"></i>OBST</span>
+      <span><i data-notam-color="nav"></i>NAV/COM</span>
+    </div>
+    <div class="card-note">Öncelik: FAA alan geometrisi → metindeki AREA koordinatları → Q-line radius zarfı → tek nokta/meydan fallback. Kesik çizgi yaklaşık kapsamı gösterir.</div>
   </aside>
 
   <aside class="tool-panel" id="wafs-panel">
@@ -138,13 +145,11 @@
         <span id="timeline-offset">0h</span>
       </div>
       <div class="timeline-actions">
-        <button class="time-step" data-time-step="-24" type="button">-24h</button>
         <button class="time-step" data-time-step="-6" type="button">-6h</button>
         <button class="time-step" data-time-step="-1" type="button">-1h</button>
         <button id="time-now" type="button">NOW</button>
         <button class="time-step" data-time-step="1" type="button">+1h</button>
         <button class="time-step" data-time-step="6" type="button">+6h</button>
-        <button class="time-step" data-time-step="24" type="button">+24h</button>
       </div>
     </div>
     <div class="timeline-scale" id="timeline-scale">
@@ -193,7 +198,7 @@
 
         try {
           detail.textContent = "Navdata istemcisi yükleniyor…";
-          await loadScript("/main/navmap/navmap.js?v=5");
+          await loadScript("/main/navmap/navmap.js?v=6");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/navmap/navmap.js yüklenemedi.";
