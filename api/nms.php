@@ -44,8 +44,73 @@ if ($action === 'ping') {
     ]);
 }
 
+if ($action === 'probe-ltai') {
+    $cfg = nmsPrivateConfig();
+
+    if ($cfg['env'] !== 'staging') {
+        nmsRespond(403, [
+            'ok' => false,
+            'error' => 'This probe is available only in staging.',
+        ]);
+    }
+
+    $result = nmsGet('/notams', ['location' => 'LTAI'], 'GEOJSON');
+
+    if (!($result['ok'] ?? false)) {
+        nmsRespond((int)($result['status'] ?? 502), [
+            'ok' => false,
+            'service' => 'faa-nms',
+            'environment' => $cfg['env'],
+            'location' => 'LTAI',
+            'error' => $result['error'] ?? 'NMS LTAI probe failed.',
+            'upstreamStatus' => $result['status'] ?? null,
+        ]);
+    }
+
+    $apiResponse = is_array($result['data'] ?? null) ? $result['data'] : [];
+    $features = $apiResponse['data']['geojson'] ?? [];
+    if (!is_array($features)) {
+        $features = [];
+    }
+
+    $items = [];
+    foreach (array_slice($features, 0, 20) as $feature) {
+        if (!is_array($feature)) continue;
+        $notam = $feature['properties']['coreNOTAMData']['notam'] ?? null;
+        if (!is_array($notam)) continue;
+
+        $items[] = [
+            'id' => $notam['id'] ?? null,
+            'series' => $notam['series'] ?? null,
+            'number' => $notam['number'] ?? null,
+            'year' => $notam['year'] ?? null,
+            'type' => $notam['type'] ?? null,
+            'affectedFir' => $notam['affectedFir'] ?? null,
+            'location' => $notam['location'] ?? null,
+            'icaoLocation' => $notam['icaoLocation'] ?? null,
+            'effectiveStart' => $notam['effectiveStart'] ?? null,
+            'effectiveEnd' => $notam['effectiveEnd'] ?? null,
+            'classification' => $notam['classification'] ?? null,
+            'lastUpdated' => $notam['lastUpdated'] ?? null,
+            'text' => $notam['text'] ?? null,
+        ];
+    }
+
+    nmsRespond(200, [
+        'ok' => true,
+        'service' => 'faa-nms',
+        'environment' => $cfg['env'],
+        'location' => 'LTAI',
+        'upstreamStatus' => $result['status'] ?? 200,
+        'apiStatus' => $apiResponse['status'] ?? null,
+        'count' => count($features),
+        'returned' => count($items),
+        'items' => $items,
+    ]);
+}
+
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'ping'],
+    'allowedActions' => ['status', 'ping', 'probe-ltai'],
 ]);
