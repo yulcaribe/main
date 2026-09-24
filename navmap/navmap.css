@@ -218,31 +218,50 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
 
 .timeline-dock{
   position:fixed;z-index:1080;left:50%;bottom:16px;transform:translateX(-50%);
-  width:min(980px,calc(100vw - 120px));padding:10px 14px 12px;
-  border:1px solid var(--line);border-radius:16px;background:rgba(6,17,26,.94);
+  width:min(1080px,calc(100vw - 96px));padding:14px 16px 14px;
+  border:1px solid var(--line);border-radius:18px;background:rgba(6,17,26,.95);
   backdrop-filter:blur(18px);box-shadow:var(--shadow)
 }
-.timeline-head{display:flex;align-items:center;gap:10px;margin-bottom:5px}
-.timeline-head strong{font:800 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text)}
-.timeline-head span{margin-left:auto;color:var(--cyan);font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace}
-.timeline-head button{
-  height:26px;padding:0 9px;border:1px solid var(--line);border-radius:8px;
-  background:rgba(255,255,255,.04);color:var(--text);font:800 8px/1 inherit;cursor:pointer
+.timeline-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  margin-bottom:8px;flex-wrap:wrap
+}
+.timeline-head-main{
+  display:flex;align-items:center;gap:10px;min-width:220px
+}
+.timeline-head strong{
+  font:800 14px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text)
+}
+.timeline-head span{
+  color:var(--cyan);font:800 11px ui-monospace,SFMono-Regular,Menlo,monospace
+}
+.timeline-actions{
+  display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end
+}
+.timeline-actions button{
+  height:30px;padding:0 10px;border:1px solid var(--line);border-radius:9px;
+  background:rgba(255,255,255,.04);color:var(--text);
+  font:800 10px/1 inherit;cursor:pointer
+}
+.timeline-actions button:hover{
+  border-color:rgba(95,224,239,.34);
+  background:rgba(95,224,239,.08)
 }
 .timeline-scale{
-  display:grid;grid-template-columns:repeat(7,1fr);margin:0 1px 2px;
-  color:#728894;font:700 7px ui-monospace,SFMono-Regular,Menlo,monospace
+  display:grid;grid-template-columns:repeat(7,1fr);margin:0 1px 4px;
+  color:#90a8b5;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace
 }
 .timeline-scale span{text-align:center}
-.timeline-scale span:first-child{text-align:left}.timeline-scale span:last-child{text-align:right}
+.timeline-scale span:first-child{text-align:left}
+.timeline-scale span:last-child{text-align:right}
 .timeline-range{
-  width:100%;height:18px;margin:0;accent-color:var(--cyan);cursor:ew-resize;
+  width:100%;height:22px;margin:2px 0 6px;accent-color:var(--cyan);cursor:ew-resize;
   background:transparent
 }
 #map-time{
-  display:block;width:190px;height:28px;margin-top:2px;padding:0 7px;
-  border:1px solid rgba(255,255,255,.06);border-radius:8px;background:#07131c;
-  color:#9fb4bf;font:9px ui-monospace,SFMono-Regular,Menlo,monospace
+  display:block;width:220px;height:32px;margin-top:2px;padding:0 9px;
+  border:1px solid rgba(255,255,255,.08);border-radius:9px;background:#07131c;
+  color:#b9d1dc;font:10px ui-monospace,SFMono-Regular,Menlo,monospace
 }
 
 .notam-stat{
@@ -273,15 +292,22 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
 .zoom-hint{bottom:122px}
 
 @media(max-width:900px){
-  .timeline-dock{width:calc(100vw - 20px);bottom:8px}
-  .map-mode-dock{bottom:108px}
+  .timeline-dock{width:calc(100vw - 20px);bottom:8px;padding:12px}
+  .timeline-head strong{font-size:13px}
+  .timeline-head span{font-size:10px}
+  .timeline-actions button{height:28px;padding:0 9px;font-size:9px}
+  .timeline-scale{font-size:9px}
+  .map-mode-dock{bottom:118px}
   .mode-btn{min-width:86px;padding:0 10px}
   .tool-panel{right:8px;top:132px;width:min(330px,calc(100vw - 16px));max-height:calc(100vh - 260px)}
-  .zoom-hint{bottom:158px}
+  .zoom-hint{bottom:170px}
 }
 @media(max-width:560px){
-  .timeline-scale{font-size:6px}
-  #map-time{width:170px}
+  .timeline-head{gap:10px}
+  .timeline-head-main{width:100%;justify-content:space-between}
+  .timeline-actions{justify-content:flex-start}
+  .timeline-scale{font-size:8px}
+  #map-time{width:100%}
   .map-mode-dock{width:calc(100vw - 20px)}
   .mode-btn{flex:1;min-width:0}
 }
