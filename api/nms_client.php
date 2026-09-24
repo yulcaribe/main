@@ -47,7 +47,7 @@ function nmsPrivateConfig(): array {
         'auth_url' => $hosts[$env] . '/v1/auth/token',
         'client_id' => $clientId,
         'client_secret' => $clientSecret,
-        'timeout' => 25,
+        'timeout' => 120,
     ];
 }
 
