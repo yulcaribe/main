@@ -82,12 +82,6 @@ if (!$lock) {
 }
 
 if (!flock($lock, LOCK_EX | LOCK_NB)) {
-    nmsCronWriteState($environment, [
-        'ok' => true,
-        'mode' => 'locked',
-        'running' => true,
-        'message' => 'Previous NMS cron process is still running.',
-    ]);
     fclose($lock);
     exit(0);
 }
