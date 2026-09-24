@@ -225,7 +225,16 @@
     rows.push(briefLine("KALKIŞ",depCat,catClass(depCat),`${esc(dep?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     rows.push(briefLine("VARIŞ",arrCat,catClass(arrCat),`${esc(arr?.icao||"")} mevcut METAR kategorisi. TAF aşağıdaki kartta.`));
     const pending=data.routeInput?.pendingNavdata||[];
-    rows.push(briefLine("ROTA",data.routeMode==="user_route"?"OFP ROUTE":"ESTIMATED",data.routeMode==="user_route"?"ok":"warn",data.routeMode==="user_route"?`${resolved} koordinat/fix çözüldü${pending.length?`; ${pending.length} airway/procedure navdata bekliyor`:""}${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`:"OFP girilmedi. Great-circle tahmini kullanılıyor."));
+    const navSolved=data.routeInput?.navdataResolved||[];
+    const navEngine=data.routeInput?.engine==="mariadb_navdata";
+    rows.push(briefLine(
+      "ROTA",
+      data.routeMode==="user_route"?(navEngine?"NAVDATA OFP":"OFP ROUTE"):"ESTIMATED",
+      data.routeMode==="user_route"?"ok":"warn",
+      data.routeMode==="user_route"
+        ? `${resolved} plan noktası çözüldü${navSolved.length?`; ${navSolved.length} airway/SID/STAR MariaDB navdata üzerinden açıldı`:""}${pending.length?`; ${pending.length} navdata bölümü çözülemedi`:""}${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`
+        : "OFP girilmedi. Great-circle tahmini kullanılıyor."
+    ));
     const available=sigmetAvailable(data),summary=data.hazardSummary||{},relevant=summary.within100nm||0;
     rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" İLGİLİ":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı tahmini rota geçiş saatiyle ilgili veya zamanı belirsiz. ${summary.outsideRouteEta||0} kayıt uçuş sırasında geçerli olsa da ilgili bölgedeki tahmini geçiş saatine uymuyor. ${summary.outsideFlightWindow||0} kayıt tüm uçuş penceresi dışında. ${summary.unknownTime||0} kaydın zamanı kesin eşleştirilemedi. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
     rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",!available?"SIGMET kaynağı alınamadığı için seviye karşılaştırması yapılamadı.":cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
@@ -266,14 +275,23 @@
       lines.push(`${alt.name}: ${endpoints||"ayrı rota"}${route.length?" · "+route.join(" → "):""}`);
     }
 
+    const navSolved=(meta.navdataResolved||[]).map(x=>{
+      const dir=x.directionFallback?" · DIR FALLBACK":"";
+      return `${String(x.type||"route").toUpperCase()} ${x.id}: ${x.start} → ${x.end} · ${x.segments} SEG${dir}`;
+    });
+    if(navSolved.length) lines.push("NAVDATA RESOLVED: "+navSolved.join(" | "));
+
     const pending=(meta.pendingNavdata||[]).map(x=>{
       const role=x.role&&x.role!=="procedure"?` ${String(x.role).toUpperCase()}`:"";
-      return `${String(x.kind||"navdata").toUpperCase()}${role} ${x.token}`.trim();
+      const reason=x.reason?` · ${String(x.reason).toUpperCase()}`:"";
+      return `${String(x.kind||"navdata").toUpperCase()}${role} ${x.token}${reason}`.trim();
     });
     if(pending.length) lines.push("NAVDATA PENDING: "+pending.join(", "));
 
     const resolved=(meta.resolved||[]).filter(p=>!["departure","arrival"].includes(p.type)).map(p=>p.id);
-    if(resolved.length) lines.push("AWC / COORD RESOLVED: "+resolved.join(" → "));
+    if(resolved.length) lines.push((meta.engine==="mariadb_navdata"?"NAVPOINT RESOLVED: ":"POINT RESOLVED: ")+resolved.join(" → "));
+
+    for(const warning of meta.warnings||[]) lines.push("NAVDATA WARNING: "+warning);
 
     const unr=meta.unresolved||[];
     if(unr.length) lines.push("UNRESOLVED: "+unr.join(", "));
