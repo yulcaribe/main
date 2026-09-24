@@ -597,6 +597,98 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $notamCount++;
     }
 
+    // 3) If neither FAA GeoJSON nor airport location is available, derive a
+    // point from the standard NOTAM coordinate token found in coordinates_raw
+    // or the Q-line text. Supports DDMMNDDDMME and DDMMSSNDDDMMSS E forms.
+    $coordParams = [
+        'at_start' => $atSql,
+        'at_end' => $atSql,
+        'environment' => 'production',
+        'south' => $south,
+        'north' => $north,
+        'west' => $west,
+        'east' => $east,
+    ];
+
+    $coordLonWhere = $west <= $east
+        ? 'q.lon BETWEEN :west AND :east'
+        : '(q.lon >= :west OR q.lon <= :east)';
+
+    $coordTokenExpr = "REGEXP_SUBSTR(
+        UPPER(CONCAT_WS(' ', COALESCE(n.coordinates_raw, ''), COALESCE(n.notam_text, ''))),
+        '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
+    )";
+
+    $coordSql = 'SELECT
+            q.nms_id, q.series, q.number, q.year, q.classification,
+            q.location, q.icao_location, q.effective_start, q.effective_end,
+            q.effective_end_raw, q.lower_limit, q.upper_limit, q.notam_text,
+            JSON_OBJECT(
+                \'type\', \'Point\',
+                \'coordinates\', JSON_ARRAY(q.lon, q.lat)
+            ) AS geometry,
+            \'qline-coordinate\' AS geometry_source
+        FROM (
+            SELECT
+                p.*,
+                CASE
+                    WHEN LENGTH(p.coord_token) = 11 THEN
+                        (
+                            CAST(SUBSTRING(p.coord_token, 1, 2) AS DECIMAL(10,6))
+                            + CAST(SUBSTRING(p.coord_token, 3, 2) AS DECIMAL(10,6)) / 60
+                        ) * IF(SUBSTRING(p.coord_token, 5, 1) = \'S\', -1, 1)
+                    WHEN LENGTH(p.coord_token) = 15 THEN
+                        (
+                            CAST(SUBSTRING(p.coord_token, 1, 2) AS DECIMAL(10,6))
+                            + CAST(SUBSTRING(p.coord_token, 3, 2) AS DECIMAL(10,6)) / 60
+                            + CAST(SUBSTRING(p.coord_token, 5, 2) AS DECIMAL(10,6)) / 3600
+                        ) * IF(SUBSTRING(p.coord_token, 7, 1) = \'S\', -1, 1)
+                    ELSE NULL
+                END AS lat,
+                CASE
+                    WHEN LENGTH(p.coord_token) = 11 THEN
+                        (
+                            CAST(SUBSTRING(p.coord_token, 6, 3) AS DECIMAL(10,6))
+                            + CAST(SUBSTRING(p.coord_token, 9, 2) AS DECIMAL(10,6)) / 60
+                        ) * IF(SUBSTRING(p.coord_token, 11, 1) = \'W\', -1, 1)
+                    WHEN LENGTH(p.coord_token) = 15 THEN
+                        (
+                            CAST(SUBSTRING(p.coord_token, 8, 3) AS DECIMAL(10,6))
+                            + CAST(SUBSTRING(p.coord_token, 11, 2) AS DECIMAL(10,6)) / 60
+                            + CAST(SUBSTRING(p.coord_token, 13, 2) AS DECIMAL(10,6)) / 3600
+                        ) * IF(SUBSTRING(p.coord_token, 15, 1) = \'W\', -1, 1)
+                    ELSE NULL
+                END AS lon
+            FROM (
+                SELECT
+                    n.nms_id, n.series, n.number, n.year, n.classification,
+                    n.location, n.icao_location, n.effective_start, n.effective_end,
+                    n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                    ' . $coordTokenExpr . ' AS coord_token
+                FROM notams n
+                WHERE ' . $baseTimeWhere . '
+                  AND n.geometry IS NULL
+            ) p
+            WHERE p.coord_token IS NOT NULL AND p.coord_token <> \'\'
+        ) q
+        WHERE q.lat BETWEEN :south AND :north
+          AND ' . $coordLonWhere . '
+        ORDER BY q.effective_start DESC
+        LIMIT 5000';
+
+    $coordStmt = $pdo->prepare($coordSql);
+    $coordStmt->execute($coordParams);
+    while ($row = $coordStmt->fetch()) {
+        $id = (string)$row['nms_id'];
+        if (isset($seenNotams[$id])) continue;
+        $feature = notamFeature($row);
+        if (!$feature) continue;
+        $seenNotams[$id] = true;
+        $features[] = $feature;
+        $counts['notam']++;
+        $notamCount++;
+    }
+
     if ($notamCount >= 5000) $truncated = true;
 }
 
