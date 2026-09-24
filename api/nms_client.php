@@ -332,3 +332,76 @@ function nmsGet(
         'body' => $isJson ? null : (string)$body,
     ];
 }
+
+
+function nmsDownloadToFile(
+    string $path,
+    string $destination,
+    bool $retryAuth = true
+): array {
+    $cfg = nmsPrivateConfig();
+    $auth = nmsAccessToken(false);
+    if (!($auth['ok'] ?? false)) return $auth;
+
+    $path = '/' . ltrim($path, '/');
+    $url = $cfg['api_base'] . $path;
+
+    $fh = @fopen($destination, 'wb');
+    if (!$fh) {
+        return ['ok' => false, 'status' => 500, 'error' => 'Temporary NMS download file could not be opened.'];
+    }
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fh,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => PHP_SAPI === 'cli' ? 600 : $cfg['timeout'],
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $auth['access_token'],
+            'Accept: application/octet-stream, */*;q=0.5',
+        ],
+        CURLOPT_USERAGENT => NMS_USER_AGENT,
+        CURLOPT_ENCODING => '',
+        CURLOPT_HEADER => false,
+    ]);
+
+    $ok = curl_exec($ch);
+    $errno = curl_errno($ch);
+    $error = curl_error($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    fclose($fh);
+
+    if ($status === 401 && $retryAuth) {
+        @unlink($destination);
+        $fresh = nmsAccessToken(true);
+        if (!($fresh['ok'] ?? false)) return $fresh;
+        return nmsDownloadToFile($path, $destination, false);
+    }
+
+    if ($errno !== 0 || $ok === false || $status < 200 || $status >= 300) {
+        @unlink($destination);
+        return [
+            'ok' => false,
+            'status' => $status ?: 502,
+            'error' => $error !== '' ? $error : ('NMS content HTTP ' . $status),
+        ];
+    }
+
+    $bytes = is_file($destination) ? (int)filesize($destination) : 0;
+    if ($bytes <= 0) {
+        @unlink($destination);
+        return ['ok' => false, 'status' => 502, 'error' => 'NMS content download was empty.'];
+    }
+
+    return [
+        'ok' => true,
+        'status' => $status,
+        'contentType' => $contentType,
+        'bytes' => $bytes,
+        'path' => $destination,
+    ];
+}
