@@ -8,7 +8,7 @@
   <title>Navdata Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/navmap/navmap.css?v=3">
+  <link rel="stylesheet" href="/main/navmap/navmap.css?v=4">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -89,8 +89,8 @@
     </div>
     <label class="master-row"><span><i class="legend-line notam-swatch"></i>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
     <div class="notam-stat"><strong data-layer-count="notam">0</strong><span>haritada gösterilen NOTAM</span></div>
-    <div class="card-note" id="notam-time-status">FAA geometry veya meydan konumu bulunan NOTAM'lar gösterilir.</div>
-    <div class="card-note">Polygon/point geometry varsa gerçek FAA geometry kullanılır. Geometry yok ama ICAO meydanı biliniyorsa marker meydan konumuna sabitlenir.</div>
+    <div class="card-note" id="notam-time-status">FAA geometry, meydan konumu veya Q-line koordinatı bulunan NOTAM'lar gösterilir.</div>
+    <div class="card-note">Öncelik gerçek FAA geometry. Yoksa ICAO meydanı, o da yoksa NOTAM coordinates/Q-line koordinatı kullanılır.</div>
   </aside>
 
   <aside class="tool-panel" id="wafs-panel">
@@ -183,7 +183,7 @@
 
         try {
           detail.textContent = "Navdata istemcisi yükleniyor…";
-          await loadScript("/main/navmap/navmap.js?v=3");
+          await loadScript("/main/navmap/navmap.js?v=4");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/navmap/navmap.js yüklenemedi.";
