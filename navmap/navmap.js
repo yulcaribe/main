@@ -7,7 +7,10 @@
   }
 
   const API = "/main/api/navmap.php";
+  const WAFS_API = "/main/api/wafs.php";
   const sourceId = "navdata";
+  const weatherSourceId = "wafs-weather";
+  const weatherLayerId = "wafs-weather-layer";
   const mapEl = document.getElementById("map");
   const boot = document.getElementById("boot");
   const bootDetail = document.getElementById("boot-detail");
@@ -20,6 +23,15 @@
   const layersClose = document.getElementById("layers-close");
   const searchInput = document.getElementById("nav-search");
   const searchResults = document.getElementById("search-results");
+  const timeInput = document.getElementById("map-time");
+  const timeLabel = document.getElementById("selected-time-label");
+  const timeNowButton = document.getElementById("time-now");
+  const notamTimeStatus = document.getElementById("notam-time-status");
+  const weatherEnabled = document.getElementById("weather-enabled");
+  const weatherProduct = document.getElementById("weather-product");
+  const weatherFL = document.getElementById("weather-fl");
+  const weatherOpacity = document.getElementById("weather-opacity");
+  const weatherStatus = document.getElementById("weather-status");
 
   const layerInputs = [...document.querySelectorAll("[data-nav-layer]")];
   const countEls = Object.fromEntries(
@@ -33,7 +45,8 @@
     airway: "#5fdbe8",
     sid: "#70e8a7",
     star: "#bc9cff",
-    airspace: "#ff7f94"
+    airspace: "#ff7f94",
+    notam: "#ffd35f"
   };
 
   const HIT_TOLERANCE = window.matchMedia("(pointer: coarse)").matches ? 18 : 11;
@@ -42,6 +55,8 @@
   let searchController = null;
   let loadTimer = null;
   let searchTimer = null;
+  let weatherController = null;
+  let weatherObjectUrl = null;
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
 
@@ -303,6 +318,63 @@
       });
     }
 
+    map.addLayer({
+      id: "nav-notam-fill",
+      type: "fill",
+      source: sourceId,
+      filter: ["all", ["==", ["get", "layer"], "notam"], ["==", ["geometry-type"], "Polygon"]],
+      paint: { "fill-color": palette.notam, "fill-opacity": 0.13 },
+      layout: { visibility: visibilityFor("notam") }
+    });
+
+    map.addLayer({
+      id: "nav-notam-line",
+      type: "line",
+      source: sourceId,
+      filter: ["==", ["get", "layer"], "notam"],
+      paint: {
+        "line-color": palette.notam,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.2, 10, 2.1],
+        "line-opacity": 0.9
+      },
+      layout: { visibility: visibilityFor("notam") }
+    });
+
+    map.addLayer({
+      id: "nav-notam-circle",
+      type: "circle",
+      source: sourceId,
+      filter: ["all", ["==", ["get", "layer"], "notam"], ["==", ["geometry-type"], "Point"]],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 10, 7],
+        "circle-color": palette.notam,
+        "circle-stroke-color": "#06111a",
+        "circle-stroke-width": 1.4
+      },
+      layout: { visibility: visibilityFor("notam") }
+    });
+
+    map.addLayer({
+      id: "nav-notam-label",
+      type: "symbol",
+      source: sourceId,
+      filter: ["==", ["get", "layer"], "notam"],
+      minzoom: 7,
+      layout: {
+        visibility: visibilityFor("notam"),
+        "text-field": ["coalesce", ["get", "ident"], "NOTAM"],
+        "text-size": 10,
+        "text-font": ["Noto Sans Regular"],
+        "text-offset": [0.8, 0.8],
+        "text-optional": true
+      },
+      paint: {
+        "text-color": palette.notam,
+        "text-halo-color": "#06111a",
+        "text-halo-width": 1.5
+      }
+    });
+
     const interactiveLayerIds = [
       "nav-airport-hit",
       "nav-navaid-hit",
@@ -311,7 +383,11 @@
       "nav-star-hit",
       "nav-airway-hit",
       "nav-airspace-fill",
-      "nav-airspace-line"
+      "nav-airspace-line",
+      "nav-notam-fill",
+      "nav-notam-line",
+      "nav-notam-circle",
+      "nav-notam-label"
     ];
 
     const priority = {
@@ -321,7 +397,8 @@
       sid: 3,
       star: 4,
       airway: 5,
-      airspace: 6
+      notam: 6,
+      airspace: 7
     };
 
     function pickInteractiveFeature(point) {
@@ -376,6 +453,7 @@
     const subtitle = [p.layer, p.name && p.name !== title ? p.name : null].filter(Boolean).join(" · ");
 
     let rows = "";
+    let detailText = "";
     if (p.layer === "airport" || p.layer === "navaid" || p.layer === "waypoint") {
       rows += infoRow("IATA", p.iata);
       rows += infoRow("Şehir", p.city);
@@ -396,6 +474,14 @@
       rows += infoRow("Type", p.type_code);
       rows += infoRow("Usage", p.usage_code);
       rows += infoRow("Control", p.control_type);
+     else if (p.layer === "notam") {
+      rows += infoRow("Location", p.icao_location || p.location);
+      rows += infoRow("Class", p.classification);
+      rows += infoRow("Valid from", p.effective_start);
+      rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
+      rows += infoRow("Lower", p.lower_limit);
+      rows += infoRow("Upper", p.upper_limit);
+      detailText = p.text || "";
     }
 
     const html = `
@@ -403,6 +489,7 @@
         <h3>${esc(title)}</h3>
         <div class="sub">${esc(subtitle)}</div>
         <div class="popup-grid">${rows || "<div><span>Layer</span><strong>" + esc(p.layer) + "</strong></div>"}</div>
+        ${detailText ? '<div class="notam-text">' + esc(detailText) + '</div>' : ''}
       </div>`;
 
     new maplibregl.Popup({ closeButton: true, maxWidth: "360px" })
@@ -419,6 +506,12 @@
       countEls[key].textContent = new Intl.NumberFormat("tr-TR").format(count);
     }
     featureCount.textContent = new Intl.NumberFormat("tr-TR").format(total) + " obje";
+    if (notamTimeStatus) {
+      const n = Number(counts.notam || 0);
+      notamTimeStatus.textContent = selectedLayers().includes("notam")
+        ? new Intl.NumberFormat("tr-TR").format(n) + " geometry · " + formatSelectedUtc()
+        : "Geometry bulunan production NOTAM'lar gösterilir.";
+    }
   }
 
   function updateZoomHint(truncated = false) {
@@ -451,6 +544,131 @@
     };
   }
 
+  function inputValueFromDate(date) {
+    return date.toISOString().slice(0, 16);
+  }
+
+  function selectedTimeDate() {
+    const raw = timeInput?.value || "";
+    const parsed = raw ? new Date(raw + ":00Z") : new Date();
+    return Number.isFinite(parsed.getTime()) ? parsed : new Date();
+  }
+
+  function selectedTimeIso() {
+    return selectedTimeDate().toISOString();
+  }
+
+  function formatSelectedUtc() {
+    return selectedTimeDate().toISOString().slice(0, 16).replace("T", " ") + "Z";
+  }
+
+  function setSelectedTime(date, reload = true) {
+    if (!timeInput) return;
+    timeInput.value = inputValueFromDate(date);
+    if (timeLabel) timeLabel.textContent = formatSelectedUtc();
+    if (reload && map.loaded()) {
+      scheduleViewportLoad(0);
+      loadWeatherOverlay().catch(console.error);
+    }
+  }
+
+  function initializeTime() {
+    const now = new Date();
+    now.setUTCSeconds(0, 0);
+    setSelectedTime(now, false);
+  }
+
+  function clearWeatherOverlay() {
+    if (map.getLayer(weatherLayerId)) map.removeLayer(weatherLayerId);
+    if (map.getSource(weatherSourceId)) map.removeSource(weatherSourceId);
+    if (weatherObjectUrl) {
+      URL.revokeObjectURL(weatherObjectUrl);
+      weatherObjectUrl = null;
+    }
+  }
+
+  function loadImage(url, signal) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const abort = () => { img.src = ""; reject(new DOMException("Aborted", "AbortError")); };
+      signal?.addEventListener("abort", abort, { once: true });
+      img.onload = () => { signal?.removeEventListener("abort", abort); resolve(img); };
+      img.onerror = () => { signal?.removeEventListener("abort", abort); reject(new Error("WAFS görseli açılamadı.")); };
+      img.src = url;
+    });
+  }
+
+  async function loadWeatherOverlay() {
+    if (!map.loaded()) return;
+    weatherController?.abort();
+    weatherController = new AbortController();
+
+    if (!weatherEnabled?.checked) {
+      clearWeatherOverlay();
+      if (weatherStatus) weatherStatus.textContent = "Weather kapalı.";
+      return;
+    }
+
+    const product = weatherProduct?.value || "cbextent";
+    const fl = Math.max(50, Math.min(600, Number(weatherFL?.value || 360)));
+    const valid = selectedTimeIso().slice(0, 16).replace("T", " ");
+    const q = new URLSearchParams({ action: "image", product, fl: String(fl), valid });
+
+    if (weatherStatus) weatherStatus.textContent = "AWC WAFS frame yükleniyor…";
+
+    try {
+      const response = await fetch(`${WAFS_API}?${q}`, { cache: "no-store", signal: weatherController.signal });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.error || `WAFS HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
+      const img = await loadImage(nextUrl, weatherController.signal);
+      const yMax = Math.PI * (img.naturalHeight / img.naturalWidth);
+      const maxLat = 180 / Math.PI * Math.atan(Math.sinh(yMax));
+
+      clearWeatherOverlay();
+      weatherObjectUrl = nextUrl;
+
+      map.addSource(weatherSourceId, {
+        type: "image",
+        url: weatherObjectUrl,
+        coordinates: [
+          [-180, maxLat],
+          [180, maxLat],
+          [180, -maxLat],
+          [-180, -maxLat]
+        ]
+      });
+
+      const layer = {
+        id: weatherLayerId,
+        type: "raster",
+        source: weatherSourceId,
+        paint: {
+          "raster-opacity": Math.max(0.1, Math.min(0.85, Number(weatherOpacity?.value || 48) / 100)),
+          "raster-fade-duration": 0
+        }
+      };
+      const before = map.getLayer("nav-airspace-fill") ? "nav-airspace-fill" : undefined;
+      if (before) map.addLayer(layer, before); else map.addLayer(layer);
+
+      const validUtc = response.headers.get("x-yc-wafs-valid-utc");
+      const runUtc = response.headers.get("x-yc-wafs-run");
+      const layerFL = response.headers.get("x-yc-wafs-layer-fl");
+      const level = layerFL && layerFL !== "NA" ? ` · FL${layerFL}` : "";
+      if (weatherStatus) {
+        weatherStatus.textContent = `${validUtc ? validUtc.slice(0,16).replace("T"," ")+"Z" : formatSelectedUtc()}${level} · run ${runUtc ? runUtc.slice(0,13).replace("T"," ")+"Z" : "—"}`;
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      clearWeatherOverlay();
+      if (weatherStatus) weatherStatus.textContent = error.message || "WAFS frame alınamadı.";
+    }
+  }
+
   async function loadViewport() {
     clearTimeout(loadTimer);
 
@@ -479,7 +697,8 @@
       west: String(bounds.west),
       south: String(bounds.south),
       east: String(bounds.east),
-      north: String(bounds.north)
+      north: String(bounds.north),
+      at: selectedTimeIso()
     });
 
     try {
@@ -578,10 +797,13 @@
     });
   }
 
+  initializeTime();
+
   map.on("load", () => {
     addNavLayers();
     boot.classList.add("hidden");
     scheduleViewportLoad(0);
+    loadWeatherOverlay().catch(console.error);
   });
 
   map.on("moveend", () => scheduleViewportLoad());
@@ -592,6 +814,34 @@
       setLayerVisibility(input.dataset.navLayer);
       scheduleViewportLoad(0);
     });
+  });
+
+  timeInput?.addEventListener("change", () => {
+    if (timeLabel) timeLabel.textContent = formatSelectedUtc();
+    scheduleViewportLoad(0);
+    loadWeatherOverlay().catch(console.error);
+  });
+
+  document.querySelectorAll("[data-time-shift]").forEach(button => {
+    button.addEventListener("click", () => {
+      const hours = Number(button.dataset.timeShift || 0);
+      setSelectedTime(new Date(selectedTimeDate().getTime() + hours * 3600000));
+    });
+  });
+
+  timeNowButton?.addEventListener("click", () => {
+    const now = new Date();
+    now.setUTCSeconds(0, 0);
+    setSelectedTime(now);
+  });
+
+  weatherEnabled?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
+  weatherProduct?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
+  weatherFL?.addEventListener("change", () => loadWeatherOverlay().catch(console.error));
+  weatherOpacity?.addEventListener("input", () => {
+    if (map.getLayer(weatherLayerId)) {
+      map.setPaintProperty(weatherLayerId, "raster-opacity", Math.max(0.1, Math.min(0.85, Number(weatherOpacity.value || 48) / 100)));
+    }
   });
 
   layerToggle.addEventListener("click", () => layersPanel.classList.toggle("open"));
