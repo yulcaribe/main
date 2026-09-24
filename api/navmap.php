@@ -573,7 +573,10 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             FROM notams n
             JOIN nav_points p
               ON p.kind = \'airport\'
-             AND p.ident = COALESCE(NULLIF(n.icao_location, \'\'), NULLIF(n.location, \'\'))
+             AND (
+                    UPPER(p.ident) = UPPER(NULLIF(n.icao_location, \'\'))
+                    OR UPPER(p.ident) = UPPER(NULLIF(n.location, \'\'))
+                 )
             WHERE ' . $baseTimeWhere . '
               AND n.geometry IS NULL
               AND p.lat BETWEEN :south AND :north
