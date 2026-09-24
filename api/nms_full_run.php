@@ -64,28 +64,26 @@ function nmsFullPrepareState(string $environment): array {
             throw new RuntimeException((string)($meta['error'] ?? 'FAA NMS initial load request failed.'));
         }
 
-        $metaData = is_array($meta['data'] ?? null) ? $meta['data'] : [];
-        $contentUrl = $metaData['data']['url'] ?? null;
-        $payload = null;
-
-        if (is_string($contentUrl) && trim($contentUrl) !== '') {
-            $content = nmsGet(nmsFullContentApiPath($contentUrl), [], null);
-            if (!($content['ok'] ?? false)) {
-                throw new RuntimeException((string)($content['error'] ?? 'FAA NMS initial load content download failed.'));
-            }
-            $payload = $content['body'] ?? null;
-        } else {
-            $payload = $meta['body'] ?? null;
-        }
-
-        if (!is_string($payload) || $payload === '') {
-            throw new RuntimeException('FAA NMS initial load payload was empty.');
-        }
-
         $base = nmsCacheDir() . DIRECTORY_SEPARATOR . 'initial_' . $environment . '_' . getmypid() . '_' . time();
         $downloadPath = $base . '.bin';
-        nmsFullWritePayload($payload, $downloadPath);
-        unset($payload);
+
+        $metaData = is_array($meta['data'] ?? null) ? $meta['data'] : [];
+        $contentUrl = $metaData['data']['url'] ?? null;
+
+        if (is_string($contentUrl) && trim($contentUrl) !== '') {
+            $download = nmsDownloadToFile(nmsFullContentApiPath($contentUrl), $downloadPath);
+            if (!($download['ok'] ?? false)) {
+                throw new RuntimeException((string)($download['error'] ?? 'FAA NMS initial load content download failed.'));
+            }
+        } else {
+            $payload = $meta['body'] ?? null;
+            if (!is_string($payload) || $payload === '') {
+                throw new RuntimeException('FAA NMS initial load payload was empty.');
+            }
+            nmsFullWritePayload($payload, $downloadPath);
+            unset($payload);
+        }
+
         $xmlPath = nmsFullMaterializeXml($downloadPath);
     }
 
