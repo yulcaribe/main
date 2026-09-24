@@ -215,6 +215,7 @@ function parseRouteSection(string $raw, string $from, string $to, bool $isAltern
     $items=[]; $ignored=[]; $unknown=[];
     $vertical=['initialFL'=>null,'changes'=>[]];
     $procedureHint=null;
+    $afterDestination=false;
 
     foreach ($tokens as $original) {
         $token=trim($original, " \t\n\r\0\x0B()[]{}");
@@ -247,7 +248,7 @@ function parseRouteSection(string $raw, string $from, string $to, bool $isAltern
         $standaloneFL=parseFlightLevelToken($token);
         if ($standaloneFL!==null) {
             if ($vertical['initialFL']===null) $vertical['initialFL']=$standaloneFL;
-            $items[]=['token'=>$token,'kind'=>'flight_level','fl'=>$standaloneFL];
+            if (!$afterDestination) $items[]=['token'=>$token,'kind'=>'flight_level','fl'=>$standaloneFL];
             continue;
         }
 
@@ -279,7 +280,25 @@ function parseRouteSection(string $raw, string $from, string $to, bool $isAltern
             $item['levelFL']=$levelFL;
             $vertical['changes'][]=['at'=>$token,'fl'=>$levelFL];
         }
+
+        // Some OFP formats append the vertical profile after the destination
+        // runway, e.g. "... LTFJR06R F260 ETAMP/F240 EMGIM/F180 ...".
+        // Those tokens describe descent/profile checkpoints; they must not be
+        // appended to the lateral route after the destination.
+        if ($afterDestination) {
+            if ($levelFL!==null) continue;
+            $ignored[]=$token;
+            continue;
+        }
+
         $items[]=$item;
+
+        if (
+            ($item['kind']==='airport_runway' && ($item['airport']??'')===$to) ||
+            ($item['kind']==='airport' && ($item['airport']??'')===$to)
+        ) {
+            $afterDestination=true;
+        }
     }
 
     // Infer SID/STAR only when the lexical shape is clear. Validation and exact
