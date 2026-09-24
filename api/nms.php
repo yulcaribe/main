@@ -70,7 +70,20 @@ if ($action === 'delta-test') {
 
     @file_put_contents($cooldownPath, (string)$now, LOCK_EX);
 
-    $result = nmsRunDeltaSync();
+    try {
+        $result = nmsRunDeltaSync();
+    } catch (Throwable $e) {
+        nmsRespond(500, [
+            'ok' => false,
+            'service' => 'faa-nms',
+            'testOnly' => true,
+            'environment' => $cfg['env'],
+            'error' => 'Unhandled staging delta-test failure.',
+            'exception' => get_class($e),
+            'detail' => $e->getMessage(),
+        ]);
+    }
+
     nmsRespond(($result['ok'] ?? false) ? 200 : 502, [
         'service' => 'faa-nms',
         'testOnly' => true,
