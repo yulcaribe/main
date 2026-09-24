@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: public, max-age=20, stale-while-revalidate=40');
+header('Cache-Control: public, max-age=30, stale-while-revalidate=90');
 
 function respond(int $status, array $payload): never {
     http_response_code($status);
@@ -47,6 +47,164 @@ function circlePolygon(float $lon, float $lat, float $radiusNm, int $steps = 32)
         'type' => 'Polygon',
         'coordinates' => [$ring],
     ];
+}
+
+function notamCoordinateRegex(): string {
+    return '/(?:[0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])/i';
+}
+
+function parseNotamCoordinate(string $token): ?array {
+    $token = strtoupper(trim($token));
+
+    if (preg_match('/^([0-9]{2})([0-9]{2})([NS])([0-9]{3})([0-9]{2})([EW])$/', $token, $m)) {
+        $lat = (float)$m[1] + (float)$m[2] / 60.0;
+        $lon = (float)$m[4] + (float)$m[5] / 60.0;
+        if ($m[3] === 'S') $lat *= -1;
+        if ($m[6] === 'W') $lon *= -1;
+        return [$lon, $lat];
+    }
+
+    if (preg_match('/^([0-9]{2})([0-9]{2})([0-9]{2})([NS])([0-9]{3})([0-9]{2})([0-9]{2})([EW])$/', $token, $m)) {
+        $lat = (float)$m[1] + (float)$m[2] / 60.0 + (float)$m[3] / 3600.0;
+        $lon = (float)$m[5] + (float)$m[6] / 60.0 + (float)$m[7] / 3600.0;
+        if ($m[4] === 'S') $lat *= -1;
+        if ($m[8] === 'W') $lon *= -1;
+        return [$lon, $lat];
+    }
+
+    return null;
+}
+
+function extractNotamCoordinates(?string $text): array {
+    $text = strtoupper(trim((string)$text));
+    if ($text === '') return [];
+
+    if (!preg_match_all(notamCoordinateRegex(), $text, $matches)) return [];
+
+    $coords = [];
+    foreach ($matches[0] as $token) {
+        $coord = parseNotamCoordinate((string)$token);
+        if ($coord === null) continue;
+
+        $key = sprintf('%.6F,%.6F', $coord[0], $coord[1]);
+        if (!isset($coords[$key])) $coords[$key] = $coord;
+    }
+
+    return array_values($coords);
+}
+
+function polygonFromCoordinateList(array $coords): ?array {
+    if (count($coords) < 3) return null;
+
+    $ring = array_values($coords);
+    $first = $ring[0];
+    $last = $ring[count($ring) - 1];
+
+    if (abs((float)$first[0] - (float)$last[0]) > 0.000001
+        || abs((float)$first[1] - (float)$last[1]) > 0.000001) {
+        $ring[] = $first;
+    }
+
+    return [
+        'type' => 'Polygon',
+        'coordinates' => [$ring],
+    ];
+}
+
+function notamAreaPolygon(array $row): ?array {
+    $text = (string)($row['notam_text'] ?? '');
+
+    if (preg_match('/\bAREA\s*:\s*/i', $text, $m, PREG_OFFSET_CAPTURE)) {
+        $marker = $m[0][0];
+        $offset = (int)$m[0][1] + strlen($marker);
+        $segment = substr($text, $offset);
+
+        if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b)/i', $segment, $stop, PREG_OFFSET_CAPTURE)) {
+            $segment = substr($segment, 0, (int)$stop[0][1]);
+        }
+
+        $polygon = polygonFromCoordinateList(extractNotamCoordinates($segment));
+        if ($polygon !== null) {
+            return ['geometry' => $polygon, 'source' => 'notam-area-polygon'];
+        }
+    }
+
+    $rawPolygon = polygonFromCoordinateList(
+        extractNotamCoordinates((string)($row['coordinates_raw'] ?? ''))
+    );
+    if ($rawPolygon !== null) {
+        return ['geometry' => $rawPolygon, 'source' => 'coordinates-polygon'];
+    }
+
+    return null;
+}
+
+function notamFirstCoordinate(array $row): ?array {
+    $raw = extractNotamCoordinates((string)($row['coordinates_raw'] ?? ''));
+    if ($raw) return $raw[0];
+
+    $text = extractNotamCoordinates((string)($row['notam_text'] ?? ''));
+    return $text[0] ?? null;
+}
+
+function notamCategory(array $row): string {
+    $haystack = strtoupper(trim(
+        (string)($row['selection_code'] ?? '') . ' ' .
+        (string)($row['notam_text'] ?? '')
+    ));
+
+    if (preg_match('/\b(UAS|UAV|DRONE|UNMANNED)\b/', $haystack)) return 'UAV';
+    if (preg_match('/\b(PARACHUTE|PARA\s*JUMP|PJE)\b/', $haystack)) return 'PARACHUTE';
+    if (preg_match('/\b(RWY|RUNWAY)\b/', $haystack)) return 'RWY';
+    if (preg_match('/\b(TWY|TAXIWAY)\b/', $haystack)) return 'TWY';
+    if (preg_match('/\b(OBST|OBSTACLE|CRANE|TOWER)\b/', $haystack)) return 'OBSTACLE';
+    if (preg_match('/\b(VOR|DME|NDB|ILS|LOCALIZER|LOC|VORTAC|TACAN)\b/', $haystack)) return 'NAV';
+    if (preg_match('/\b(COM|COMM|FREQ|FREQUENCY)\b/', $haystack)) return 'COM';
+    if (preg_match('/\b(AIRSPACE|RESTRICTED|PROHIBITED|DANGER|FIRING|EXERCISE|TRA|TSA|CBA)\b/', $haystack)) return 'AIRSPACE';
+
+    return 'GENERAL';
+}
+
+function navmapCacheDir(): string {
+    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_navmap_v2';
+    if (!is_dir($dir)) @mkdir($dir, 0770, true);
+    return $dir;
+}
+
+function navmapNotamSyncVersion(PDO $pdo, string $environment): string {
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(DATE_FORMAT(last_successful_sync, '%Y%m%d%H%i%s'), 'none')
+         FROM notam_sync_state
+         WHERE source = 'FAA_NMS' AND environment = :environment
+         LIMIT 1"
+    );
+    $stmt->execute(['environment' => $environment]);
+    return (string)($stmt->fetchColumn() ?: 'none');
+}
+
+function navmapCacheRead(string $path, int $maxAgeSeconds = 900): ?array {
+    if (!is_file($path)) return null;
+
+    $mtime = @filemtime($path);
+    if ($mtime === false || time() - $mtime > $maxAgeSeconds) return null;
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || $raw === '') return null;
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function navmapCacheWrite(string $path, array $payload): void {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) return;
+
+    $tmp = $path . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, $json, LOCK_EX) !== false) {
+        @rename($tmp, $path);
+    } else {
+        @unlink($tmp);
+    }
 }
 
 function loadDbConfig(): array {
@@ -190,6 +348,25 @@ function notamFeature(array $row): ?array {
         ? (float)$row['radius_nm']
         : null;
 
+    // FAA line/polygon geometry wins. Point geometry can be refined by
+    // explicit NOTAM AREA coordinates before any radius envelope is drawn.
+    if (($geometry['type'] ?? '') === 'Point') {
+        $area = notamAreaPolygon($row);
+        if ($area !== null) {
+            $geometry = $area['geometry'];
+            $geometrySource = $area['source'];
+        } elseif ($geometrySource === 'airport-location') {
+            $coord = notamFirstCoordinate($row);
+            if ($coord !== null) {
+                $geometry = [
+                    'type' => 'Point',
+                    'coordinates' => [(float)$coord[0], (float)$coord[1]],
+                ];
+                $geometrySource = 'qline-coordinate';
+            }
+        }
+    }
+
     if (($geometry['type'] ?? '') === 'Point' && $radiusNm !== null && $radiusNm > 0.0) {
         $coords = $geometry['coordinates'] ?? null;
         if (is_array($coords) && count($coords) >= 2) {
@@ -206,6 +383,15 @@ function notamFeature(array $row): ?array {
             }
         }
     }
+
+    $geometryAccuracy = match ($geometrySource) {
+        'faa-geometry' => 'authoritative FAA geometry',
+        'notam-area-polygon', 'coordinates-polygon' => 'derived from NOTAM coordinates',
+        'qline-radius-circle', 'airport-radius-circle', 'faa-radius-circle', 'derived-radius-circle' => 'approximate coverage envelope',
+        'qline-coordinate' => 'coordinate fallback',
+        'airport-location' => 'airport fallback',
+        default => 'derived',
+    };
 
     $series = trim((string)($row['series'] ?? ''));
     $number = trim((string)($row['number'] ?? ''));
@@ -229,8 +415,11 @@ function notamFeature(array $row): ?array {
             'lower_limit' => $row['lower_limit'],
             'upper_limit' => $row['upper_limit'],
             'radius_nm' => $radiusNm,
+            'selection_code' => $row['selection_code'] ?? null,
+            'category' => notamCategory($row),
             'text' => $row['notam_text'],
             'geometry_source' => $geometrySource,
+            'geometry_accuracy' => $geometryAccuracy,
         ],
     ];
 }
@@ -389,6 +578,7 @@ if (!$layers) {
 $features = [];
 $counts = array_fill_keys($allowedLayers, 0);
 $truncated = false;
+$notamCacheFile = null;
 
 // Navdata is intentionally hidden below z5. Drawing the whole planet at once is
 // not useful and would defeat viewport-based loading.
@@ -555,6 +745,29 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
     $atSql = $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
+    if (count($layers) === 1 && $layers[0] === 'notam') {
+        $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
+        $cacheKey = hash('sha256', json_encode([
+            'v3',
+            $cacheVersion,
+            $zoom,
+            round($west, 5),
+            round($south, 5),
+            round($east, 5),
+            round($north, 5),
+            $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i'),
+        ], JSON_UNESCAPED_SLASHES));
+
+        $notamCacheFile = navmapCacheDir() . DIRECTORY_SEPARATOR . 'notam_' . $cacheKey . '.json';
+        $cachedPayload = navmapCacheRead($notamCacheFile, 900);
+        if ($cachedPayload !== null) {
+            header('X-YC-NavMap-Cache: HIT');
+            respond(200, $cachedPayload);
+        }
+
+        header('X-YC-NavMap-Cache: MISS');
+    }
+
     $baseTimeWhere = "
               n.source = 'FAA_NMS'
               AND n.environment = :environment
@@ -573,7 +786,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $sql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
+                n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 ST_AsGeoJSON(n.geometry, 6) AS geometry,
                 \'faa-geometry\' AS geometry_source
@@ -615,7 +829,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $fallbackSql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
+                n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 JSON_OBJECT(
                     \'type\', \'Point\',
@@ -666,14 +881,23 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         ? 'q.lon BETWEEN :west AND :east'
         : '(q.lon >= :west OR q.lon <= :east)';
 
-    $coordTokenExpr = "REGEXP_SUBSTR(
-        UPPER(CONCAT_WS(' ', COALESCE(n.coordinates_raw, ''), COALESCE(n.notam_text, ''))),
-        '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
-    )";
+    $coordTokenExpr = "CASE
+        WHEN NULLIF(TRIM(n.coordinates_raw), '') IS NOT NULL THEN
+            REGEXP_SUBSTR(
+                UPPER(n.coordinates_raw),
+                '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
+            )
+        ELSE
+            REGEXP_SUBSTR(
+                UPPER(COALESCE(n.notam_text, '')),
+                '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
+            )
+    END";
 
     $coordSql = 'SELECT
             q.nms_id, q.series, q.number, q.year, q.classification,
-            q.location, q.icao_location, q.radius_nm, q.effective_start, q.effective_end,
+            q.location, q.icao_location, q.radius_nm, q.selection_code, q.coordinates_raw,
+            q.effective_start, q.effective_end,
             q.effective_end_raw, q.lower_limit, q.upper_limit, q.notam_text,
             JSON_OBJECT(
                 \'type\', \'Point\',
@@ -714,7 +938,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             FROM (
                 SELECT
                     n.nms_id, n.series, n.number, n.year, n.classification,
-                    n.location, n.icao_location, n.radius_nm, n.effective_start, n.effective_end,
+                    n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                    n.effective_start, n.effective_end,
                     n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                     ' . $coordTokenExpr . ' AS coord_token
                 FROM notams n
@@ -744,7 +969,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if ($notamCount >= 5000) $truncated = true;
 }
 
-respond(200, [
+$payload = [
     'ok' => true,
     'zoom' => $zoom,
     'bbox' => compact('west', 'south', 'east', 'north'),
@@ -755,4 +980,10 @@ respond(200, [
     'counts' => $counts,
     'total' => count($features),
     'truncated' => $truncated,
-]);
+];
+
+if (is_string($notamCacheFile) && $notamCacheFile !== '') {
+    navmapCacheWrite($notamCacheFile, $payload);
+}
+
+respond(200, $payload);
