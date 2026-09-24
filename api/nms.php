@@ -45,6 +45,38 @@ if ($action === 'sync-status') {
     ]);
 }
 
+if ($action === 'delta-test') {
+    $cfg = nmsPrivateConfig();
+
+    if ($cfg['env'] !== 'staging') {
+        nmsRespond(403, [
+            'ok' => false,
+            'error' => 'Delta test is available only in staging.',
+        ]);
+    }
+
+    $cooldownPath = nmsCacheDir() . DIRECTORY_SEPARATOR . 'delta_test_last_run.txt';
+    $lastRun = is_file($cooldownPath) ? (int)@file_get_contents($cooldownPath) : 0;
+    $now = time();
+
+    if ($lastRun > 0 && ($now - $lastRun) < 180) {
+        nmsRespond(429, [
+            'ok' => false,
+            'environment' => $cfg['env'],
+            'error' => 'Delta test cooldown is active.',
+            'retryAfterSeconds' => 180 - ($now - $lastRun),
+        ]);
+    }
+
+    @file_put_contents($cooldownPath, (string)$now, LOCK_EX);
+
+    $result = nmsRunDeltaSync();
+    nmsRespond(($result['ok'] ?? false) ? 200 : 502, [
+        'service' => 'faa-nms',
+        'testOnly' => true,
+    ] + $result);
+}
+
 if ($action === 'ping') {
     $result = nmsGet('/ping', [], null);
 
@@ -143,5 +175,5 @@ if ($action === 'probe-notams') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'sync-status', 'ping', 'probe-notams'],
+    'allowedActions' => ['status', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
 ]);
