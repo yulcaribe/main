@@ -152,6 +152,36 @@ function airspaceFeature(array $row): ?array {
     ];
 }
 
+function notamFeature(array $row): ?array {
+    $geometry = json_decode((string)$row['geometry'], true);
+    if (!is_array($geometry) || !isset($geometry['type'])) return null;
+
+    $series = trim((string)($row['series'] ?? ''));
+    $number = trim((string)($row['number'] ?? ''));
+    $year = trim((string)($row['year'] ?? ''));
+    $ident = trim($series . $number . ($year !== '' ? '/' . substr($year, -2) : ''));
+
+    return [
+        'type' => 'Feature',
+        'id' => 'n-' . $row['nms_id'],
+        'geometry' => $geometry,
+        'properties' => [
+            'layer' => 'notam',
+            'nms_id' => $row['nms_id'],
+            'ident' => $ident !== '' ? $ident : $row['nms_id'],
+            'classification' => $row['classification'],
+            'location' => $row['location'],
+            'icao_location' => $row['icao_location'],
+            'effective_start' => $row['effective_start'],
+            'effective_end' => $row['effective_end'],
+            'effective_end_raw' => $row['effective_end_raw'],
+            'lower_limit' => $row['lower_limit'],
+            'upper_limit' => $row['upper_limit'],
+            'text' => $row['notam_text'],
+        ],
+    ];
+}
+
 function bboxGeometrySql(float $west, float $south, float $east, float $north, array &$params): string {
     if ($west <= $east) {
         $params['bbox'] = sprintf(
@@ -291,7 +321,7 @@ $requestedLayers = array_filter(array_map(
     explode(',', (string)($_GET['layers'] ?? 'airport,navaid,waypoint,airway,sid,star,airspace'))
 ));
 
-$allowedLayers = ['airport', 'navaid', 'waypoint', 'airway', 'sid', 'star', 'airspace'];
+$allowedLayers = ['airport', 'navaid', 'waypoint', 'airway', 'sid', 'star', 'airspace', 'notam'];
 $layers = array_values(array_intersect($allowedLayers, $requestedLayers));
 if (!$layers) {
     respond(200, [
@@ -458,6 +488,66 @@ if (in_array('airspace', $layers, true) && $zoom >= 5) {
         $airspaceCount++;
     }
     if ($airspaceCount >= 6000) $truncated = true;
+}
+
+// NOTAM
+if (in_array('notam', $layers, true) && $zoom >= 4) {
+    $atRaw = trim((string)($_GET['at'] ?? ''));
+    try {
+        $at = $atRaw !== ''
+            ? new DateTimeImmutable($atRaw, new DateTimeZone('UTC'))
+            : new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    } catch (Throwable) {
+        respond(400, ['ok' => false, 'error' => 'Geçersiz NOTAM zamanı. UTC ISO tarih/saat gönder.']);
+    }
+    $atSql = $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+
+    $params = ['at' => $atSql, 'environment' => 'production'];
+    $bboxExpr = bboxGeometrySql($west, $south, $east, $north, $params);
+    $bboxExpr = sprintf($bboxExpr, 'n.geometry', 'n.geometry');
+
+    $sql = 'SELECT
+                n.nms_id,
+                n.series,
+                n.number,
+                n.year,
+                n.classification,
+                n.location,
+                n.icao_location,
+                n.effective_start,
+                n.effective_end,
+                n.effective_end_raw,
+                n.lower_limit,
+                n.upper_limit,
+                n.notam_text,
+                ST_AsGeoJSON(n.geometry, 6) AS geometry
+            FROM notams n
+            WHERE n.source = \'FAA_NMS\'
+              AND n.environment = :environment
+              AND n.geometry IS NOT NULL
+              AND n.status <> \'cancelled\'
+              AND (n.effective_start IS NULL OR n.effective_start <= :at)
+              AND (
+                    UPPER(COALESCE(n.effective_end_raw, \'\')) = \'PERM\'
+                    OR n.effective_end IS NULL
+                    OR n.effective_end >= :at
+                  )
+              AND ' . $bboxExpr . '
+            ORDER BY n.effective_start DESC
+            LIMIT 5000';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    $notamCount = 0;
+    while ($row = $stmt->fetch()) {
+        $feature = notamFeature($row);
+        if (!$feature) continue;
+        $features[] = $feature;
+        $counts['notam']++;
+        $notamCount++;
+    }
+    if ($notamCount >= 5000) $truncated = true;
 }
 
 respond(200, [
