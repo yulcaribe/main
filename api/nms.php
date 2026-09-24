@@ -6,6 +6,7 @@ header('Cache-Control: no-store, max-age=0');
 
 require_once __DIR__ . '/nms_client.php';
 require_once __DIR__ . '/nms_store.php';
+require_once __DIR__ . '/nms_health.php';
 
 function nmsRespond(int $status, array $payload): never {
     http_response_code($status);
@@ -20,6 +21,53 @@ if ($action === 'status') {
         'ok' => true,
         'service' => 'faa-nms',
         'config' => nmsPublicStatus(),
+    ]);
+}
+
+if ($action === 'health') {
+    $cfg = nmsPrivateConfig();
+    $public = nmsPublicStatus();
+
+    try {
+        $local = nmsHealthLocal($cfg['env']);
+    } catch (Throwable $e) {
+        nmsRespond(500, [
+            'ok' => false,
+            'service' => 'faa-nms',
+            'environment' => $cfg['env'],
+            'error' => 'Local NMS database health could not be read.',
+            'detail' => $cfg['env'] === 'staging' ? $e->getMessage() : null,
+        ]);
+    }
+
+    $remote = [
+        'checked' => false,
+        'ok' => null,
+        'upstreamStatus' => null,
+        'message' => 'Not checked.',
+    ];
+
+    if (($_GET['probe'] ?? '') === '1') {
+        $ping = nmsGet('/ping', [], null);
+        $remote = [
+            'checked' => true,
+            'ok' => (bool)($ping['ok'] ?? false),
+            'upstreamStatus' => $ping['status'] ?? null,
+            'message' => ($ping['ok'] ?? false)
+                ? 'FAA NMS authentication and ping succeeded.'
+                : (string)($ping['error'] ?? 'FAA NMS ping failed.'),
+        ];
+    }
+
+    nmsRespond(200, [
+        'ok' => true,
+        'service' => 'faa-nms',
+        'environment' => $cfg['env'],
+        'credentialsConfigured' => (bool)($public['credentialsConfigured'] ?? false),
+        'configDiagnostics' => $public['diagnostics'] ?? [],
+        'local' => $local,
+        'remote' => $remote,
+        'generatedAt' => gmdate('Y-m-d\\TH:i:s\\Z'),
     ]);
 }
 
@@ -188,5 +236,5 @@ if ($action === 'probe-notams') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
+    'allowedActions' => ['status', 'health', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
 ]);
