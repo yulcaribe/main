@@ -96,7 +96,7 @@ function paint(d){
  const b=$('banner');b.className='banner';
  if(!d.credentialsConfigured){b.classList.add('bad');$('banner-title').textContent='FAA credentials eksik';$('banner-detail').textContent='NMS config kontrol edilmeli.'}
  else if(s.last_error){b.classList.add('bad');$('banner-title').textContent='Son sync hata verdi';$('banner-detail').textContent=s.last_error}
- else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Baseline Initial Load bekliyor';$('banner-detail').textContent='DB’de '+fmt(c.total)+' delta kaydı var.'}
+ else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Baseline Initial Load bekliyor';$('banner-detail').textContent='DB’de '+fmt(c.total)+' local NOTAM var · Initial Load tamamlanmadı.'}
  else if(l.syncHealth==='stale'){b.classList.add('warn');$('banner-title').textContent='Delta sync eski';$('banner-detail').textContent='Son sync '+age(l.syncAgeSeconds)+' önce.'}
  else{b.classList.add('good');$('banner-title').textContent='NOTAM veritabanı sağlıklı';$('banner-detail').textContent=fmt(c.active)+' aktif NOTAM · son sync '+age(l.syncAgeSeconds)+' önce.'}
  $('generated').textContent='Health snapshot: '+dt(d.generatedAt);
@@ -107,11 +107,44 @@ async function load(probe=false){
  catch(e){$('banner').className='banner bad';$('banner-title').textContent='Health alınamadı';$('banner-detail').textContent=e.message}
  finally{$('refresh').disabled=$('probe').disabled=false;$('probe').textContent='FAA bağlantısını test et'}
 }
+async function callAdmin(kind,key){
+ const res=await fetch('/main/api/nms.php?action=admin-'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey:key}),cache:'no-store'});
+ const raw=await res.text();
+ let d=null;
+ try{d=JSON.parse(raw)}catch(_){throw new Error('HTTP '+res.status+' · sunucu JSON yerine hata sayfası döndürdü')}
+ if(!res.ok||!d.ok)throw new Error(d.detail||d.error||'HTTP '+res.status);
+ return d;
+}
 async function admin(kind){
  const key=$('admin-key').value.trim()||sessionStorage.getItem('nmsAdminKey')||'';if(!key){$('result').textContent='Admin key gerekli.';$('admin-key').focus();return}
- sessionStorage.setItem('nmsAdminKey',key);$('delta').disabled=$('full').disabled=true;$('result').textContent=(kind==='full'?'Initial Load':'Delta Sync')+' çalışıyor…';
- try{const res=await fetch('/main/api/nms.php?action=admin-'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey:key}),cache:'no-store'}),d=await res.json();if(!res.ok||!d.ok)throw new Error(d.detail||d.error||'HTTP '+res.status);$('result').textContent=kind==='full'?'Initial Load tamamlandı: '+fmt(d.processed)+' işlendi.':'Delta tamamlandı: '+fmt(d.processed)+' işlendi.';await load(false)}
- catch(e){$('result').textContent='Hata: '+e.message}
+ sessionStorage.setItem('nmsAdminKey',key);$('delta').disabled=$('full').disabled=true;
+ try{
+   if(kind==='delta'){
+     $('result').textContent='Delta Sync çalışıyor…';
+     const d=await callAdmin('delta',key);
+     $('result').textContent='Delta tamamlandı: '+fmt(d.processed)+' işlendi.';
+     await load(false);
+     return;
+   }
+
+   let done=false,round=0;
+   while(!done){
+     round++;
+     $('result').textContent='Initial Load parça '+round+' işleniyor…';
+     const d=await callAdmin('full',key);
+     const expected=d.expected||0,processed=(d.processed||0)+(d.skipped||0);
+     const pct=d.progressPercent!=null?(' · %'+d.progressPercent):'';
+     $('result').textContent='Initial Load: '+fmt(processed)+(expected?' / '+fmt(expected):'')+pct;
+     done=!!d.complete;
+     if(!done){
+       if(round%3===0)await load(false);
+       await new Promise(r=>setTimeout(r,180));
+     }else{
+       $('result').textContent='Initial Load tamamlandı: '+fmt(d.processed)+' işlendi'+(d.skipped?(' · '+fmt(d.skipped)+' atlandı'):'')+'.';
+       await load(false);
+     }
+   }
+ }catch(e){$('result').textContent='Hata: '+e.message}
  finally{$('delta').disabled=$('full').disabled=false}
 }
 $('refresh').onclick=()=>load(false);$('probe').onclick=()=>load(true);$('delta').onclick=()=>admin('delta');$('full').onclick=()=>admin('full');load(false);setInterval(()=>{if(!document.hidden)load(false)},30000);
