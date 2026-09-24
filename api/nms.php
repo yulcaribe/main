@@ -7,6 +7,10 @@ header('Cache-Control: no-store, max-age=0');
 require_once __DIR__ . '/nms_client.php';
 require_once __DIR__ . '/nms_store.php';
 require_once __DIR__ . '/nms_health.php';
+require_once __DIR__ . '/nms_full_run.php';
+require_once __DIR__ . '/nms_full_payload.php';
+require_once __DIR__ . '/nms_full_store.php';
+require_once __DIR__ . '/nms_full_parser.php';
 
 function nmsRespond(int $status, array $payload): never {
     http_response_code($status);
@@ -41,6 +45,41 @@ if ($action === 'status') {
         'service' => 'faa-nms',
         'config' => nmsPublicStatus(),
     ]);
+}
+
+if ($action === 'admin-full') {
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        nmsRespond(405, ['ok' => false, 'error' => 'POST required.']);
+    }
+
+    $body = nmsReadJsonBody();
+    $expected = nmsAdminKey();
+    $provided = trim((string)($body['adminKey'] ?? ''));
+
+    if ($expected === '') {
+        nmsRespond(503, ['ok' => false, 'error' => 'NMS admin key is not configured.']);
+    }
+    if ($provided === '' || !hash_equals($expected, $provided)) {
+        usleep(250000);
+        nmsRespond(403, ['ok' => false, 'error' => 'Admin key is invalid.']);
+    }
+
+    ignore_user_abort(true);
+    @set_time_limit(0);
+
+    try {
+        $result = nmsRunFullLoad();
+    } catch (Throwable $e) {
+        $cfg = nmsPrivateConfig();
+        nmsRespond(500, [
+            'ok' => false,
+            'error' => 'Initial load failed before completion.',
+            'detail' => $cfg['env'] === 'staging' ? $e->getMessage() : null,
+        ]);
+    }
+
+    $status = ($result['ok'] ?? false) ? 200 : (($result['rateLimitedLocally'] ?? false) ? 409 : 502);
+    nmsRespond($status, $result);
 }
 
 if ($action === 'admin-delta') {
@@ -286,5 +325,5 @@ if ($action === 'probe-notams') {
 nmsRespond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
-    'allowedActions' => ['status', 'health', 'admin-delta', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
+    'allowedActions' => ['status', 'health', 'admin-full', 'admin-delta', 'sync-status', 'delta-test', 'ping', 'probe-notams'],
 ]);
