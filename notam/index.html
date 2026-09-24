@@ -59,6 +59,7 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 </div></section>
 
 <section class="panel"><div class="kicker">SYNC STATE</div><h2>Database</h2><div class="rows">
+<div class="row"><span>Otomatik cron</span><strong id="cron-state">Henüz çalışmadı</strong></div>
 <div class="row"><span>Son başarılı sync</span><strong id="last-sync">—</strong></div>
 <div class="row"><span>Sync yaşı</span><strong id="age">—</strong></div>
 <div class="row"><span>Son full load</span><strong id="last-full">—</strong></div>
@@ -71,8 +72,8 @@ button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(-
 
 <section class="panel"><div class="kicker">CLASSIFICATION</div><h2>Dağılım</h2><div class="classes" id="classes">—</div></section>
 <section class="panel"><div class="kicker">NOTES</div><h2>Çalışma şekli</h2><div class="rows">
-<div class="row"><span>Initial Load</span><strong>Aktif baseline</strong></div>
-<div class="row"><span>Delta</span><strong>Son sync'ten beri değişiklikler</strong></div>
+<div class="row"><span>Initial Load</span><strong>Cron/CLI · bir kez baseline</strong></div>
+<div class="row"><span>Delta</span><strong>Cron · 3 dakikada bir</strong></div>
 <div class="row"><span>Health refresh</span><strong>FAA request atmaz</strong></div>
 <div class="row"><span>FAA test</span><strong>Butonla manuel</strong></div>
 </div></section>
@@ -92,14 +93,14 @@ function paint(d){
  $('env').textContent=(d.environment||'—').toUpperCase();$('env').className=d.environment==='production'?'ok':'warntext';$('api-base').textContent=d.apiBase||'—';$('total').textContent=fmt(c.total);$('active').textContent=fmt(c.active);$('future').textContent=fmt(c.future);$('expired').textContent=fmt(c.expired);$('cancelled').textContent=fmt(c.cancelled);$('perm').textContent=fmt(c.permanent);$('unknown').textContent=fmt(c.unknown);
  $('cred').textContent=d.credentialsConfigured?'OK':'Eksik';$('cred').className=d.credentialsConfigured?'ok':'badtext';
  $('remote').textContent=r.checked?(r.ok?'Bağlantı başarılı':'Bağlantı başarısız'):'Test edilmedi';$('remote').className=r.checked?(r.ok?'ok':'badtext'):'';
- $('http').textContent=r.upstreamStatus??'—';const ec=l.environmentCounts||{};$('env-counts').textContent=fmt(ec.staging)+' / '+fmt(ec.production);$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
+ $('http').textContent=r.upstreamStatus??'—';const ec=l.environmentCounts||{},cr=l.cronState||null;$('env-counts').textContent=fmt(ec.staging)+' / '+fmt(ec.production);if(cr){const cp=cr.progressPercent!=null?' · %'+cr.progressPercent:'';$('cron-state').textContent=(cr.mode||'cron')+cp+' · '+dt(cr.updatedAt);$('cron-state').className=cr.ok===false?'badtext':(cr.running?'warntext':'ok')}else{$('cron-state').textContent='Henüz çalışmadı';$('cron-state').className=''}$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
  $('ext').textContent=Object.entries(l.extensions||{}).map(([k,v])=>k+':'+(v?'ok':'yok')).join(' · ')||'—';
  $('classes').innerHTML=(l.classifications||[]).map(x=>'<div class="class-row"><span>'+String(x.classification).replace(/[&<>"]/g,'')+'</span><strong>'+fmt(x.total)+'</strong></div>').join('')||'Henüz veri yok.';
  const b=$('banner');b.className='banner';
  if(!d.credentialsConfigured){b.classList.add('bad');$('banner-title').textContent='FAA credentials eksik';$('banner-detail').textContent='NMS config kontrol edilmeli.'}
  else if(s.last_error){b.classList.add('bad');$('banner-title').textContent='Son sync hata verdi';$('banner-detail').textContent=s.last_error}
  else if(d.environment!=='production'){b.classList.add('warn');$('banner-title').textContent='STAGING ortamındasın';$('banner-detail').textContent='Production credential geçişi henüz yapılmamış.'}
- else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Production bağlı · baseline bekliyor';$('banner-detail').textContent='DB’de '+fmt(c.total)+' production NOTAM var · Initial Load tamamlanmadı.'}
+ else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Production bağlı · baseline hazırlanıyor';const cr=l.cronState||{};const p=cr.progressPercent!=null?(' · %'+cr.progressPercent):'';$('banner-detail').textContent=(cr.mode==='initial-load'?'Cron Initial Load çalışıyor'+p:'Cron ilk çalışmasında Initial Load başlayacak')+' · DB’de '+fmt(c.total)+' production NOTAM var.'}
  else if(l.syncHealth==='stale'){b.classList.add('warn');$('banner-title').textContent='Delta sync eski';$('banner-detail').textContent='Son sync '+age(l.syncAgeSeconds)+' önce.'}
  else{b.classList.add('good');$('banner-title').textContent='NOTAM veritabanı sağlıklı';$('banner-detail').textContent=fmt(c.active)+' aktif NOTAM · son sync '+age(l.syncAgeSeconds)+' önce.'}
  $('generated').textContent='Health snapshot: '+dt(d.generatedAt);
@@ -130,23 +131,14 @@ async function admin(kind){
      return;
    }
 
-   let done=false,round=0;
-   while(!done){
-     round++;
-     $('result').textContent='Initial Load parça '+round+' işleniyor…';
-     const d=await callAdmin('full',key);
-     const expected=d.expected||0,processed=(d.processed||0)+(d.skipped||0);
-     const pct=d.progressPercent!=null?(' · %'+d.progressPercent):'';
-     $('result').textContent='Initial Load: '+fmt(processed)+(expected?' / '+fmt(expected):'')+pct;
-     done=!!d.complete;
-     if(!done){
-       if(round%3===0)await load(false);
-       await new Promise(r=>setTimeout(r,180));
-     }else{
-       $('result').textContent='Initial Load tamamlandı: '+fmt(d.processed)+' işlendi'+(d.skipped?(' · '+fmt(d.skipped)+' atlandı'):'')+'.';
-       await load(false);
-     }
+   const d=await callAdmin('full',key);
+   if(d.managedByCron){
+     $('result').textContent=d.complete?'Initial Load tamamlanmış. Delta cron tarafından sürdürülüyor.':'Initial Load cron tarafından otomatik yürütülüyor. Health ekranından ilerlemeyi izleyebilirsin.';
+     await load(false);
+     return;
    }
+   $('result').textContent=d.complete?'Initial Load tamamlandı: '+fmt(d.processed)+' işlendi.':'Initial Load parçası işlendi: '+fmt(d.processed)+' kayıt.';
+   await load(false);
  }catch(e){$('result').textContent='Hata: '+e.message}
  finally{$('delta').disabled=$('full').disabled=false}
 }
