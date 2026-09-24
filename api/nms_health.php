@@ -53,6 +53,27 @@ function nmsHealthLocal(string $environment): array {
         ];
     }
 
+    $environmentCounts = [
+        'staging' => 0,
+        'production' => 0,
+        'other' => 0,
+    ];
+    $envStmt = $pdo->query(
+        "SELECT COALESCE(NULLIF(environment, ''), 'unknown') AS environment, COUNT(*) AS total
+         FROM notams
+         WHERE source = 'FAA_NMS'
+         GROUP BY COALESCE(NULLIF(environment, ''), 'unknown')"
+    );
+    foreach ($envStmt as $row) {
+        $name = strtolower((string)$row['environment']);
+        $count = (int)$row['total'];
+        if ($name === 'staging' || $name === 'production') {
+            $environmentCounts[$name] = $count;
+        } else {
+            $environmentCounts['other'] += $count;
+        }
+    }
+
     $total = (int)($raw['total'] ?? 0);
     $withGeometry = (int)($raw['with_geometry'] ?? 0);
     $syncAgeSeconds = null;
@@ -85,6 +106,7 @@ function nmsHealthLocal(string $environment): array {
             'withoutGeometry' => max(0, $total - $withGeometry),
         ],
         'classifications' => $classifications,
+        'environmentCounts' => $environmentCounts,
         'latestNotamUpdate' => $raw['latest_notam_update'] ?: null,
         'extensions' => [
             'pdo_mysql' => extension_loaded('pdo_mysql'),
