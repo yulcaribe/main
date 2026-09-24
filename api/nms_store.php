@@ -332,6 +332,18 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds = 600): array {
     if ($lastSuccessful) {
         $cursor = new DateTimeImmutable((string)$lastSuccessful, new DateTimeZone('UTC'));
         $age = $requestStarted->getTimestamp() - $cursor->getTimestamp();
+
+        if ($environment === 'production' && $age < 180) {
+            return [
+                'ok' => false,
+                'rateLimitedLocally' => true,
+                'environment' => $environment,
+                'lastSuccessfulSync' => $lastSuccessful,
+                'retryAfterSeconds' => max(1, 180 - $age),
+                'error' => 'Production delta sync is limited locally to one pull every 3 minutes.',
+            ];
+        }
+
         if ($age > 23 * 3600) {
             $message = 'Delta cursor is older than the safe NMS 24-hour window; a full recovery load is required.';
             nmsStoreSyncError($pdo, $environment, $message);
