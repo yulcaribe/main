@@ -1296,6 +1296,43 @@
     }
   }
 
+  function flightRadiusNm() {
+    const center = map.getCenter();
+    const edge = map.getBounds().getNorthEast();
+    const R = 3440.065;
+    const p1 = center.lat * Math.PI / 180;
+    const p2 = edge.lat * Math.PI / 180;
+    const dp = (edge.lat - center.lat) * Math.PI / 180;
+    const dl = (edge.lng - center.lng) * Math.PI / 180;
+    const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return Math.max(10, Math.min(235, Math.ceil(2 * R * Math.asin(Math.min(1, Math.sqrt(a))))));
+  }
+
+  function aircraftFeature(ac) {
+    const lat = Number(ac?.lat);
+    const lon = Number(ac?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const flight = String(ac.flight || ac.r || ac.hex || "").trim();
+    const track = Number(ac.track ?? ac.true_heading ?? ac.mag_heading ?? 0);
+    return {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [lon, lat] },
+      properties: {
+        layer: "flight",
+        ident: flight || "AIRCRAFT",
+        flight,
+        registration: String(ac.r || ""),
+        aircraft_type: String(ac.t || ac.desc || ""),
+        altitude: String(ac.alt_baro ?? ""),
+        groundspeed: Number(ac.gs || 0),
+        track: Number.isFinite(track) ? track : 0,
+        squawk: String(ac.squawk || ""),
+        hex: String(ac.hex || ""),
+        emergency: ["7500", "7600", "7700"].includes(String(ac.squawk || ""))
+      }
+    };
+  }
+
   function scheduleChartLoad(delay = 180, force = false) {
     clearTimeout(chartLoadTimer);
     chartLoadTimer = setTimeout(() => loadChartViewport(force), delay);
