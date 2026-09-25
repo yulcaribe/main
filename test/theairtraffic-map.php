@@ -162,6 +162,7 @@ if (isset($_GET['feed'])) {
     const RENDER_DELAY_MS = 4200;
     const SAMPLE_KEEP_MS = 20000;
     const ANIMATION_FRAME_MS = 32;
+    const FETCH_BOX_PADDING = 0.35;
 
     let decoder = null;
     let decoderReady = false;
@@ -171,6 +172,7 @@ if (isset($_GET['feed'])) {
     let sourceClockOffsetMs = 0;
     let haveSourceClock = false;
     let lastAnimationFrame = 0;
+    let activeFetchBox = null;
     const aircraftMarkers = new Map();
 
     const map = new maplibregl.Map({
@@ -534,13 +536,56 @@ if (isset($_GET['feed'])) {
         requestAnimationFrame(animationLoop);
     }
 
-    function boxString() {
+    function currentViewBox() {
         const b = map.getBounds();
+        return {
+            south: b.getSouth(),
+            north: b.getNorth(),
+            west: b.getWest(),
+            east: b.getEast()
+        };
+    }
+
+    function paddedFetchBox() {
+        const view = currentViewBox();
+        const latSpan = Math.max(0.05, view.north - view.south);
+        const lonSpan = Math.max(0.05, view.east - view.west);
+
+        return {
+            south: Math.max(-90, view.south - latSpan * FETCH_BOX_PADDING),
+            north: Math.min(90, view.north + latSpan * FETCH_BOX_PADDING),
+            west: Math.max(-180, view.west - lonSpan * FETCH_BOX_PADDING),
+            east: Math.min(180, view.east + lonSpan * FETCH_BOX_PADDING)
+        };
+    }
+
+    function viewFitsInsideFetchBox() {
+        if (!activeFetchBox) return false;
+        const view = currentViewBox();
+
+        return (
+            view.south >= activeFetchBox.south &&
+            view.north <= activeFetchBox.north &&
+            view.west >= activeFetchBox.west &&
+            view.east <= activeFetchBox.east
+        );
+    }
+
+    function ensureFetchBox(force = false) {
+        if (force || !activeFetchBox || !viewFitsInsideFetchBox()) {
+            activeFetchBox = paddedFetchBox();
+            return true;
+        }
+        return false;
+    }
+
+    function boxString() {
+        ensureFetchBox(false);
         return [
-            b.getSouth().toFixed(6),
-            b.getNorth().toFixed(6),
-            b.getWest().toFixed(6),
-            b.getEast().toFixed(6)
+            activeFetchBox.south.toFixed(6),
+            activeFetchBox.north.toFixed(6),
+            activeFetchBox.west.toFixed(6),
+            activeFetchBox.east.toFixed(6)
         ].join(",");
     }
 
@@ -597,7 +642,7 @@ if (isset($_GET['feed'])) {
             countEl.textContent = String(parsed.aircraft.length);
             payloadEl.textContent = compressed.byteLength + " B → " + decoded.byteLength + " B";
             updatedEl.textContent = new Date().toLocaleTimeString("tr-TR");
-            hintEl.textContent = "binCraft v" + parsed.version + " · " + (RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer · global " + parsed.globalCount;
+            hintEl.textContent = "binCraft v" + parsed.version + " · " + (RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer · sticky bbox · global " + parsed.globalCount;
             setStatus("CANLI", true);
         } catch (err) {
             if (err && err.name === "AbortError") return;
@@ -623,6 +668,7 @@ if (isset($_GET['feed'])) {
             setStatus("Decoder hazırlanıyor…");
             await initDecoder();
             setStatus("Hazır");
+            ensureFetchBox(true);
             requestAnimationFrame(animationLoop);
             refresh();
         } catch (err) {
@@ -633,7 +679,14 @@ if (isset($_GET['feed'])) {
     });
 
     map.on("moveend", () => {
-        if (decoderReady) refresh();
+        if (!decoderReady) return;
+
+        // Zooming or panning inside the already-fetched coverage must not
+        // restart the aircraft stream. Keep the current bbox and RAM samples.
+        if (!viewFitsInsideFetchBox()) {
+            ensureFetchBox(true);
+            refresh();
+        }
     });
 
     function escapeHtml(value) {
