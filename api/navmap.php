@@ -725,6 +725,8 @@ function hydrateNotamTexts(PDO $pdo, array $rows): array {
 function notamFeature(array $row): ?array {
     $geometry = json_decode((string)$row['geometry'], true);
     if (!is_array($geometry) || !isset($geometry['type'])) return null;
+    $geometry = normalizeNotamGeometry($geometry);
+    if ($geometry === null) return null;
 
     $geometrySource = (string)($row['geometry_source'] ?? 'faa-geometry');
     $qlineRadiusNm = isset($row['radius_nm']) && is_numeric((string)$row['radius_nm'])
@@ -1181,7 +1183,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v8',
+            'v9',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -1307,8 +1309,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
 
     // 3) If neither FAA GeoJSON nor airport location is available, derive a
-    // point from the standard NOTAM coordinate token found in coordinates_raw
-    // or the Q-line text. Supports DDMMNDDDMME and DDMMSSNDDDMMSS E forms.
+    // point from the standard Q-line coordinate token in coordinates_raw.
+    // Long E-text is fetched only after the lightweight spatial candidate pass.
     $coordParams = [
         'at_start' => $atSql,
         'at_end' => $atSql,
