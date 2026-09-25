@@ -1117,23 +1117,6 @@ if (is_array($notamPerf) && $notamPerfStart !== null) {
     ycApiV1Respond(200, $payload);
 }
 
-ycApiV1Headers('no-store, max-age=0');
-            ycApiV1Respond(422, [
-                'ok' => false,
-                'error' => 'İstenen UTC, saklanan 3 günlük NOTAM geçmişinin dışında.'
-            ]);
-        }
-    } catch (Throwable) {
-        ycApiV1Headers('no-store, max-age=0');
-        ycApiV1Respond(400, ['ok' => false, 'error' => 'Geçersiz NOTAM zamanı.']);
-    }
-
-    $_GET['action'] = 'viewport';
-    $_GET['layers'] = 'notam';
-    require dirname(__DIR__, 2) . '/navmap/backend.php';
-    exit;
-}
-
 ycApiV1Headers($action === 'filters' ? 'public, max-age=300, stale-while-revalidate=600' : 'no-store, max-age=0');
 
 try {
