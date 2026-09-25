@@ -9,6 +9,8 @@
   const NAVDATA_API = "/main/api/v1/navdata.php";
   const NOTAM_API = "/main/api/v1/notam.php";
   const WAFS_API = "/main/api/v1/wafs.php";
+  const FLIGHTS_API = "/main/api/v1/flights.php";
+  const FLIGHT_SOURCE_ID = "live-flights";
   const CHART_SOURCE_ID = "navdata-charts";
   const NOTAM_SOURCE_ID = "navdata-notams";
   const CHART_LAYER_NAMES = new Set(["airport", "navaid", "waypoint", "airway", "sid", "star", "airspace"]);
@@ -56,6 +58,8 @@
   const wafsStatus = document.getElementById("wafs-status");
   const wafsProductInputs = [...document.querySelectorAll("[data-wafs-product]")];
   const wafsOpacityInputs = [...document.querySelectorAll("[data-wafs-opacity]")];
+  const flightsEnabledInput = document.getElementById("flights-enabled");
+  const flightsStatus = document.getElementById("flights-status");
 
   const layerInputs = [...document.querySelectorAll("[data-nav-layer]")];
   const countKeys = [...new Set(
@@ -87,7 +91,8 @@
   const PANEL_TIMELINE_RANGES = {
     "chart-panel": 24,
     "notam-panel": 72,
-    "wafs-panel": 72
+    "wafs-panel": 72,
+    "flights-panel": 24
   };
   let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
   const chartViewportCache = new Map();
@@ -96,9 +101,30 @@
   let notamCountsState = {};
   let chartTruncated = false;
   let notamTruncated = false;
+  let flightLoadTimer = null;
+  let flightController = null;
+  let flightFeatures = [];
+  let flightCountsState = { flight: 0 };
   const weatherOverlays = new Map();
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
+
+  const initialMode = new URLSearchParams(location.search).get("mode") || "charts";
+  if (initialMode === "flights") {
+    layerInputs.forEach(input => { input.checked = false; });
+    if (flightsEnabledInput) flightsEnabledInput.checked = true;
+    if (wafsEnabled) wafsEnabled.checked = false;
+  } else if (initialMode === "notam") {
+    layerInputs.forEach(input => { input.checked = input.dataset.navLayer === "notam"; });
+    if (flightsEnabledInput) flightsEnabledInput.checked = false;
+    if (wafsEnabled) wafsEnabled.checked = false;
+  } else if (initialMode === "wafs") {
+    layerInputs.forEach(input => { input.checked = false; });
+    if (flightsEnabledInput) flightsEnabledInput.checked = false;
+    if (wafsEnabled) wafsEnabled.checked = true;
+  } else if (flightsEnabledInput) {
+    flightsEnabledInput.checked = false;
+  }
 
   const map = new maplibregl.Map({
     container: mapEl,
