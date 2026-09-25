@@ -64,6 +64,15 @@ The chart API never returns NOTAM layers. NOTAMs are owned by `notam.php`.
 
 Search covers ICAO, IATA, airport name and city.
 
+### METAR / TAF
+
+- `GET /main/api/v1/metar.php?icao=LTAI`
+- `GET /main/api/v1/taf.php?icao=LTAI`
+- `GET /main/api/v1/weather.php?icao=LTAI` returns both products for clients that prefer one request.
+
+METAR and TAF share one internal AWC transport/cache implementation; client-specific
+endpoints do not duplicate upstream logic.
+
 ### Other stable v1 entry points
 
 - `/main/api/v1/navdata.php`
