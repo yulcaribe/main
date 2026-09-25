@@ -328,7 +328,7 @@
     setFeedback(`${from} → ${to} pilot briefing hazırlanıyor…`,"loading");
     try{
       const q=new URLSearchParams({from,to,fl,etd}); if(route) q.set("route",route);
-      const res=await fetch(`/main/api/briefing.php?${q.toString()}`,{cache:"no-store",signal:controller.signal});
+      const res=await fetch(`/main/api/v1/briefing.php?${q.toString()}`,{cache:"no-store",signal:controller.signal});
       const data=await res.json().catch(()=>null);
       if(!res.ok||!data?.ok) throw new Error(data?.error||`HTTP ${res.status}`);
       render(data);
