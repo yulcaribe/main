@@ -36,6 +36,17 @@ function nmsAdminKey(): string {
         : '';
 }
 
+function nmsHealthPasswordHash(): string {
+    $homeRoot = dirname(__DIR__, 5);
+    $configPath = $homeRoot . '/data.php';
+    if (!is_file($configPath)) return '';
+
+    $root = require $configPath;
+    if (!is_array($root) || !isset($root['health']) || !is_array($root['health'])) return '';
+
+    return trim((string)($root['health']['password_hash'] ?? ''));
+}
+
 function nmsHealthAuthenticated(): bool {
     nmsHealthSessionStart();
     return ($_SESSION['nms_health_authenticated'] ?? false) === true;
@@ -43,9 +54,13 @@ function nmsHealthAuthenticated(): bool {
 
 function nmsHealthLogin(string $provided): bool {
     nmsHealthSessionStart();
-    $expected = nmsAdminKey();
 
-    if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+    $hash = nmsHealthPasswordHash();
+    $ok = $provided !== '' && $hash !== ''
+        ? password_verify($provided, $hash)
+        : ($provided !== '' && nmsAdminKey() !== '' && hash_equals(nmsAdminKey(), $provided));
+
+    if (!$ok) {
         usleep(250000);
         return false;
     }
