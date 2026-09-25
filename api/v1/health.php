@@ -116,6 +116,7 @@ function healthProbe(bool $force): ?array {
         'modelwx'=>healthJsonProbe('/main/api/v1/modelwx.php?action=status&fl=360&left=25&right=45&bottom=30&top=45'),
         'flights'=>healthJsonProbe('/main/api/v1/flights.php?lat=36.90&lon=30.80&radius=10'),
     ];
+    $wafsFeed = healthJsonProbe('/main/api/v1/wafs.php?action=health&fl=300', 14);
 
     $mapPage = healthHttp(healthBaseUrl() . '/main/map/', false, 10);
     $mapScript = healthHttp(healthBaseUrl() . '/main/map/map.js', true, 10);
@@ -124,9 +125,8 @@ function healthProbe(bool $force): ?array {
     $maplibre = healthHttp('https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js', true, 8);
     $leaflet = healthHttp('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', true, 8);
     $osm = healthHttp('https://tile.openstreetmap.org/0/0/0.png', true, 8);
-    $wafsUpstream = healthHttp('https://aviationweather.gov/data/products/wafs/', true, 8);
 
-    unset($maplibre['body'], $leaflet['body'], $osm['body'], $wafsUpstream['body']);
+    unset($maplibre['body'], $leaflet['body'], $osm['body']);
 
     $result = [
         'checkedAt'=>gmdate('c'),
@@ -141,7 +141,7 @@ function healthProbe(bool $force): ?array {
         'maplibre'=>$maplibre,
         'leaflet'=>$leaflet,
         'osm'=>$osm,
-        'wafsUpstream'=>$wafsUpstream,
+        'wafsFeed'=>$wafsFeed,
     ];
 
     @file_put_contents(
