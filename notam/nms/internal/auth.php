@@ -16,7 +16,7 @@ function nmsHealthSessionStart(): void {
 }
 
 function nmsAdminKey(): string {
-    $envKey = trim((string)(getenv('NMS_ADMIN_KEY') ?: ''));
+    $envKey = trim((string)(getenv('HEALTH_ADMIN_KEY') ?: getenv('NMS_ADMIN_KEY') ?: ''));
     if ($envKey !== '') return $envKey;
 
     $homeRoot = dirname(__DIR__, 5);
@@ -24,8 +24,16 @@ function nmsAdminKey(): string {
     if (!is_file($configPath)) return '';
 
     $root = require $configPath;
-    if (!is_array($root) || !isset($root['nms']) || !is_array($root['nms'])) return '';
-    return trim((string)($root['nms']['admin_key'] ?? ''));
+    if (!is_array($root)) return '';
+
+    $healthKey = isset($root['health']) && is_array($root['health'])
+        ? trim((string)($root['health']['admin_key'] ?? ''))
+        : '';
+    if ($healthKey !== '') return $healthKey;
+
+    return isset($root['nms']) && is_array($root['nms'])
+        ? trim((string)($root['nms']['admin_key'] ?? ''))
+        : '';
 }
 
 function nmsHealthAuthenticated(): bool {
