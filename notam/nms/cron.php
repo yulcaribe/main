@@ -31,10 +31,42 @@ function nmsCronCleanupLogs(int $days = 3): void {
     }
 }
 
+function nmsCronCleanupLegacyLog(int $days = 3): void {
+    $path = dirname(__DIR__, 4) . '/nms_cron.log';
+    if (!is_file($path)) return;
+
+    $lines = @file($path, FILE_IGNORE_NEW_LINES);
+    if (!is_array($lines) || !$lines) return;
+
+    $cutoff = time() - max(1, $days) * 86400;
+    $keep = [];
+    $unparsed = [];
+
+    foreach ($lines as $line) {
+        if (preg_match('/^\[([^\]]+)\]/', $line, $m)) {
+            $ts = strtotime((string)$m[1]);
+            if ($ts !== false && $ts >= $cutoff) $keep[] = $line;
+        } else {
+            $unparsed[] = $line;
+        }
+    }
+
+    if ($unparsed) {
+        $keep = array_merge($keep, array_slice($unparsed, -200));
+    }
+
+    @file_put_contents(
+        $path,
+        $keep ? implode(PHP_EOL, $keep) . PHP_EOL : '',
+        LOCK_EX
+    );
+}
+
 function nmsCronLog(string $message): void {
     static $cleaned = false;
     if (!$cleaned) {
         nmsCronCleanupLogs(3);
+        nmsCronCleanupLegacyLog(3);
         $cleaned = true;
     }
 
