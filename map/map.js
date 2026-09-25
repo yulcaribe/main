@@ -651,7 +651,15 @@
     let rows = "";
     let detailText = "";
     let detailNotamId = "";
-    if (p.layer === "airport" || p.layer === "navaid" || p.layer === "waypoint") {
+    if (p.layer === "flight") {
+      rows += infoRow("Registration", p.registration);
+      rows += infoRow("Type", p.aircraft_type);
+      rows += infoRow("Altitude", p.altitude === "ground" ? "GROUND" : (p.altitude ? p.altitude + " ft" : null));
+      rows += infoRow("Groundspeed", p.groundspeed ? p.groundspeed + " kt" : null);
+      rows += infoRow("Track", p.track != null ? p.track + "°" : null);
+      rows += infoRow("Squawk", p.squawk);
+      rows += infoRow("ICAO hex", p.hex);
+    } else if (p.layer === "airport" || p.layer === "navaid" || p.layer === "waypoint") {
       rows += infoRow("IATA", p.iata);
       rows += infoRow("Şehir", p.city);
       rows += infoRow("Elev", p.elevation_ft != null ? `${p.elevation_ft} ft` : null);
@@ -720,7 +728,7 @@
   }
 
   function updateCounts() {
-    const counts = { ...chartCountsState, ...notamCountsState };
+    const counts = { ...chartCountsState, ...notamCountsState, ...flightCountsState };
     let total = 0;
 
     for (const key of countKeys) {
