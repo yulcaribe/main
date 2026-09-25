@@ -20,9 +20,10 @@ ycApiV1Respond(200, [
         'flights' => '/main/api/v1/flights.php',
         'briefing' => '/main/api/v1/briefing.php',
         'modelwx' => '/main/api/v1/modelwx.php',
+        'health' => '/main/api/v1/health.php',
     ],
     'notes' => [
-        'Public read APIs only.',
+        'Public data APIs plus session-protected Health administration.',
         'Frontend data access is centralized under API v1.',
         'System Health administration is session-protected.'
     ],
