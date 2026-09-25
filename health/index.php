@@ -291,6 +291,7 @@ function render(d){
   const dbState=db.ok?"ok":"error";
   const mapState=combine([
     probeState(net.mapPage),
+    probeState(net.mapScript),
     probeState(net.maplibre),
     probeState(net.osm),
     probeState(apiProbes.navdata),
@@ -355,6 +356,7 @@ function render(d){
 
   $("map-kv").innerHTML=[
     row("Unified /main/map/",probeLabel(net.mapPage)),
+    row("map.js",probeLabel(net.mapScript)),
     row("MapLibre",probeLabel(net.maplibre)),
     row("OSM Tiles",probeLabel(net.osm)),
     row("Leaflet (Briefing)",probeLabel(net.leaflet))
@@ -379,6 +381,7 @@ function render(d){
     row("Flights API",probeLabel(apiProbes.flights)),
     row("Upstream",esc(apiProbes.flights?.meta?.source||"ADSB.lol")),
     row("HTTP",esc(apiProbes.flights?.status??"—")),
+    row("Aircraft",esc(apiProbes.flights?.meta?.count??"—")),
     row("Response",apiProbes.flights?.ms!=null?esc(apiProbes.flights.ms+" ms"):"—")
   ].join("");
 
