@@ -62,7 +62,7 @@
   </div>
 
   <div class="card small">
-    API: <a href="/main/api/navdata.php?action=summary" target="_blank" rel="noopener">/main/api/navdata.php?action=summary</a>
+    API: <a href="/main/api/v1/navdata.php?action=summary" target="_blank" rel="noopener">/main/api/v1/navdata.php?action=summary</a>
   </div>
 </main>
 
@@ -76,7 +76,7 @@
     const q=new URLSearchParams(params);
     const key=keyEl.value.trim();
     if(key) q.set('key',key);
-    return '/main/api/navdata.php?'+q.toString();
+    return '/main/api/v1/navdata.php?'+q.toString();
   }
 
   async function load(params){
