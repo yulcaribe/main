@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
-const root=path.resolve(__dirname,'..');
+const root=path.resolve(__dirname,'../..');
 function load(){
   const window={},context=vm.createContext({window,document:{querySelector:()=>null},console:{log(){},debug(){},warn(){},error(){}},Uint8Array,DataView,ArrayBuffer,URLSearchParams,AbortController,setTimeout,clearTimeout});
   for(const file of ['briefing/vendor/grib2.js','briefing/vendor/grib2utils.js','briefing/grib2-browser.js','briefing/modelwx.js'])vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),context);

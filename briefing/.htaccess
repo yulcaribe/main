@@ -1,0 +1,3 @@
+<FilesMatch "^(backend|modelwx)\.php$">
+  Require all denied
+</FilesMatch>

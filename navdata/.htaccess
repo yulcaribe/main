@@ -1,0 +1,3 @@
+<FilesMatch "^backend\.php$">
+  Require all denied
+</FilesMatch>

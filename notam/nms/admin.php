@@ -27,6 +27,10 @@ function nmsReadJsonBody(): array {
 
 $action = strtolower(trim((string)($_GET['action'] ?? 'status')));
 
+if (!nmsHealthAuthenticated()) {
+    nmsRespond(401, ['ok' => false, 'error' => 'Health session authentication required.']);
+}
+
 if ($action === 'status') {
     nmsRespond(200, [
         'ok' => true,

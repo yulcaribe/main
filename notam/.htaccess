@@ -1,0 +1,3 @@
+<FilesMatch "^core\.php$">
+  Require all denied
+</FilesMatch>
