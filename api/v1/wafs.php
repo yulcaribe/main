@@ -57,13 +57,13 @@ function cacheWrite(string $key, string $body): void {
     @file_put_contents(cacheDir().DIRECTORY_SEPARATOR.sha1($key).'.png', $body, LOCK_EX);
 }
 
-function fetchPng(string $url): ?string {
+function fetchPng(string $url, bool $useCache = true): ?string {
     global $ycWafsStarted;
     if (!function_exists('curl_init')) return null;
     $remaining = YC_WAFS_BUDGET - (microtime(true) - $ycWafsStarted);
     if ($remaining <= 0.4) return null;
 
-    if (($cached = cacheRead($url, 21600)) !== null) return $cached;
+    if ($useCache && ($cached = cacheRead($url, 21600)) !== null) return $cached;
 
     $body = '';
     $ch = curl_init($url);
@@ -261,7 +261,7 @@ if ($action === 'health') {
     foreach (snapshotCandidates($requested) as $candidate) {
         $url = imageUrl($candidate['cycle'], $candidate['fh'], $suffix);
         $attempted[] = gmdate('Y-m-d H\\Z', $candidate['cycle']).'/F'.$candidate['fh'];
-        $body = fetchPng($url);
+        $body = fetchPng($url, false);
         if ($body === null) continue;
 
         jsonOut(200, [
