@@ -211,7 +211,7 @@
       node.querySelector("[data-location]").textContent =
         [item.icaoLocation || item.location, item.fir].filter(Boolean).join(" · ");
 
-      const state = classifyState(item, atIso);
+      const state = item.temporalState || classifyState(item, atIso);
       const badges = node.querySelector("[data-badges]");
       badges.appendChild(badge(stateLabel(state), state));
       if (item.type) badges.appendChild(badge(item.type));
