@@ -8,7 +8,7 @@
   <title>Navdata Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/navmap/navmap.css?v=6">
+  <link rel="stylesheet" href="/main/navmap/navmap.css?v=7">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -89,15 +89,15 @@
     </div>
     <label class="master-row"><span><i class="legend-line notam-swatch"></i>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
     <div class="notam-stat"><strong data-layer-count="notam">0</strong><span>haritada gösterilen NOTAM</span></div>
-    <div class="card-note" id="notam-time-status">FAA geometry, NOTAM AREA polygonları ve kontrollü fallback geometrileri gösterilir.</div>
+    <div class="card-note" id="notam-time-status">FAA geometry ve E-text içinde açıkça tanımlanan alan/circle/corridor geometrileri gösterilir.</div>
     <div class="notam-legend" aria-label="NOTAM harita lejandı">
-      <span><i data-notam-color="airspace"></i>AIRSPACE</span>
-      <span><i data-notam-color="rwy"></i>RWY/TWY</span>
-      <span><i data-notam-color="uav"></i>UAV/PARA</span>
-      <span><i data-notam-color="obstacle"></i>OBST</span>
-      <span><i data-notam-color="nav"></i>NAV/COM</span>
+      <span><i data-notam-color="aerial"></i>AERIAL SPORT</span>
+      <span><i data-notam-color="restricted"></i>DANGER/RESTRICTED</span>
+      <span><i data-notam-color="survey"></i>PHOTO/SURVEY</span>
+      <span><i data-notam-color="training"></i>TRAINING/MIL</span>
+      <span><i data-notam-color="other"></i>OTHER</span>
     </div>
-    <div class="card-note">Öncelik: FAA alan geometrisi → metindeki AREA koordinatları → Q-line radius zarfı → tek nokta/meydan fallback. Kesik çizgi yaklaşık kapsamı gösterir.</div>
+    <div class="card-note">Q-line radius harita alanı değildir. Öncelik: FAA geometry → açık E-text polygon → corridor → explicit radius circle → kontrollü point/entity.</div>
   </aside>
 
   <aside class="tool-panel" id="wafs-panel">
@@ -198,7 +198,7 @@
 
         try {
           detail.textContent = "Navdata istemcisi yükleniyor…";
-          await loadScript("/main/navmap/navmap.js?v=7");
+          await loadScript("/main/navmap/navmap.js?v=8");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/navmap/navmap.js yüklenemedi.";
