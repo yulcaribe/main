@@ -216,6 +216,9 @@ function sendData(
     array $proxyMeta
 ): never {
     $filtered = filterAircraft($data, $requestLat, $requestLon, $requestRadius);
+    $filtered['ok'] = true;
+    $filtered['resource'] = 'flights';
+    $filtered['source'] = 'ADSB.lol';
     $filtered['_proxy'] = $proxyMeta;
     respond(200, $filtered);
 }
