@@ -4,6 +4,8 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: public, max-age=30, stale-while-revalidate=90');
 
+require_once dirname(__DIR__) . '/notam/core.php';
+
 function respond(int $status, array $payload): never {
     http_response_code($status);
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -1271,7 +1273,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     if ($timeTravel) {
         $cancelStart = microtime(true);
-        $futureCancellations = notamCancellationTargetsAfter($pdo, 'production', $atSql);
+        $futureCancellations = ycNotamCancellationTargetsAfter($pdo, $at);
         $notamPerf['cancel_sql'] = (microtime(true) - $cancelStart) * 1000.0;
     }
 
@@ -1340,7 +1342,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $faaSqlStart = microtime(true);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $faaRows = filterNotamRowsForSelectedTime($stmt->fetchAll(), $timeTravel, $futureCancellations);
+    $faaRows = ycNotamFilterHistoricalRows($stmt->fetchAll(), $at, $futureCancellations);
     $notamPerf['faa_sql'] = (microtime(true) - $faaSqlStart) * 1000.0;
 
     $notamCount = 0;
@@ -1456,7 +1458,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $notamPerf['airport_sql'] = (microtime(true) - $airportSqlStart) * 1000.0;
 
     $airportTextStart = microtime(true);
-    $fallbackRows = filterNotamRowsForSelectedTime(array_values($airportRowsById), $timeTravel, $futureCancellations);
+    $fallbackRows = ycNotamFilterHistoricalRows(array_values($airportRowsById), $at, $futureCancellations);
     $fallbackRows = hydrateNotamTexts($pdo, $fallbackRows);
     $notamPerf['airport_text'] = (microtime(true) - $airportTextStart) * 1000.0;
 
@@ -1560,7 +1562,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $coordSqlStart = microtime(true);
     $coordStmt = $pdo->prepare($coordSql);
     $coordStmt->execute($coordParams);
-    $coordRowsRaw = filterNotamRowsForSelectedTime($coordStmt->fetchAll(), $timeTravel, $futureCancellations);
+    $coordRowsRaw = ycNotamFilterHistoricalRows($coordStmt->fetchAll(), $at, $futureCancellations);
     $notamPerf['coord_sql'] = (microtime(true) - $coordSqlStart) * 1000.0;
 
     $coordTextStart = microtime(true);
