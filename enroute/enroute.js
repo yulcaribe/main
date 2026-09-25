@@ -346,7 +346,7 @@
     try{
       const params=new URLSearchParams({from,to,corridor});
       if(routeText) params.set("route",routeText);
-      const res=await fetch(`/main/api/enroute.php?${params.toString()}`,{cache:"no-store",signal:controller.signal});
+      const res=await fetch(`/main/api/v1/enroute.php?${params.toString()}`,{cache:"no-store",signal:controller.signal});
       const data=await res.json().catch(()=>null);
       if(!res.ok||!data?.ok) throw new Error(data?.error||`HTTP ${res.status}`);
       render(data);
