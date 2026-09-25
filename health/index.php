@@ -303,6 +303,7 @@ function render(d){
     probeState(apiProbes.metar),
     probeState(apiProbes.taf),
     probeState(apiProbes.wafs),
+    probeState(net.wafsFeed),
     probeState(net.leaflet)
   ]);
   const flightsState=probeState(apiProbes.flights);
@@ -371,9 +372,9 @@ function render(d){
   $("weather-kv").innerHTML=[
     row("METAR API",probeLabel(apiProbes.metar)),
     row("TAF API",probeLabel(apiProbes.taf)),
-    row("Combined Weather",probeLabel(apiProbes.weather)),
+    row("Weather API (METAR + TAF)",probeLabel(apiProbes.weather)),
     row("WAFS API",probeLabel(apiProbes.wafs)),
-    row("AWC WAFS upstream",probeLabel(net.wafsUpstream)),
+    row("AWC WAFS PNG feed",probeLabel(net.wafsFeed)),
     row("Leaflet CDN",probeLabel(net.leaflet))
   ].join("");
 
