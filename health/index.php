@@ -506,7 +506,6 @@ $("delta").onclick=async()=>{
   try{
     const d=await req("nms-delta",{method:"POST",body:"{}"});
     $("nms-detail").textContent=JSON.stringify(d,null,2);
-    settingsTouched=false;
     await load(false);
     notamsLoaded=false;
     await loadNotams();
@@ -544,6 +543,7 @@ $("save").onclick=async()=>{
     dbPassword.value="";dbPassword.type="password";delete dbPassword.dataset.original;
     document.querySelector('[data-target="nmsClientSecret"]').textContent="Göster";
     document.querySelector('[data-target="dbPassword"]').textContent="Göster";
+    settingsTouched=false;
     await load(false);
   }catch(e){
     $("save-status").textContent="Hata: "+e.message;
