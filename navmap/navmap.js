@@ -85,7 +85,7 @@
   let timelineAnchor = null;
   const PANEL_TIMELINE_RANGES = {
     "chart-panel": 24,
-    "notam-panel": 168,
+    "notam-panel": 72,
     "wafs-panel": 72
   };
   let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
