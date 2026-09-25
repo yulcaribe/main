@@ -338,6 +338,159 @@ function nmsLocalStatus(string $environment): array {
     ];
 }
 
+
+function nmsCleanupOldNotams(PDO $pdo, string $environment, int $retentionDays = 3, bool $force = false): array {
+    $retentionDays = max(1, min(30, $retentionDays));
+    $cutoff = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+        ->modify('-' . $retentionDays . ' days')
+        ->format('Y-m-d H:i:s');
+
+    // Shared-hosting friendly: the delta cron may run every few minutes, but
+    // retention cleanup only needs to sweep periodically.
+    $markerPath = nmsCacheDir() . DIRECTORY_SEPARATOR
+        . 'retention_' . preg_replace('/[^a-z0-9_-]+/i', '_', $environment)
+        . '_' . $retentionDays . 'd.json';
+
+    if (!$force && is_file($markerPath)) {
+        $age = time() - (int)@filemtime($markerPath);
+        if ($age >= 0 && $age < 21600) {
+            return [
+                'ok' => true,
+                'skipped' => true,
+                'retentionDays' => $retentionDays,
+                'cutoff' => $cutoff,
+                'nextSweepInSeconds' => 21600 - $age,
+            ];
+        }
+    }
+
+    // Cancellation target rows do not have a dedicated cancelled_at column.
+    // Recover that timestamp from the stored NOTAMC message before deleting
+    // anything, so a NOTAM cancelled today is not mistaken for an old record
+    // merely because its own last_updated is old.
+    $cancelStmt = $pdo->prepare(
+        "SELECT notam_text
+         FROM notams
+         WHERE source = 'FAA_NMS'
+           AND environment = :environment
+           AND UPPER(COALESCE(notam_type, '')) = 'C'
+           AND COALESCE(effective_start, last_updated) IS NOT NULL
+           AND COALESCE(effective_start, last_updated) < :cutoff"
+    );
+    $cancelStmt->execute([
+        'environment' => $environment,
+        'cutoff' => $cutoff,
+    ]);
+
+    $targets = [];
+    while ($row = $cancelStmt->fetch()) {
+        $text = (string)($row['notam_text'] ?? '');
+        if (!preg_match('/\bNOTAMC\s+([A-Z])([0-9]{4})\/([0-9]{2})\b/i', $text, $m)) continue;
+        $targets[strtoupper($m[1]) . $m[2] . '/' . $m[3]] = [
+            'series' => strtoupper($m[1]),
+            'serial' => $m[2],
+            'year2' => (int)$m[3],
+            'year4' => 2000 + (int)$m[3],
+        ];
+    }
+
+    $deletedCancelledTargets = 0;
+    $deletedExpired = 0;
+    $deletedCancellationMessages = 0;
+
+    try {
+        $pdo->beginTransaction();
+
+        if ($targets) {
+            $deleteTarget = $pdo->prepare(
+                "DELETE FROM notams
+                 WHERE source = 'FAA_NMS'
+                   AND environment = :environment
+                   AND series = :series
+                   AND (number = :serial OR number = :serial_slash OR number = :target)
+                   AND (year = :year4 OR year = :year2 OR year IS NULL)"
+            );
+
+            foreach ($targets as $target => $parts) {
+                $deleteTarget->execute([
+                    'environment' => $environment,
+                    'series' => $parts['series'],
+                    'serial' => $parts['serial'],
+                    'serial_slash' => $parts['serial'] . '/' . str_pad((string)$parts['year2'], 2, '0', STR_PAD_LEFT),
+                    'target' => $target,
+                    'year4' => $parts['year4'],
+                    'year2' => $parts['year2'],
+                ]);
+                $deletedCancelledTargets += $deleteTarget->rowCount();
+            }
+        }
+
+        // Normal expired NOTAMs: keep current, future and PERM records. Delete
+        // only records whose actual validity end is more than N days behind us.
+        do {
+            $expiredStmt = $pdo->prepare(
+                "DELETE FROM notams
+                 WHERE source = 'FAA_NMS'
+                   AND environment = :environment
+                   AND effective_end IS NOT NULL
+                   AND effective_end < :cutoff
+                   AND UPPER(COALESCE(effective_end_raw, '')) <> 'PERM'
+                 LIMIT 5000"
+            );
+            $expiredStmt->execute([
+                'environment' => $environment,
+                'cutoff' => $cutoff,
+            ]);
+            $batchDeleted = $expiredStmt->rowCount();
+            $deletedExpired += $batchDeleted;
+        } while ($batchDeleted === 5000);
+
+        // Finally remove old cancellation messages themselves. Their targets
+        // were handled above first, preserving the correct three-day history.
+        do {
+            $cancelDeleteStmt = $pdo->prepare(
+                "DELETE FROM notams
+                 WHERE source = 'FAA_NMS'
+                   AND environment = :environment
+                   AND UPPER(COALESCE(notam_type, '')) = 'C'
+                   AND COALESCE(effective_start, last_updated) IS NOT NULL
+                   AND COALESCE(effective_start, last_updated) < :cutoff
+                 LIMIT 5000"
+            );
+            $cancelDeleteStmt->execute([
+                'environment' => $environment,
+                'cutoff' => $cutoff,
+            ]);
+            $batchDeleted = $cancelDeleteStmt->rowCount();
+            $deletedCancellationMessages += $batchDeleted;
+        } while ($batchDeleted === 5000);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+
+    $result = [
+        'ok' => true,
+        'skipped' => false,
+        'retentionDays' => $retentionDays,
+        'cutoff' => $cutoff,
+        'deletedExpired' => $deletedExpired,
+        'deletedCancelledTargets' => $deletedCancelledTargets,
+        'deletedCancellationMessages' => $deletedCancellationMessages,
+        'deletedTotal' => $deletedExpired + $deletedCancelledTargets + $deletedCancellationMessages,
+    ];
+
+    @file_put_contents(
+        $markerPath,
+        json_encode($result + ['completedAt' => gmdate('Y-m-d\TH:i:s\Z')], JSON_UNESCAPED_SLASHES),
+        LOCK_EX
+    );
+
+    return $result;
+}
+
 function nmsStoreSyncError(PDO $pdo, string $environment, string $message): void {
     nmsEnsureSyncState($pdo, $environment);
     $stmt = $pdo->prepare(
@@ -473,6 +626,17 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds = 600): array {
         ];
     }
 
+    $retentionCleanup = null;
+    try {
+        $retentionCleanup = nmsCleanupOldNotams($pdo, $environment, 3, false);
+    } catch (Throwable $e) {
+        $retentionCleanup = [
+            'ok' => false,
+            'retentionDays' => 3,
+            'error' => $e->getMessage(),
+        ];
+    }
+
     return [
         'ok' => true,
         'environment' => $environment,
@@ -484,5 +648,6 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds = 600): array {
         'processed' => $processed,
         'skipped' => $skipped,
         'cancellationTargets' => array_values(array_unique($cancellationTargets)),
+        'retentionCleanup' => $retentionCleanup,
     ];
 }
