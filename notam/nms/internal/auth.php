@@ -55,10 +55,17 @@ function nmsHealthAuthenticated(): bool {
 function nmsHealthLogin(string $provided): bool {
     nmsHealthSessionStart();
 
+    $explicitEnv = trim((string)(getenv('HEALTH_ADMIN_KEY') ?: ''));
     $hash = nmsHealthPasswordHash();
-    $ok = $provided !== '' && $hash !== ''
-        ? password_verify($provided, $hash)
-        : ($provided !== '' && nmsAdminKey() !== '' && hash_equals(nmsAdminKey(), $provided));
+
+    if ($explicitEnv !== '') {
+        $ok = $provided !== '' && hash_equals($explicitEnv, $provided);
+    } elseif ($hash !== '') {
+        $ok = $provided !== '' && password_verify($provided, $hash);
+    } else {
+        $legacy = nmsAdminKey();
+        $ok = $provided !== '' && $legacy !== '' && hash_equals($legacy, $provided);
+    }
 
     if (!$ok) {
         usleep(250000);
