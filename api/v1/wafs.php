@@ -252,6 +252,38 @@ if ($action === 'status') {
     ]);
 }
 
+if ($action === 'health') {
+    $requested = time() + 12*3600;
+    $cfg = productConfig('cbextent');
+    $suffix = $cfg['suffix'](0, 0);
+    $attempted = [];
+
+    foreach (snapshotCandidates($requested) as $candidate) {
+        $url = imageUrl($candidate['cycle'], $candidate['fh'], $suffix);
+        $attempted[] = gmdate('Y-m-d H\\Z', $candidate['cycle']).'/F'.$candidate['fh'];
+        $body = fetchPng($url);
+        if ($body === null) continue;
+
+        jsonOut(200, [
+            'ok'=>true,
+            'source'=>'NOAA/NWS Aviation Weather Center public WAFS PNG feed',
+            'product'=>'cbextent',
+            'runUtc'=>gmdate('c', $candidate['cycle']),
+            'forecastHour'=>$candidate['fh'],
+            'validUtc'=>gmdate('c', $candidate['valid']),
+            'bytes'=>strlen($body),
+            'cacheTtlSeconds'=>21600,
+        ]);
+    }
+
+    jsonOut(502, [
+        'ok'=>false,
+        'source'=>'NOAA/NWS Aviation Weather Center public WAFS PNG feed',
+        'error'=>'Güncel AWC WAFS PNG dosyasına erişilemedi.',
+        'attempted'=>$attempted,
+    ]);
+}
+
 if ($action !== 'image') jsonOut(400, ['ok'=>false,'error'=>'Bilinmeyen action.']);
 
 $product = strtolower(trim((string)($_GET['product'] ?? '')));
