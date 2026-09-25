@@ -70,6 +70,7 @@ function healthProbe(bool $force): ?array {
         unset($adsb['body']);
     }
     $maplibre = healthHttp('https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js', true);
+    $leaflet = healthHttp('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', true);
     $tiles = healthHttp('https://tile.openstreetmap.org/0/0/0.png', true);
 
     $result = [
@@ -80,6 +81,7 @@ function healthProbe(bool $force): ?array {
         'wafs'=>$wafs,
         'adsb'=>$adsb,
         'maplibre'=>$maplibre,
+        'leaflet'=>$leaflet,
         'osm'=>$tiles,
     ];
 
