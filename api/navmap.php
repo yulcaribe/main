@@ -996,19 +996,28 @@ if ($action === 'search') {
     $results = [];
 
     $stmt = $pdo->prepare(
-        'SELECT id, kind, ident, name, lat, lon
+        'SELECT id, kind, ident, name, lat, lon, iata, city
          FROM nav_points
-         WHERE ident LIKE :q1 OR name LIKE :q2
-         ORDER BY (ident = :exact) DESC, kind, ident
+         WHERE ident LIKE :q1 OR name LIKE :q2 OR iata LIKE :q3 OR city LIKE :q4
+         ORDER BY (ident = :exact1) DESC, (iata = :exact2) DESC, kind, ident
          LIMIT 12'
     );
-    $stmt->execute(['q1' => $like, 'q2' => $like, 'exact' => $q]);
+    $stmt->execute([
+        'q1' => $like,
+        'q2' => $like,
+        'q3' => $like,
+        'q4' => $like,
+        'exact1' => $q,
+        'exact2' => $q,
+    ]);
     foreach ($stmt as $row) {
         $results[] = [
             'kind' => $row['kind'] === 'designatedpoint' ? 'waypoint' : $row['kind'],
             'id' => (int)$row['id'],
             'ident' => $row['ident'],
             'name' => $row['name'],
+            'iata' => $row['iata'] ?? null,
+            'city' => $row['city'] ?? null,
             'lon' => (float)$row['lon'],
             'lat' => (float)$row['lat'],
         ];
