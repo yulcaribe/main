@@ -138,6 +138,16 @@ function nmsHealthLocal(string $environment): array {
         $fullLoadDiagnostics['source'] = $progress['source'] ?? null;
     }
 
+    $retentionPath = nmsCacheDir() . DIRECTORY_SEPARATOR
+        . 'retention_' . preg_replace('/[^a-z0-9_-]+/i', '_', $environment)
+        . '_3d.json';
+    $retentionCleanup = null;
+    if (is_file($retentionPath)) {
+        $retentionRaw = @file_get_contents($retentionPath);
+        $retentionDecoded = json_decode((string)$retentionRaw, true);
+        if (is_array($retentionDecoded)) $retentionCleanup = $retentionDecoded;
+    }
+
     return [
         'state' => $state,
         'syncHealth' => $syncHealth,
@@ -157,6 +167,7 @@ function nmsHealthLocal(string $environment): array {
         'environmentCounts' => $environmentCounts,
         'latestNotamUpdate' => $raw['latest_notam_update'] ?: null,
         'cronState' => $cronState,
+        'retentionCleanup' => $retentionCleanup,
         'fullLoadDiagnostics' => $fullLoadDiagnostics,
         'extensions' => [
             'pdo_mysql' => extension_loaded('pdo_mysql'),

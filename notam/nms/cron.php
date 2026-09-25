@@ -176,6 +176,10 @@ try {
         ]);
     }
 
+    if (($result['ok'] ?? false) === true) {
+        $result['retentionCleanup'] = nmsCleanupOldNotams($pdo, $environment, 3, false);
+    }
+
     nmsCronLog('Result: ' . json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     exit(($result['ok'] ?? false) ? 0 : 1);
 } catch (Throwable $e) {
