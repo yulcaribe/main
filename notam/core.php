@@ -173,6 +173,9 @@ function ycNotamFormatRow(array $row, bool $includeText = true, bool $includeGeo
     $item = [
         'id' => (string)($row['nms_id'] ?? ''),
         'ident' => ycNotamIdent($row),
+        'series' => $row['series'] ?? null,
+        'number' => $row['number'] ?? null,
+        'year' => isset($row['year']) && $row['year'] !== null ? (int)$row['year'] : null,
         'type' => $row['notam_type'] ?? null,
         'classification' => $row['classification'] ?? null,
         'fir' => $row['affected_fir'] ?? null,
