@@ -12,6 +12,7 @@ ycApiV1Respond(200, [
     'generatedAt' => gmdate('c'),
     'resources' => [
         'notams' => '/main/api/v1/notam.php',
+        'airports' => '/main/api/v1/airports.php',
         'charts' => '/main/api/v1/chart.php',
         'navdata' => '/main/api/v1/navdata.php',
         'weather' => '/main/api/v1/weather.php',
