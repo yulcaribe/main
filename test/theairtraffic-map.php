@@ -232,7 +232,7 @@ if (isset($_GET['feed'])) {
         c.fill();
         c.stroke();
 
-        return c;
+        return c.getImageData(0, 0, canvas.width, canvas.height);
     }
 
     function sourceType(code) {
