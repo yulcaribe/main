@@ -53,7 +53,7 @@
     const requested=new Date(mid).toISOString();
     const q=new URLSearchParams({action:"gfs025",fl:String(data.flight.cruiseFL),valid:requested.slice(0,16).replace("T"," ")});
     for(const [k,v] of Object.entries(bbox))q.set(k,v.toFixed(3));
-    const r=await fetch(`/main/api/modelwx.php?${q}`,{cache:"no-store",signal});
+    const r=await fetch(`/main/api/v1/modelwx.php?${q}`,{cache:"no-store",signal});
     if(!r.ok||(r.headers.get("content-type")||"").includes("json")){
       const j=await r.json().catch(()=>null);throw new Error(j?.error||`HTTP ${r.status}`);
     }
