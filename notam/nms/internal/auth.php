@@ -47,6 +47,20 @@ function nmsHealthPasswordHash(): string {
     return trim((string)($root['health']['password_hash'] ?? ''));
 }
 
+function nmsHealthVerifyPassword(string $provided): bool {
+    $provided = trim($provided);
+    if ($provided === '') return false;
+
+    $explicitEnv = trim((string)(getenv('HEALTH_ADMIN_KEY') ?: ''));
+    if ($explicitEnv !== '') return hash_equals($explicitEnv, $provided);
+
+    $hash = nmsHealthPasswordHash();
+    if ($hash !== '') return password_verify($provided, $hash);
+
+    $legacy = nmsAdminKey();
+    return $legacy !== '' && hash_equals($legacy, $provided);
+}
+
 function nmsHealthAuthenticated(): bool {
     nmsHealthSessionStart();
     return ($_SESSION['nms_health_authenticated'] ?? false) === true;
@@ -55,19 +69,7 @@ function nmsHealthAuthenticated(): bool {
 function nmsHealthLogin(string $provided): bool {
     nmsHealthSessionStart();
 
-    $explicitEnv = trim((string)(getenv('HEALTH_ADMIN_KEY') ?: ''));
-    $hash = nmsHealthPasswordHash();
-
-    if ($explicitEnv !== '') {
-        $ok = $provided !== '' && hash_equals($explicitEnv, $provided);
-    } elseif ($hash !== '') {
-        $ok = $provided !== '' && password_verify($provided, $hash);
-    } else {
-        $legacy = nmsAdminKey();
-        $ok = $provided !== '' && $legacy !== '' && hash_equals($legacy, $provided);
-    }
-
-    if (!$ok) {
+    if (!nmsHealthVerifyPassword($provided)) {
         usleep(250000);
         return false;
     }
