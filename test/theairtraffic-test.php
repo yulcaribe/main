@@ -9,8 +9,8 @@ $box = isset($_GET['box']) && preg_match('/^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.
 $format = ($_GET['format'] ?? 'json') === 'binary' ? 'binary' : 'json';
 
 $target = $format === 'binary'
-    ? "https://globe.theairtraffic.com/re-api/?binCraft&zstd&box=" . rawurlencode($box)
-    : "https://globe.theairtraffic.com/re-api/?json&box=" . rawurlencode($box);
+    ? "https://globe.theairtraffic.com/re-api/?binCraft&zstd&box=" . $box
+    : "https://globe.theairtraffic.com/re-api/?json&box=" . $box;
 
 $status = 0;
 $error = '';
@@ -30,12 +30,21 @@ if (!function_exists('curl_init')) {
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 15,
         CURLOPT_ENCODING => '',
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/154 Safari/537.36',
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36',
+        CURLOPT_REFERER => 'https://globe.theairtraffic.com/',
         CURLOPT_HTTPHEADER => [
-            'Accept: application/json,text/plain,*/*',
-            'Accept-Language: tr-TR,tr;q=0.9,en;q=0.8',
+            'Accept: */*',
+            'Accept-Language: tr,en-US;q=0.9,en;q=0.8,ru;q=0.7,zh-CN;q=0.6,zh;q=0.5',
             'Cache-Control: no-cache',
             'Pragma: no-cache',
+            'Priority: u=1, i',
+            'Sec-CH-UA: "Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"',
+            'Sec-CH-UA-Mobile: ?0',
+            'Sec-CH-UA-Platform: "macOS"',
+            'Sec-Fetch-Dest: empty',
+            'Sec-Fetch-Mode: cors',
+            'Sec-Fetch-Site: same-origin',
+            'X-Requested-With: XMLHttpRequest',
         ],
         CURLOPT_HEADERFUNCTION => function($curl, $headerLine) use (&$headers) {
             $len = strlen($headerLine);
