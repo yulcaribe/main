@@ -113,6 +113,7 @@ function healthProbe(bool $force): ?array {
         'metar'=>healthJsonProbe('/main/api/v1/metar.php?icao=LTAI'),
         'taf'=>healthJsonProbe('/main/api/v1/taf.php?icao=LTAI'),
         'wafs'=>healthJsonProbe('/main/api/v1/wafs.php?action=status&fl=300'),
+        'modelwx'=>healthJsonProbe('/main/api/v1/modelwx.php?action=status&fl=360&left=25&right=45&bottom=30&top=45'),
         'flights'=>healthJsonProbe('/main/api/v1/flights.php?lat=36.90&lon=30.80&radius=10'),
     ];
 
