@@ -327,8 +327,8 @@
   els.icao.addEventListener("keydown", e => { if (e.key === "Enter") load(1); });
 
   els.at.value = utcInputNow();
-  loadFromUrl();
   loadFilterOptions().finally(() => {
+    loadFromUrl();
     load(page);
   });
 })();
