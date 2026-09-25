@@ -226,10 +226,10 @@
         try{await load("/main/briefing/vendor/grib2.js?v=7");}catch(e){console.warn("Vendor GRIB core yüklenemedi",e);}
         try{await load("/main/briefing/vendor/grib2utils.js?v=7");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
         try{await load("/main/briefing/grib2-browser.js?v=7");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
-        try{await load("/main/briefing/modelwx.js?v=9");}catch(e){console.warn("Model WX yüklenemedi",e);}
-        try{await load("/main/briefing/wafs.js?v=10");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
+        try{await load("/main/briefing/modelwx.js?v=10");}catch(e){console.warn("Model WX yüklenemedi",e);}
+        try{await load("/main/briefing/wafs.js?v=11");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=14");
+          await load("/main/briefing/briefing.js?v=15");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);
