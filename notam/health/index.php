@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/../api/nms_auth.php';
+require_once __DIR__ . '/../nms/internal/auth.php';
 
 if (isset($_POST['logout'])) {
     nmsHealthLogout();
-    header('Location: /main/health/');
+    header('Location: /main/notam/health/');
     exit;
 }
 
@@ -12,7 +12,7 @@ $loginError = false;
 if (!nmsHealthAuthenticated() && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $loginError = !nmsHealthLogin(trim((string)($_POST['admin_key'] ?? '')));
     if (!$loginError) {
-        header('Location: /main/health/');
+        header('Location: /main/notam/health/');
         exit;
     }
 }
@@ -157,12 +157,12 @@ function paint(d){
 }
 async function load(probe=false){
  $('refresh').disabled=$('probe').disabled=true;if(probe)$('probe').textContent='Test ediliyor…';
- try{const res=await fetch('/main/api/nms.php?action=health'+(probe?'&probe=1':''),{cache:'no-store'}),d=await res.json();if(!res.ok||!d.ok)throw new Error(d.error||'HTTP '+res.status);paint(d)}
+ try{const res=await fetch('/main/notam/nms/admin.php?action=health'+(probe?'&probe=1':''),{cache:'no-store'}),d=await res.json();if(!res.ok||!d.ok)throw new Error(d.error||'HTTP '+res.status);paint(d)}
  catch(e){$('banner').className='banner bad';$('banner-title').textContent='Health alınamadı';$('banner-detail').textContent=e.message}
  finally{$('refresh').disabled=$('probe').disabled=false;$('probe').textContent='FAA bağlantısını test et'}
 }
 async function callAdmin(kind){
- const res=await fetch('/main/api/nms.php?action=admin-'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',cache:'no-store'});
+ const res=await fetch('/main/notam/nms/admin.php?action=admin-'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',cache:'no-store'});
  const raw=await res.text();
  let d=null;
  try{d=JSON.parse(raw)}catch(_){throw new Error('HTTP '+res.status+' · sunucu JSON yerine hata sayfası döndürdü')}

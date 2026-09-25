@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_common.php';
-require_once dirname(__DIR__) . '/nms_store.php';
+require_once dirname(__DIR__, 2) . '/notam/nms/internal/store.php';
 
 ycApiV1Headers('public, max-age=120, stale-while-revalidate=300');
 ycApiV1Method('GET');

@@ -28,7 +28,7 @@ if ($action === 'map') {
 
     $_GET['action'] = 'viewport';
     $_GET['layers'] = 'notam';
-    require dirname(__DIR__) . '/navmap.php';
+    require dirname(__DIR__, 2) . '/navmap/backend.php';
     exit;
 }
 

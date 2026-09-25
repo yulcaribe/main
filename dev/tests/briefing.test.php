@@ -1,6 +1,6 @@
 <?php
 // Read only the function definitions; do not dispatch the public HTTP endpoint.
-$source=file_get_contents(__DIR__.'/../api/briefing.php');
+$source=file_get_contents(__DIR__.'/../../briefing/backend.php');
 eval(substr(strstr($source,"\n\$from=strtoupper",true),5));
 function check(bool $ok,string $message): void { if(!$ok)throw new RuntimeException($message); }
 check(parseVertical('SEV TURB FL200/400')['topFL']===400,'Compact FL band');

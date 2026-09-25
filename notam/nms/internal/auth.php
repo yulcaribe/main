@@ -19,7 +19,7 @@ function nmsAdminKey(): string {
     $envKey = trim((string)(getenv('NMS_ADMIN_KEY') ?: ''));
     if ($envKey !== '') return $envKey;
 
-    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $homeRoot = dirname(__DIR__, 5);
     $configPath = $homeRoot . '/data.php';
     if (!is_file($configPath)) return '';
 

@@ -4,14 +4,14 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 
-require_once __DIR__ . '/nms_auth.php';
-require_once __DIR__ . '/nms_client.php';
-require_once __DIR__ . '/nms_store.php';
-require_once __DIR__ . '/nms_health.php';
-require_once __DIR__ . '/nms_full_run.php';
-require_once __DIR__ . '/nms_full_payload.php';
-require_once __DIR__ . '/nms_full_store.php';
-require_once __DIR__ . '/nms_full_parser.php';
+require_once __DIR__ . '/internal/auth.php';
+require_once __DIR__ . '/internal/client.php';
+require_once __DIR__ . '/internal/store.php';
+require_once __DIR__ . '/internal/health.php';
+require_once __DIR__ . '/internal/full_run.php';
+require_once __DIR__ . '/internal/full_payload.php';
+require_once __DIR__ . '/internal/full_store.php';
+require_once __DIR__ . '/internal/full_parser.php';
 
 function nmsRespond(int $status, array $payload): never {
     http_response_code($status);

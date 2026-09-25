@@ -19,4 +19,4 @@ if ($action === 'viewport') {
     $_GET['layers'] = implode(',', $layers);
 }
 
-require dirname(__DIR__) . '/navmap.php';
+require dirname(__DIR__, 2) . '/navmap/backend.php';

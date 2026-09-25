@@ -6,12 +6,12 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-require_once __DIR__ . '/nms_client.php';
-require_once __DIR__ . '/nms_store.php';
-require_once __DIR__ . '/nms_full_payload.php';
-require_once __DIR__ . '/nms_full_store.php';
-require_once __DIR__ . '/nms_full_parser.php';
-require_once __DIR__ . '/nms_full_run.php';
+require_once __DIR__ . '/internal/client.php';
+require_once __DIR__ . '/internal/store.php';
+require_once __DIR__ . '/internal/full_payload.php';
+require_once __DIR__ . '/internal/full_store.php';
+require_once __DIR__ . '/internal/full_parser.php';
+require_once __DIR__ . '/internal/full_run.php';
 
 function nmsCronStatePath(string $environment): string {
     return nmsCacheDir() . DIRECTORY_SEPARATOR . 'cron_state_' . $environment . '.json';

@@ -5,7 +5,7 @@ declare(strict_types=1);
  * CLI-only FAA NMS synchronizer.
  *
  * cPanel cron example (later, once production credentials are active):
- *   php /home/yulcari1/public_html/main/api/nms_sync.php delta
+ *   php /home/yulcari1/public_html/main/notam/nms/sync.php delta
  */
 
 if (PHP_SAPI !== 'cli') {
@@ -13,8 +13,8 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-require_once __DIR__ . '/nms_client.php';
-require_once __DIR__ . '/nms_store.php';
+require_once __DIR__ . '/internal/client.php';
+require_once __DIR__ . '/internal/store.php';
 
 $action = strtolower(trim((string)($argv[1] ?? 'delta')));
 

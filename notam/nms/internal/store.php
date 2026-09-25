@@ -16,7 +16,7 @@ function nmsDb(): PDO {
         throw new RuntimeException('PDO MySQL is not enabled.');
     }
 
-    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $homeRoot = dirname(__DIR__, 5);
     $configPath = $homeRoot . '/data.php';
     if (!is_file($configPath)) {
         throw new RuntimeException('Database configuration was not found.');

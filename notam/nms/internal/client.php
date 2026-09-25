@@ -15,7 +15,7 @@ const NMS_USER_AGENT = 'YulCaribe-NMS/1.0 (+https://yulcaribe.com)';
 
 function nmsPrivateConfig(): array {
     $fileConfig = [];
-    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $homeRoot = dirname(__DIR__, 5);
     $configPath = $homeRoot . '/data.php';
 
     if (is_file($configPath)) {
@@ -54,7 +54,7 @@ function nmsPrivateConfig(): array {
 function nmsPublicStatus(): array {
     $cfg = nmsPrivateConfig();
 
-    $homeRoot = dirname(dirname(dirname(__DIR__)));
+    $homeRoot = dirname(__DIR__, 5);
     $configPath = $homeRoot . '/data.php';
     $configFileFound = is_file($configPath);
     $rootArrayLoaded = false;

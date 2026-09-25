@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once dirname(__DIR__) . '/api/nms_store.php';
+require_once __DIR__ . '/nms/internal/store.php';
 
 const YC_NOTAM_SOURCE = 'FAA_NMS';
 const YC_NOTAM_ENVIRONMENT = 'production';
