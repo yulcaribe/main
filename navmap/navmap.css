@@ -181,11 +181,11 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
   letter-spacing:.04em
 }
 .notam-legend i{width:8px;height:8px;border-radius:3px;display:inline-block}
-.notam-legend i[data-notam-color="airspace"]{background:#ffd35f}
-.notam-legend i[data-notam-color="rwy"]{background:#ff7a8b}
-.notam-legend i[data-notam-color="uav"]{background:#b696ff}
-.notam-legend i[data-notam-color="obstacle"]{background:#ff9d66}
-.notam-legend i[data-notam-color="nav"]{background:#5fe0ef}
+.notam-legend i[data-notam-color="aerial"]{background:#00c5b9}
+.notam-legend i[data-notam-color="restricted"]{background:#ff5f6d}
+.notam-legend i[data-notam-color="survey"]{background:#ff9b4a}
+.notam-legend i[data-notam-color="training"]{background:#d9e1e5}
+.notam-legend i[data-notam-color="other"]{background:#4f8cff}
 .notam-card{border-color:rgba(255,211,95,.16)}
 .weather-card{border-color:rgba(88,239,208,.16)}
 .notam-text{
