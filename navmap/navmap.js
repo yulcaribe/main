@@ -957,35 +957,41 @@
       const sourceIdForProduct = wafsSourceId(product);
       const layerId = wafsLayerId(product);
 
-      map.addSource(sourceIdForProduct, {
-        type: "image",
-        url: frame.url,
-        coordinates: [
-          [-180, frame.maxLat],
-          [180, frame.maxLat],
-          [180, -frame.maxLat],
-          [-180, -frame.maxLat]
-        ]
-      });
+      try {
+        map.addSource(sourceIdForProduct, {
+          type: "image",
+          url: frame.url,
+          coordinates: [
+            [-180, frame.maxLat],
+            [180, frame.maxLat],
+            [180, -frame.maxLat],
+            [-180, -frame.maxLat]
+          ]
+        });
 
-      const layer = {
-        id: layerId,
-        type: "raster",
-        source: CHART_SOURCE_IDForProduct,
-        paint: {
-          "raster-opacity": wafsOpacity(product),
-          "raster-fade-duration": 0
-        }
-      };
-      const before = map.getLayer("nav-airspace-fill") ? "nav-airspace-fill" : undefined;
-      if (before) map.addLayer(layer, before); else map.addLayer(layer);
+        const layer = {
+          id: layerId,
+          type: "raster",
+          source: sourceIdForProduct,
+          paint: {
+            "raster-opacity": wafsOpacity(product),
+            "raster-fade-duration": 0
+          }
+        };
+        const before = map.getLayer("nav-airspace-fill") ? "nav-airspace-fill" : undefined;
+        if (before) map.addLayer(layer, before); else map.addLayer(layer);
 
-      weatherOverlays.set(product, { url: frame.url });
-      success++;
+        weatherOverlays.set(product, { url: frame.url });
+        success++;
 
-      const level = frame.layerFL && frame.layerFL !== "NA" ? `FL${frame.layerFL}` : "whole";
-      const valid = frame.validUtc ? frame.validUtc.slice(0,16).replace("T"," ") + "Z" : formatSelectedUtc();
-      if (meta) meta.textContent = `${valid} · ${level} · F${frame.forecastHour || "?"}`;
+        const level = frame.layerFL && frame.layerFL !== "NA" ? `FL${frame.layerFL}` : "whole";
+        const valid = frame.validUtc ? frame.validUtc.slice(0,16).replace("T"," ") + "Z" : formatSelectedUtc();
+        if (meta) meta.textContent = `${valid} · ${level} · F${frame.forecastHour || "?"}`;
+      } catch (error) {
+        console.error(`[WAFS ${product}]`, error);
+        URL.revokeObjectURL(frame.url);
+        if (meta) meta.textContent = "haritaya eklenemedi";
+      }
     }
 
     if (wafsStatus) {
