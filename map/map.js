@@ -490,7 +490,64 @@
       }
     });
 
+
+    map.addSource(FLIGHT_SOURCE_ID, {
+      type: "geojson",
+      data: emptyGeojson()
+    });
+
+    map.addLayer({
+      id: "flight-hit",
+      type: "circle",
+      source: FLIGHT_SOURCE_ID,
+      paint: {
+        "circle-radius": 12,
+        "circle-opacity": 0.01,
+        "circle-color": "#8cf2ff"
+      },
+      layout: { visibility: flightsEnabledInput?.checked ? "visible" : "none" }
+    });
+
+    map.addLayer({
+      id: "flight-symbol",
+      type: "symbol",
+      source: FLIGHT_SOURCE_ID,
+      layout: {
+        "text-field": "▲",
+        "text-size": ["interpolate", ["linear"], ["zoom"], 3, 12, 10, 18],
+        "text-rotate": ["coalesce", ["to-number", ["get", "track"]], 0],
+        "text-rotation-alignment": "map",
+        "text-allow-overlap": true,
+        "visibility": flightsEnabledInput?.checked ? "visible" : "none"
+      },
+      paint: {
+        "text-color": ["case", ["==", ["get", "emergency"], true], "#ff5f6d", "#8cf2ff"],
+        "text-halo-color": "#06111a",
+        "text-halo-width": 1.2
+      }
+    });
+
+    map.addLayer({
+      id: "flight-label",
+      type: "symbol",
+      source: FLIGHT_SOURCE_ID,
+      minzoom: 6,
+      layout: {
+        "text-field": ["get", "flight"],
+        "text-size": 10,
+        "text-offset": [0, 1.4],
+        "text-anchor": "top",
+        "visibility": flightsEnabledInput?.checked ? "visible" : "none"
+      },
+      paint: {
+        "text-color": "#e3fbff",
+        "text-halo-color": "#06111a",
+        "text-halo-width": 1.2
+      }
+    });
+
     const interactiveLayerIds = [
+      "flight-hit", "flight-symbol", "flight-label",
       "nav-airport-hit",
       "nav-navaid-hit",
       "nav-waypoint-hit",
@@ -507,6 +564,7 @@
     ];
 
     const priority = {
+      flight: -1,
       airport: 0,
       navaid: 1,
       waypoint: 2,
