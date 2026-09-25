@@ -2,7 +2,6 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_common.php';
-require_once dirname(__DIR__, 2) . '/notam/nms/internal/store.php';
 
 ycApiV1Headers('public, max-age=30, stale-while-revalidate=60');
 ycApiV1Method('GET');
@@ -122,7 +121,7 @@ function navAirportItem(array $row): array {
 }
 
 try {
-    $pdo = nmsDb();
+    $pdo = ycApiDb();
     $action = strtolower(trim((string)($_GET['action'] ?? 'viewport')));
 
     if ($action === 'health') {
