@@ -16,6 +16,8 @@ ycApiV1Respond(200, [
         'charts' => '/main/api/v1/chart.php',
         'navdata' => '/main/api/v1/navdata.php',
         'weather' => '/main/api/v1/weather.php',
+        'metar' => '/main/api/v1/metar.php',
+        'taf' => '/main/api/v1/taf.php',
         'wafs' => '/main/api/v1/wafs.php',
         'flights' => '/main/api/v1/flights.php',
         'briefing' => '/main/api/v1/briefing.php',
