@@ -1285,6 +1285,17 @@
     }
   }
 
+  function flightsEnabled() {
+    return Boolean(flightsEnabledInput?.checked);
+  }
+
+  function setFlightVisibility() {
+    const visibility = flightsEnabled() ? "visible" : "none";
+    for (const id of ["flight-hit", "flight-symbol", "flight-label"]) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+    }
+  }
+
   function scheduleChartLoad(delay = 180, force = false) {
     clearTimeout(chartLoadTimer);
     chartLoadTimer = setTimeout(() => loadChartViewport(force), delay);
