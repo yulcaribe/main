@@ -221,6 +221,7 @@ let snapshot=null;
 let latestNotams=[];
 let notamsLoaded=false;
 let logsLoaded=false;
+let settingsTouched=false;
 
 async function req(action,opt={}){
   const r=await fetch(API+"?action="+action,{cache:"no-store",...opt});
@@ -405,14 +406,22 @@ function render(d){
   $("jobs-state").textContent=JSON.stringify(jobs,null,2);
 
   const s=d.settings||{};
-  $("nmsEnvironment").value=(s.nms?.environment||"production").toLowerCase().includes("prod")?"production":"staging";
-  $("nmsClientId").value=s.nms?.clientId||"";
-  $("nmsClientSecret").placeholder=s.nms?.clientSecretConfigured?"mevcut secret var":"secret yok";
-  $("dbHost").value=s.db?.host||"";
-  $("dbPort").value=s.db?.port||3306;
-  $("dbName").value=s.db?.database||"";
-  $("dbUser").value=s.db?.user||"";
-  $("dbPassword").placeholder=s.db?.passwordConfigured?"mevcut password var":"password yok";
+  if(!settingsTouched){
+    $("nmsEnvironment").value=(s.nms?.environment||"production").toLowerCase().includes("prod")?"production":"staging";
+    $("nmsEnvironment").dataset.original=$("nmsEnvironment").value;
+    $("nmsClientId").value=s.nms?.clientId||"";
+    $("nmsClientId").dataset.original=$("nmsClientId").value;
+    $("nmsClientSecret").placeholder=s.nms?.clientSecretConfigured?"mevcut secret var":"secret yok";
+    $("dbHost").value=s.db?.host||"";
+    $("dbHost").dataset.original=$("dbHost").value;
+    $("dbPort").value=s.db?.port||3306;
+    $("dbPort").dataset.original=$("dbPort").value;
+    $("dbName").value=s.db?.database||"";
+    $("dbName").dataset.original=$("dbName").value;
+    $("dbUser").value=s.db?.user||"";
+    $("dbUser").dataset.original=$("dbUser").value;
+    $("dbPassword").placeholder=s.db?.passwordConfigured?"mevcut password var":"password yok";
+  }
 }
 
 async function load(probe=false){
@@ -497,6 +506,7 @@ $("delta").onclick=async()=>{
   try{
     const d=await req("nms-delta",{method:"POST",body:"{}"});
     $("nms-detail").textContent=JSON.stringify(d,null,2);
+    settingsTouched=false;
     await load(false);
     notamsLoaded=false;
     await loadNotams();
@@ -510,13 +520,13 @@ $("save").onclick=async()=>{
 
   const body={
     healthPassword:$("healthPassword").value,
-    nmsEnvironment:$("nmsEnvironment").value,
-    nmsClientId:$("nmsClientId").value,
+    nmsEnvironment:$("nmsEnvironment").dataset.original===$("nmsEnvironment").value?"":$("nmsEnvironment").value,
+    nmsClientId:$("nmsClientId").dataset.original===$("nmsClientId").value?"":$("nmsClientId").value,
     nmsClientSecret:faaSecret.dataset.original===faaSecret.value?"":faaSecret.value,
-    dbHost:$("dbHost").value,
-    dbPort:$("dbPort").value,
-    dbName:$("dbName").value,
-    dbUser:$("dbUser").value,
+    dbHost:$("dbHost").dataset.original===$("dbHost").value?"":$("dbHost").value,
+    dbPort:$("dbPort").dataset.original===$("dbPort").value?"":$("dbPort").value,
+    dbName:$("dbName").dataset.original===$("dbName").value?"":$("dbName").value,
+    dbUser:$("dbUser").dataset.original===$("dbUser").value?"":$("dbUser").value,
     dbPassword:dbPassword.dataset.original===dbPassword.value?"":dbPassword.value
   };
 
@@ -542,10 +552,15 @@ $("save").onclick=async()=>{
   }
 };
 
+document.querySelectorAll("#sec-settings input,#sec-settings select").forEach(el=>{
+  el.addEventListener("input",()=>{settingsTouched=true});
+  el.addEventListener("change",()=>{settingsTouched=true});
+});
+
 $("sec-notam").addEventListener("toggle",()=>{if($("sec-notam").open)loadNotams().catch(e=>alert(e.message))});
 $("sec-logs").addEventListener("toggle",()=>{if($("sec-logs").open&&!logsLoaded)loadLogs().catch(e=>alert(e.message))});
 
-load(false);
+load(true);
 setInterval(()=>{if(!document.hidden)load(false)},30000);
 </script>
 <?php endif; ?>
