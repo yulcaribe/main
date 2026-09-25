@@ -314,14 +314,20 @@ function ycNotamList(PDO $pdo, array $input): array {
         if (function_exists('mb_substr')) $search = mb_substr($search, 0, 100);
         else $search = substr($search, 0, 100);
         $where[] = "(
-            n.notam_text LIKE :search
-            OR n.selection_code LIKE :search
-            OR n.location LIKE :search
-            OR n.icao_location LIKE :search
-            OR n.affected_fir LIKE :search
-            OR CONCAT(COALESCE(n.series,''), COALESCE(n.number,'')) LIKE :search
+            n.notam_text LIKE :search_text
+            OR n.selection_code LIKE :search_selection
+            OR n.location LIKE :search_location
+            OR n.icao_location LIKE :search_icao
+            OR n.affected_fir LIKE :search_fir
+            OR CONCAT(COALESCE(n.series,''), COALESCE(n.number,'')) LIKE :search_ident
         )";
-        $params['search'] = '%' . $search . '%';
+        $needle = '%' . $search . '%';
+        $params['search_text'] = $needle;
+        $params['search_selection'] = $needle;
+        $params['search_location'] = $needle;
+        $params['search_icao'] = $needle;
+        $params['search_fir'] = $needle;
+        $params['search_ident'] = $needle;
     }
 
     $sort = strtolower(trim((string)($input['sort'] ?? 'updated_desc')));
