@@ -1169,7 +1169,11 @@ if (in_array('airspace', $layers, true) && $zoom >= 5) {
 }
 
 // NOTAM
+$notamPerf = null;
+$notamPerfStart = null;
 if (in_array('notam', $layers, true) && $zoom >= 4) {
+    $notamPerf = [];
+    $notamPerfStart = microtime(true);
     $atRaw = trim((string)($_GET['at'] ?? ''));
     try {
         $at = $atRaw !== ''
@@ -1194,9 +1198,14 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         ], JSON_UNESCAPED_SLASHES));
 
         $notamCacheFile = navmapCacheDir() . DIRECTORY_SEPARATOR . 'notam_' . $cacheKey . '.json';
+        $cacheReadStart = microtime(true);
         $cachedPayload = navmapCacheRead($notamCacheFile, 900);
+        $cacheReadMs = (microtime(true) - $cacheReadStart) * 1000.0;
         if ($cachedPayload !== null) {
+            $totalMs = (microtime(true) - $notamPerfStart) * 1000.0;
             header('X-YC-NavMap-Cache: HIT');
+            header('Server-Timing: notam-cache;dur=' . round($cacheReadMs, 1) . ', notam-total;dur=' . round($totalMs, 1));
+            header('X-YC-NavMap-Timing: cache=' . round($cacheReadMs, 1) . 'ms,total=' . round($totalMs, 1) . 'ms');
             respond(200, $cachedPayload);
         }
 
@@ -1233,13 +1242,21 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             ORDER BY n.effective_start DESC
             LIMIT 5000';
 
+    $faaSqlStart = microtime(true);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
+    $faaRows = $stmt->fetchAll();
+    $notamPerf['faa_sql'] = (microtime(true) - $faaSqlStart) * 1000.0;
 
     $notamCount = 0;
     $seenNotams = [];
     $seenMapFeatures = [];
-    $rows = hydrateNotamTexts($pdo, $stmt->fetchAll());
+
+    $faaTextStart = microtime(true);
+    $rows = hydrateNotamTexts($pdo, $faaRows);
+    $notamPerf['faa_text'] = (microtime(true) - $faaTextStart) * 1000.0;
+
+    $faaBuildStart = microtime(true);
     foreach ($rows as $row) {
         $feature = notamFeature($row);
         if (!$feature) continue;
@@ -1251,6 +1268,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $counts['notam']++;
         $notamCount++;
     }
+    $notamPerf['faa_build'] = (microtime(true) - $faaBuildStart) * 1000.0;
 
     // 2) Many Initial Load AIXM records have no GeoJSON geometry. Anchor those
     // airport NOTAMs to the matching navdata airport instead of silently hiding them.
@@ -1291,9 +1309,17 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             ORDER BY n.effective_start DESC
             LIMIT 5000';
 
+    $airportSqlStart = microtime(true);
     $fallbackStmt = $pdo->prepare($fallbackSql);
     $fallbackStmt->execute($fallbackParams);
-    $fallbackRows = hydrateNotamTexts($pdo, $fallbackStmt->fetchAll());
+    $airportRowsRaw = $fallbackStmt->fetchAll();
+    $notamPerf['airport_sql'] = (microtime(true) - $airportSqlStart) * 1000.0;
+
+    $airportTextStart = microtime(true);
+    $fallbackRows = hydrateNotamTexts($pdo, $airportRowsRaw);
+    $notamPerf['airport_text'] = (microtime(true) - $airportTextStart) * 1000.0;
+
+    $airportBuildStart = microtime(true);
     foreach ($fallbackRows as $row) {
         $id = (string)$row['nms_id'];
         if (isset($seenNotams[$id])) continue;
@@ -1307,6 +1333,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $counts['notam']++;
         $notamCount++;
     }
+    $notamPerf['airport_build'] = (microtime(true) - $airportBuildStart) * 1000.0;
 
     // 3) If neither FAA GeoJSON nor airport location is available, derive a
     // point from the standard Q-line coordinate token in coordinates_raw.
@@ -1389,9 +1416,17 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         ORDER BY q.effective_start DESC
         LIMIT 5000';
 
+    $coordSqlStart = microtime(true);
     $coordStmt = $pdo->prepare($coordSql);
     $coordStmt->execute($coordParams);
-    $coordRows = hydrateNotamTexts($pdo, $coordStmt->fetchAll());
+    $coordRowsRaw = $coordStmt->fetchAll();
+    $notamPerf['coord_sql'] = (microtime(true) - $coordSqlStart) * 1000.0;
+
+    $coordTextStart = microtime(true);
+    $coordRows = hydrateNotamTexts($pdo, $coordRowsRaw);
+    $notamPerf['coord_text'] = (microtime(true) - $coordTextStart) * 1000.0;
+
+    $coordBuildStart = microtime(true);
     foreach ($coordRows as $row) {
         $id = (string)$row['nms_id'];
         if (isset($seenNotams[$id])) continue;
@@ -1405,6 +1440,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $counts['notam']++;
         $notamCount++;
     }
+    $notamPerf['coord_build'] = (microtime(true) - $coordBuildStart) * 1000.0;
 
     if ($notamCount >= 5000) $truncated = true;
 }
@@ -1424,6 +1460,22 @@ $payload = [
 
 if (is_string($notamCacheFile) && $notamCacheFile !== '') {
     navmapCacheWrite($notamCacheFile, $payload);
+}
+
+if (is_array($notamPerf) && $notamPerfStart !== null) {
+    $notamPerf['total'] = (microtime(true) - $notamPerfStart) * 1000.0;
+
+    $serverTiming = [];
+    $compactTiming = [];
+    foreach ($notamPerf as $name => $durationMs) {
+        $duration = round((float)$durationMs, 1);
+        $safeName = preg_replace('/[^a-z0-9_-]+/i', '-', (string)$name);
+        $serverTiming[] = 'notam-' . $safeName . ';dur=' . $duration;
+        $compactTiming[] = $name . '=' . $duration . 'ms';
+    }
+
+    header('Server-Timing: ' . implode(', ', $serverTiming));
+    header('X-YC-NavMap-Timing: ' . implode(',', $compactTiming));
 }
 
 respond(200, $payload);
