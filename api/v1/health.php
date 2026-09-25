@@ -170,7 +170,7 @@ function healthSettings(): array {
     $cfg = healthLoadConfig();
     $nms = is_array($cfg['nms'] ?? null) ? $cfg['nms'] : [];
     return [
-        'healthKeyConfigured'=>nmsAdminKey()!=='',
+        'healthKeyConfigured'=>nmsHealthPasswordHash()!=='' || nmsAdminKey()!=='',
         'healthKeyManagedByEnv'=>(bool)(getenv('HEALTH_ADMIN_KEY') ?: getenv('NMS_ADMIN_KEY')),
         'nms'=>[
             'environment'=>$nms['env']??'staging',
@@ -283,7 +283,8 @@ function healthSaveSettings(array $body): array {
         }
         if (strlen($newHealthKey) < 8) throw new RuntimeException('Health şifresi en az 8 karakter olmalı.');
         if (!isset($cfg['health']) || !is_array($cfg['health'])) $cfg['health'] = [];
-        $cfg['health']['admin_key'] = $newHealthKey;
+        $cfg['health']['password_hash'] = password_hash($newHealthKey, PASSWORD_DEFAULT);
+        unset($cfg['health']['admin_key']);
         $changed[] = 'healthPassword';
     }
 
