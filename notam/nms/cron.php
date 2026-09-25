@@ -17,8 +17,34 @@ function nmsCronStatePath(string $environment): string {
     return nmsCacheDir() . DIRECTORY_SEPARATOR . 'cron_state_' . $environment . '.json';
 }
 
+function nmsCronLogDir(): string {
+    $dir = dirname(__DIR__, 4) . '/logs/main/notam';
+    if (!is_dir($dir)) @mkdir($dir, 0700, true);
+    return $dir;
+}
+
+function nmsCronCleanupLogs(int $days = 3): void {
+    $cutoff = time() - max(1, $days) * 86400;
+    foreach ((array)glob(nmsCronLogDir() . DIRECTORY_SEPARATOR . 'nms-*.log') as $file) {
+        $mtime = @filemtime($file);
+        if ($mtime !== false && $mtime < $cutoff) @unlink($file);
+    }
+}
+
 function nmsCronLog(string $message): void {
-    fwrite(STDOUT, '[' . gmdate('Y-m-d\\TH:i:s\\Z') . '] ' . $message . PHP_EOL);
+    static $cleaned = false;
+    if (!$cleaned) {
+        nmsCronCleanupLogs(3);
+        $cleaned = true;
+    }
+
+    $line = '[' . gmdate('Y-m-d\\TH:i:s\\Z') . '] ' . $message . PHP_EOL;
+    @file_put_contents(
+        nmsCronLogDir() . DIRECTORY_SEPARATOR . 'nms-' . gmdate('Y-m-d') . '.log',
+        $line,
+        FILE_APPEND | LOCK_EX
+    );
+    fwrite(STDOUT, $line);
     fflush(STDOUT);
 }
 
