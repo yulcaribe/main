@@ -144,6 +144,7 @@ function paint(d){
     card("WAFS",n.wafs?.ok??null,n.wafs?.status||""),
     card("ADSB.lol",n.adsb?.ok??null,n.adsb?.aircraft!=null?n.adsb.aircraft+" aircraft":""),
     card("MapLibre",n.maplibre?.ok??null,n.maplibre?.status||""),
+    card("Leaflet",n.leaflet?.ok??null,n.leaflet?.status||""),
     card("OSM Tiles",n.osm?.ok??null,n.osm?.status||"")
   ].join("");
   $("api-state").textContent=JSON.stringify(apis,null,2);
