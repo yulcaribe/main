@@ -140,7 +140,7 @@ $environment = $cfg['env'];
 $lockPath = nmsCacheDir() . DIRECTORY_SEPARATOR . 'cron_' . $environment . '.lock';
 $lock = @fopen($lockPath, 'c+');
 if (!$lock) {
-    fwrite(STDERR, "NMS cron lock could not be opened.\n");
+    nmsCronLog("ERROR: NMS cron lock could not be opened.");
     exit(1);
 }
 
@@ -158,7 +158,7 @@ try {
             'error' => 'Automatic NMS cron is enabled only for production.',
         ];
         nmsCronWriteState($environment, $result);
-        fwrite(STDERR, json_encode($result, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        nmsCronLog('ERROR: ' . json_encode($result, JSON_UNESCAPED_SLASHES));
         exit(2);
     }
 
@@ -248,7 +248,7 @@ try {
         'error' => $e->getMessage(),
     ];
     nmsCronWriteState($environment, $result);
-    fwrite(STDERR, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    nmsCronLog('ERROR: ' . json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     exit(1);
 } finally {
     flock($lock, LOCK_UN);
