@@ -1,8 +1,10 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/../notam/nms/internal/auth.php';
 
-if (isset($_POST['logout'])) {
+require_once __DIR__ . '/../notam/nms/internal/auth.php';
+nmsHealthSessionStart();
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && isset($_POST['logout'])) {
     nmsHealthLogout();
     header('Location: /main/health/');
     exit;
@@ -16,185 +18,190 @@ if (!nmsHealthAuthenticated() && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST
         exit;
     }
 }
-
-if (!nmsHealthAuthenticated()) {
-?><!doctype html>
-<html lang="tr">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#071017"><title>System Health Login | YulCaribe</title>
-<style>
-:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;--bg:#071017;--panel:#0b1822;--line:#203746;--text:#edf7fb;--muted:#8ca5b4;--cyan:#45d9ed;--bad:#f18484}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);padding:22px}.card{width:min(440px,100%);border:1px solid var(--line);background:var(--panel);border-radius:18px;padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.35)}.eyebrow{color:var(--cyan);font:600 10px ui-monospace,monospace;letter-spacing:.12em}.card h1{margin:8px 0 8px;font-size:34px}.card p{margin:0 0 22px;color:var(--muted);font-size:13px;line-height:1.55}.card input{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;background:#071017;color:var(--text);padding:0 13px;font:inherit}.card button{width:100%;height:46px;margin-top:10px;border:1px solid #2d8290;border-radius:10px;background:#0d1b25;color:var(--text);font:700 14px inherit;cursor:pointer}.error{margin:0 0 14px;padding:10px 12px;border:1px solid rgba(241,132,132,.45);border-radius:10px;color:var(--bad);font-size:12px}
-</style></head><body><form class="card" method="post" autocomplete="off"><div class="eyebrow">YULCARIBE · MAINTENANCE</div><h1>System Health</h1><p>Bakım ekranı korumalıdır. NMS admin anahtarıyla giriş yap.</p><?php if ($loginError): ?><div class="error">Anahtar geçersiz.</div><?php endif; ?><input name="admin_key" type="password" required autofocus autocomplete="current-password" placeholder="NMS admin key"><button type="submit">Giriş yap</button></form></body></html><?php
-exit;
-}
+$authed = nmsHealthAuthenticated();
 ?>
 <!doctype html>
 <html lang="tr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#071017">
 <title>System Health | YulCaribe</title>
 <style>
-:root{color-scheme:dark;--bg:#071017;--panel:#0b1822;--panel2:#0e1e2a;--line:#203746;--text:#edf7fb;--muted:#8ca5b4;--cyan:#45d9ed;--good:#70d59a;--warn:#efc46a;--bad:#f18484;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}a{color:inherit}
-.top{height:64px;display:flex;align-items:center;gap:16px;padding:0 22px;border-bottom:1px solid var(--line);background:#08131b;position:sticky;top:0;z-index:5}.back{text-decoration:none;font-size:22px}.brand strong{display:block}.brand span{color:var(--muted);font-size:11px}.shell{width:min(1180px,calc(100% - 32px));margin:auto;padding:42px 0 60px}
-.hero{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:20px}.hero h1{margin:4px 0 8px;font-size:clamp(34px,5vw,56px)}.hero p{margin:0;color:var(--muted);max-width:680px}.eyebrow,.kicker{color:var(--cyan);font:600 10px ui-monospace,monospace;letter-spacing:.12em}.actions{display:flex;gap:8px;flex-wrap:wrap}
-button,input{font:inherit}.btn{height:40px;padding:0 14px;border:1px solid var(--line);border-radius:9px;background:#0d1b25;color:var(--text);cursor:pointer;font-weight:700}.btn.primary{border-color:#2d8290}.btn:disabled{opacity:.45;cursor:wait}
-.banner,.admin,.panel,.metric{border:1px solid var(--line);background:var(--panel);border-radius:14px}.banner{padding:14px 16px;margin-bottom:16px}.banner.good{border-color:rgba(112,213,154,.45)}.banner.warn{border-color:rgba(239,196,106,.45)}.banner.bad{border-color:rgba(241,132,132,.45)}.banner strong{display:block}.banner span{color:var(--muted);font-size:12px}
-.admin{padding:18px;margin-bottom:16px;display:grid;grid-template-columns:1fr minmax(330px,520px);gap:18px;align-items:end}.admin h2{margin:4px 0 8px}.admin p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}.admin-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}.admin input{height:40px;padding:0 12px;border:1px solid var(--line);border-radius:9px;background:#071017;color:var(--text);min-width:0}.result{grid-column:1/-1;color:var(--muted);font-size:11px;margin-top:6px}
-.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}.metric{padding:15px}.metric span{display:block;color:var(--muted);font-size:11px}.metric strong{display:block;margin-top:7px;font-size:26px}.metric.good strong{color:var(--good)}.metric.warn strong{color:var(--warn)}.metric.bad strong{color:var(--bad)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.panel{padding:17px}.panel h2{margin:4px 0 14px;font-size:18px}.rows{display:grid;gap:9px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.06)}.row span{color:var(--muted);font-size:12px}.row strong{font-size:12px;text-align:right;word-break:break-word}.ok{color:var(--good)!important}.warntext{color:var(--warn)!important}.badtext{color:var(--bad)!important}.classes{display:grid;gap:8px}.class-row{display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:8px}.class-row span{color:var(--muted);font-size:12px}.small{color:var(--muted);font-size:10px;margin-top:18px}
-@media(max-width:900px){.metrics{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:1fr}.admin{grid-template-columns:1fr}.admin-controls{grid-template-columns:1fr 1fr}.admin input{grid-column:1/-1}.hero{align-items:flex-start;flex-direction:column}}
-@media(max-width:560px){.shell{width:calc(100% - 20px);padding-top:26px}.metrics{grid-template-columns:repeat(2,1fr)}.admin-controls{grid-template-columns:1fr}.admin input{grid-column:auto}.btn{width:100%}.actions{width:100%}.actions .btn{flex:1}}
+:root{color-scheme:dark;--bg:#061019;--panel:#0a1822;--line:#173448;--text:#e8f6fb;--muted:#86a0ae;--ok:#6fe0a5;--bad:#ff8290;--warn:#ffc46b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,sans-serif}
+.shell{width:min(1180px,calc(100% - 28px));margin:auto;padding:24px 0 60px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}
+h1{font-size:30px;margin:0}h2{font-size:17px;margin:0 0 12px}h3{font-size:13px;margin:14px 0 8px}.muted{color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.card,.panel{border:1px solid var(--line);background:var(--panel);border-radius:15px;padding:14px}.panel{margin-top:12px}
+.card small{display:block;color:var(--muted);font-size:10px}.card strong{font-size:18px}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}button,input,select{border:1px solid #24475d;background:#081620;color:var(--text);border-radius:9px;padding:9px 11px}button{cursor:pointer;font-weight:700}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}pre{margin:0;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;background:#050d13;border:1px solid #153044;border-radius:10px;padding:11px;font-size:11px}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid #163143}th{color:var(--muted)}
+.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.settings label span{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.settings input,.settings select{width:100%}
+.login{width:min(360px,calc(100% - 28px));margin:16vh auto;border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:20px}.login input,.login button{width:100%;margin-top:10px}
+@media(max-width:760px){.top,.two,.settings{display:block}.top>*{margin-bottom:10px}.settings label{display:block;margin-bottom:9px}}
 </style>
 </head>
 <body>
-<header class="top"><a class="back" href="/">←</a><div class="brand"><strong>YulCaribe</strong><span>System Health</span></div></header>
+<?php if (!$authed): ?>
+<form class="login" method="post" autocomplete="off">
+  <h1>System Health</h1>
+  <p class="muted">YulCaribe bakım ve yönetim ekranı.</p>
+  <input name="admin_key" type="password" required autofocus autocomplete="current-password" placeholder="Health password">
+  <button type="submit">Giriş yap</button>
+  <?php if ($loginError): ?><p class="bad">Şifre geçersiz.</p><?php endif; ?>
+</form>
+<?php else: ?>
 <main class="shell">
-<section class="hero">
-<div><div class="eyebrow">FAA · NOTAM MANAGEMENT SERVICE</div><h1>System Health</h1><p>FAA bağlantısı, local MariaDB senkronizasyonu ve NOTAM yaşam döngüsü tek ekranda.</p></div>
-<div class="actions"><button class="btn" id="refresh">Yenile</button><button class="btn primary" id="probe">FAA bağlantısını test et</button><form method="post" style="margin:0"><button class="btn" type="submit" name="logout" value="1">Çıkış</button></form></div>
-</section>
+  <header class="top">
+    <div><h1>System Health</h1><div class="muted">API · SQL · FAA NMS · METAR/TAF · WAFS · ADS-B · MapLibre · Logs</div></div>
+    <div class="actions">
+      <button id="refresh">Yenile</button>
+      <button id="probe">Bağlantıları test et</button>
+      <form method="post"><button name="logout" value="1">Çıkış</button></form>
+    </div>
+  </header>
 
-<section class="banner" id="banner"><strong id="banner-title">Durum yükleniyor</strong><span id="banner-detail">Local veritabanı kontrol ediliyor…</span></section>
+  <section id="overview" class="grid"></section>
 
-<section class="admin">
-<div><div class="kicker">WEB ADMIN</div><h2>NOTAM Sync</h2><p>Bakım oturumu doğrulandı. Delta ve Initial Load işlemleri bu sunucu tarafı oturumla yetkilendirilir.</p></div>
-<div class="admin-controls">
-<button class="btn" id="delta">Delta Sync</button>
-<button class="btn primary" id="full">Initial Load</button>
-<div class="result" id="result">Hazır.</div>
-</div>
-</section>
+  <section class="panel">
+    <h2>API / MariaDB / Navdata</h2>
+    <div class="two">
+      <pre id="api-state">Yükleniyor…</pre>
+      <pre id="db-state">Yükleniyor…</pre>
+    </div>
+  </section>
 
-<section class="metrics">
-<article class="metric"><span>Toplam</span><strong id="total">—</strong></article>
-<article class="metric good"><span>Aktif</span><strong id="active">—</strong></article>
-<article class="metric"><span>Gelecek</span><strong id="future">—</strong></article>
-<article class="metric warn"><span>Süresi dolan</span><strong id="expired">—</strong></article>
-<article class="metric bad"><span>İptal</span><strong id="cancelled">—</strong></article>
-<article class="metric"><span>PERM</span><strong id="perm">—</strong></article>
-</section>
+  <section class="panel">
+    <h2>FAA NMS / NOTAM</h2>
+    <div class="actions"><button id="delta">Delta Sync</button></div>
+    <pre id="nms-state">Yükleniyor…</pre>
+    <h3>Son çekilen NOTAM'lar</h3>
+    <table>
+      <thead><tr><th>NOTAM</th><th>Yer</th><th>Durum</th><th>Son update</th></tr></thead>
+      <tbody id="notam-rows"></tbody>
+    </table>
+    <div class="two" style="margin-top:12px">
+      <div><h3>Okunabilir</h3><pre id="notam-parsed">Bir NOTAM seç.</pre></div>
+      <div><h3>RAW FAA</h3><pre id="notam-raw">Bir NOTAM seç.</pre></div>
+    </div>
+  </section>
 
-<div class="grid">
-<section class="panel"><div class="kicker">CONNECTION</div><h2>FAA NMS</h2><div class="rows">
-<div class="row"><span>Environment</span><strong id="env">—</strong></div>
-<div class="row"><span>API Base</span><strong id="api-base">—</strong></div>
-<div class="row"><span>Credentials</span><strong id="cred">—</strong></div>
-<div class="row"><span>FAA canlı test</span><strong id="remote">Test edilmedi</strong></div>
-<div class="row"><span>HTTP</span><strong id="http">—</strong></div>
-<div class="row"><span>PHP extensions</span><strong id="ext">—</strong></div>
-</div></section>
+  <section class="panel">
+    <h2>Bağlantılar</h2>
+    <pre id="network-state">Henüz aktif test yapılmadı.</pre>
+  </section>
 
-<section class="panel"><div class="kicker">SYNC STATE</div><h2>Database</h2><div class="rows">
-<div class="row"><span>Otomatik cron</span><strong id="cron-state">Henüz çalışmadı</strong></div>
-<div class="row"><span>Son başarılı sync</span><strong id="last-sync">—</strong></div>
-<div class="row"><span>Sync yaşı</span><strong id="age">—</strong></div>
-<div class="row"><span>Son full load</span><strong id="last-full">—</strong></div>
-<div class="row"><span>Son NOTAM update</span><strong id="latest">—</strong></div>
-<div class="row"><span>3 günlük temizlik</span><strong id="retention">—</strong></div>
-<div class="row"><span>Geometry var / yok</span><strong id="geom">—</strong></div>
-<div class="row"><span>Belirsiz durum</span><strong id="unknown">—</strong></div>
-<div class="row"><span>DB staging / production</span><strong id="env-counts">—</strong></div>
-<div class="row"><span>Son hata</span><strong id="error">—</strong></div>
-</div></section>
+  <section class="panel">
+    <h2>Logs <span class="muted">· 3 gün</span></h2>
+    <div class="actions"><button id="logs-refresh">Logları yenile</button></div>
+    <pre id="logs" style="margin-top:10px">—</pre>
+  </section>
 
-<section class="panel"><div class="kicker">INITIAL LOAD CACHE</div><h2>Snapshot / Progress</h2><div class="rows">
-<div class="row"><span>Cache klasörü</span><strong id="cache-dir">—</strong></div>
-<div class="row"><span>Progress dosyası</span><strong id="progress-file">—</strong></div>
-<div class="row"><span>Snapshot dosyası</span><strong id="snapshot-file">—</strong></div>
-<div class="row"><span>Snapshot boyutu</span><strong id="snapshot-size">—</strong></div>
-<div class="row"><span>Snapshot zamanı</span><strong id="snapshot-time">—</strong></div>
-<div class="row"><span>Byte offset</span><strong id="snapshot-offset">—</strong></div>
-<div class="row"><span>İşlenen / skipped / expected</span><strong id="snapshot-progress">—</strong></div>
-<div class="row"><span>Kaynak</span><strong id="snapshot-source">—</strong></div>
-</div></section>
-
-<section class="panel"><div class="kicker">CLASSIFICATION</div><h2>Dağılım</h2><div class="classes" id="classes">—</div></section>
-<section class="panel"><div class="kicker">NOTES</div><h2>Çalışma şekli</h2><div class="rows">
-<div class="row"><span>Initial Load</span><strong>Cron/CLI · bir kez baseline</strong></div>
-<div class="row"><span>Delta</span><strong>Cron · 5 dakikada bir</strong></div>
-<div class="row"><span>Health refresh</span><strong>FAA request atmaz</strong></div>
-<div class="row"><span>FAA test</span><strong>Butonla manuel</strong></div>
-</div></section>
-</div>
-<div class="small" id="generated"></div>
+  <section class="panel">
+    <h2>Settings / Maintenance</h2>
+    <p class="muted">Secret ve şifre alanları ekrana geri basılmaz. Boş bırakırsan değişmez. FAA ve SQL ayarları kaydetmeden önce test edilir.</p>
+    <div class="settings">
+      <label><span>Yeni Health şifresi</span><input id="healthPassword" type="password" placeholder="değiştirme"></label>
+      <label><span>FAA Environment</span><select id="nmsEnvironment"><option value="production">production</option><option value="staging">staging</option></select></label>
+      <label><span>FAA Client ID</span><input id="nmsClientId" placeholder="değiştirme"></label>
+      <label><span>FAA Client Secret</span><input id="nmsClientSecret" type="password" placeholder="değiştirme"></label>
+      <label><span>DB Host</span><input id="dbHost"></label>
+      <label><span>DB Port</span><input id="dbPort" type="number"></label>
+      <label><span>DB Name</span><input id="dbName"></label>
+      <label><span>DB User</span><input id="dbUser"></label>
+      <label><span>DB Password</span><input id="dbPassword" type="password" placeholder="değiştirme"></label>
+    </div>
+    <div class="actions" style="margin-top:12px"><button id="save">Test et ve kaydet</button><span id="save-status" class="muted"></span></div>
+  </section>
 </main>
 <script>
-(()=>{
-const $=id=>document.getElementById(id),fmt=v=>new Intl.NumberFormat('tr-TR').format(Number(v||0));
-const dt=v=>{if(!v)return'—';const s=String(v),d=new Date(s.includes('T')?s:s.replace(' ','T')+'Z');return Number.isNaN(d.getTime())?s:d.toLocaleString('tr-TR',{timeZone:'UTC'})+'Z'};
-const age=s=>s==null?'—':s<60?s+' sn':s<3600?Math.floor(s/60)+' dk':Math.floor(s/3600)+' sa '+Math.floor((s%3600)/60)+' dk';
-const bytes=v=>{if(v==null)return'—';let n=Number(v);if(!Number.isFinite(n))return String(v);const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return (i? n.toFixed(n>=100?0:n>=10?1:2):Math.round(n))+' '+u[i]};
+const API="/main/api/v1/health.php";
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let latestNotams=[];
 
+async function req(action,opt={}){
+  const r=await fetch(API+"?action="+action,{cache:"no-store",...opt});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok||!d?.ok)throw new Error(d?.error||("HTTP "+r.status));
+  return d;
+}
+function card(name,state,sub=""){
+  const cls=state===true?"ok":state===false?"bad":"warn";
+  const label=state===true?"OK":state===false?"ERROR":"UNKNOWN";
+  return '<div class="card"><small>'+esc(name)+'</small><strong class="'+cls+'">'+label+'</strong><small>'+esc(sub)+'</small></div>';
+}
 function paint(d){
- const l=d.local||{},c=l.counts||{},s=l.state||{},r=d.remote||{};
- $('env').textContent=(d.environment||'—').toUpperCase();$('env').className=d.environment==='production'?'ok':'warntext';$('api-base').textContent=d.apiBase||'—';$('total').textContent=fmt(c.total);$('active').textContent=fmt(c.active);$('future').textContent=fmt(c.future);$('expired').textContent=fmt(c.expired);$('cancelled').textContent=fmt(c.cancelled);$('perm').textContent=fmt(c.permanent);$('unknown').textContent=fmt(c.unknown);
- $('cred').textContent=d.credentialsConfigured?'OK':'Eksik';$('cred').className=d.credentialsConfigured?'ok':'badtext';
- $('remote').textContent=r.checked?(r.ok?'Bağlantı başarılı':'Bağlantı başarısız'):'Test edilmedi';$('remote').className=r.checked?(r.ok?'ok':'badtext'):'';
- $('http').textContent=r.upstreamStatus??'—';const ec=l.environmentCounts||{},cr=l.cronState||null;$('env-counts').textContent=fmt(ec.staging)+' / '+fmt(ec.production);if(cr){const cp=cr.progressPercent!=null?' · %'+cr.progressPercent:'';$('cron-state').textContent=(cr.mode||'cron')+cp+' · '+dt(cr.updatedAt);$('cron-state').className=cr.ok===false?'badtext':(cr.running?'warntext':'ok')}else{$('cron-state').textContent='Henüz çalışmadı';$('cron-state').className=''}$('last-sync').textContent=dt(s.last_successful_sync);$('age').textContent=age(l.syncAgeSeconds);$('last-full').textContent=s.last_full_load?dt(s.last_full_load):'Henüz yapılmadı';$('latest').textContent=dt(l.latestNotamUpdate);const rt=l.retentionCleanup||null;$('retention').textContent=rt?(dt(rt.completedAt)+' · '+fmt(rt.deletedTotal||0)+' silindi'):'Henüz çalışmadı';$('retention').className=rt?'ok':'';$('geom').textContent=fmt(c.withGeometry)+' / '+fmt(c.withoutGeometry);$('error').textContent=s.last_error||'Yok';$('error').className=s.last_error?'badtext':'ok';
- const fd=l.fullLoadDiagnostics||{},snapshotPath=(fd.cacheDir&&fd.snapshotFile)?fd.cacheDir.replace(/\/$/,'')+'/'+fd.snapshotFile:'—';
- $('cache-dir').textContent=fd.cacheDir||'—';
- $('progress-file').textContent=fd.progressExists?(fd.progressFile||'Var'):'Yok';
- $('snapshot-file').textContent=snapshotPath;
- $('snapshot-size').textContent=bytes(fd.snapshotBytes);
- $('snapshot-time').textContent=dt(fd.snapshotModifiedAt);
- $('snapshot-offset').textContent=fd.byteOffset==null?'—':fmt(fd.byteOffset);
- $('snapshot-progress').textContent=(fd.processed==null?'—':fmt(fd.processed))+' / '+(fd.skipped==null?'—':fmt(fd.skipped))+' / '+(fd.expected==null?'—':fmt(fd.expected));
- $('snapshot-source').textContent=fd.source||'—';
- $('ext').textContent=Object.entries(l.extensions||{}).map(([k,v])=>k+':'+(v?'ok':'yok')).join(' · ')||'—';
- $('classes').innerHTML=(l.classifications||[]).map(x=>'<div class="class-row"><span>'+String(x.classification).replace(/[&<>"]/g,'')+'</span><strong>'+fmt(x.total)+'</strong></div>').join('')||'Henüz veri yok.';
- const b=$('banner');b.className='banner';
- if(!d.credentialsConfigured){b.classList.add('bad');$('banner-title').textContent='FAA credentials eksik';$('banner-detail').textContent='NMS config kontrol edilmeli.'}
- else if(s.last_error){b.classList.add('bad');$('banner-title').textContent='Son sync hata verdi';$('banner-detail').textContent=s.last_error}
- else if(d.environment!=='production'){b.classList.add('warn');$('banner-title').textContent='STAGING ortamındasın';$('banner-detail').textContent='Production credential geçişi henüz yapılmamış.'}
- else if(!s.last_full_load){b.classList.add('warn');$('banner-title').textContent='Production bağlı · baseline hazırlanıyor';const cr=l.cronState||{};const p=cr.progressPercent!=null?(' · %'+cr.progressPercent):'';$('banner-detail').textContent=(cr.mode==='initial-load'?'Cron Initial Load çalışıyor'+p:'Cron ilk çalışmasında Initial Load başlayacak')+' · DB’de '+fmt(c.total)+' production NOTAM var.'}
- else if(l.syncHealth==='stale'){b.classList.add('warn');$('banner-title').textContent='Delta sync eski';$('banner-detail').textContent='Son sync '+age(l.syncAgeSeconds)+' önce.'}
- else{b.classList.add('good');$('banner-title').textContent='NOTAM veritabanı sağlıklı';$('banner-detail').textContent=fmt(c.active)+' aktif NOTAM · son sync '+age(l.syncAgeSeconds)+' önce.'}
- $('generated').textContent='Health snapshot: '+dt(d.generatedAt);
+  const n=d.network||{},db=d.database||{},local=d.nms||{},apis=d.apis||{};
+  $("overview").innerHTML=[
+    card("API",Object.values(apis).every(Boolean),"v1"),
+    card("MariaDB",db.ok,db.latencyMs!=null?db.latencyMs+" ms":""),
+    card("FAA NMS",n.faa?.ok??null,n.faa?.status||""),
+    card("METAR",n.metar?.ok??null,n.metar?.status||""),
+    card("TAF",n.taf?.ok??null,n.taf?.status||""),
+    card("WAFS",n.wafs?.ok??null,n.wafs?.status||""),
+    card("ADSB.lol",n.adsb?.ok??null,n.adsb?.aircraft!=null?n.adsb.aircraft+" aircraft":""),
+    card("MapLibre",n.maplibre?.ok??null,n.maplibre?.status||""),
+    card("OSM Tiles",n.osm?.ok??null,n.osm?.status||"")
+  ].join("");
+  $("api-state").textContent=JSON.stringify(apis,null,2);
+  $("db-state").textContent=JSON.stringify(db,null,2);
+  $("nms-state").textContent=JSON.stringify({config:d.nmsConfig,local},null,2);
+  $("network-state").textContent=n.checkedAt?JSON.stringify(n,null,2):"Henüz aktif test yapılmadı. Bağlantıları test et.";
+  const s=d.settings||{};
+  $("nmsEnvironment").value=s.nms?.environment||"production";
+  $("nmsClientId").placeholder=s.nms?.clientId?("mevcut: "+s.nms.clientId):"değiştirme";
+  $("dbHost").value=s.db?.host||"";
+  $("dbPort").value=s.db?.port||3306;
+  $("dbName").value=s.db?.database||"";
+  $("dbUser").value=s.db?.user||"";
 }
 async function load(probe=false){
- $('refresh').disabled=$('probe').disabled=true;if(probe)$('probe').textContent='Test ediliyor…';
- try{const res=await fetch('/main/notam/nms/admin.php?action=health'+(probe?'&probe=1':''),{cache:'no-store'}),d=await res.json();if(!res.ok||!d.ok)throw new Error(d.error||'HTTP '+res.status);paint(d)}
- catch(e){$('banner').className='banner bad';$('banner-title').textContent='Health alınamadı';$('banner-detail').textContent=e.message}
- finally{$('refresh').disabled=$('probe').disabled=false;$('probe').textContent='FAA bağlantısını test et'}
+  $("refresh").disabled=$("probe").disabled=true;
+  try{paint(await req("snapshot"+(probe?"&probe=1":"")))}
+  catch(e){alert(e.message)}
+  finally{$("refresh").disabled=$("probe").disabled=false}
 }
-async function callAdmin(kind){
- const res=await fetch('/main/notam/nms/admin.php?action=admin-'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',cache:'no-store'});
- const raw=await res.text();
- let d=null;
- try{d=JSON.parse(raw)}catch(_){throw new Error('HTTP '+res.status+' · sunucu JSON yerine hata sayfası döndürdü')}
- if(!res.ok||!d.ok)throw new Error(d.detail||d.error||'HTTP '+res.status);
- return d;
+async function loadNotams(){
+  const d=await req("notams&limit=20");latestNotams=d.items||[];
+  $("notam-rows").innerHTML=latestNotams.map((x,i)=>'<tr data-i="'+i+'" style="cursor:pointer"><td>'+esc(x.parsed.ident)+'</td><td>'+esc(x.parsed.location)+'</td><td>'+esc(x.parsed.status)+'</td><td>'+esc(x.parsed.lastUpdated)+'</td></tr>').join("");
+  document.querySelectorAll("#notam-rows tr").forEach(row=>row.onclick=()=>{
+    const x=latestNotams[Number(row.dataset.i)];
+    $("notam-parsed").textContent=JSON.stringify(x.parsed,null,2);
+    $("notam-raw").textContent=typeof x.raw==="string"?x.raw:JSON.stringify(x.raw,null,2);
+  });
 }
-async function admin(kind){
- $('delta').disabled=$('full').disabled=true;
- try{
-   if(kind==='delta'){
-     $('result').textContent='Delta Sync çalışıyor…';
-     const d=await callAdmin('delta');
-     $('result').textContent='Delta tamamlandı: '+fmt(d.processed)+' işlendi.';
-     await load(false);
-     return;
-   }
+async function loadLogs(){const d=await req("logs&lines=300");$("logs").textContent=(d.lines||[]).join("\n")||"Log yok."}
 
-   const d=await callAdmin('full');
-   if(d.managedByCron){
-     $('result').textContent=d.complete?'Initial Load tamamlanmış. Delta cron tarafından sürdürülüyor.':'Initial Load cron tarafından otomatik yürütülüyor. Health ekranından ilerlemeyi izleyebilirsin.';
-     await load(false);
-     return;
-   }
-   $('result').textContent=d.complete?'Initial Load tamamlandı: '+fmt(d.processed)+' işlendi.':'Initial Load parçası işlendi: '+fmt(d.processed)+' kayıt.';
-   await load(false);
- }catch(e){$('result').textContent='Hata: '+e.message}
- finally{$('delta').disabled=$('full').disabled=false}
-}
-$('refresh').onclick=()=>load(false);$('probe').onclick=()=>load(true);$('delta').onclick=()=>admin('delta');$('full').onclick=()=>admin('full');load(false);setInterval(()=>{if(!document.hidden)load(false)},30000);
-})();
+$("refresh").onclick=()=>load(false);
+$("probe").onclick=()=>load(true);
+$("logs-refresh").onclick=loadLogs;
+$("delta").onclick=async()=>{try{$("nms-state").textContent=JSON.stringify(await req("nms-delta",{method:"POST",body:"{}"}),null,2);await load(false)}catch(e){alert(e.message)}};
+$("save").onclick=async()=>{
+  const body={
+    healthPassword:$("healthPassword").value,
+    nmsEnvironment:$("nmsEnvironment").value,
+    nmsClientId:$("nmsClientId").value,
+    nmsClientSecret:$("nmsClientSecret").value,
+    dbHost:$("dbHost").value,
+    dbPort:$("dbPort").value,
+    dbName:$("dbName").value,
+    dbUser:$("dbUser").value,
+    dbPassword:$("dbPassword").value
+  };
+  $("save-status").textContent="Test ediliyor…";
+  try{
+    const d=await req("settings-save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    $("save-status").textContent="Kaydedildi: "+(d.changed||[]).join(", ");
+    $("healthPassword").value=$("nmsClientSecret").value=$("dbPassword").value="";
+    await load(false);
+  }catch(e){$("save-status").textContent="Hata: "+e.message}
+};
+load(false);loadNotams();loadLogs();
+setInterval(()=>{if(!document.hidden)load(false)},30000);
 </script>
+<?php endif; ?>
 </body>
 </html>
-
