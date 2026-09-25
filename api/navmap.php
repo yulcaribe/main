@@ -392,7 +392,7 @@ function notamPointIsRenderable(array $row, string $geometrySource, array $seman
     if (($semantic['semantic_class'] ?? '') === 'OBSTACLE') return true;
 
     $scope = strtoupper((string)($row['scope'] ?? ''));
-    if ($geometrySource === 'airport-location' && str_contains($scope, 'A')) return true;
+    if (in_array($geometrySource, ['airport-location', 'faa-geometry'], true) && str_contains($scope, 'A')) return true;
 
     return false;
 }
@@ -549,6 +549,8 @@ function pointFeature(array $row): array {
 function routeFeature(array $row): ?array {
     $geometry = json_decode((string)$row['geometry'], true);
     if (!is_array($geometry) || !isset($geometry['type'])) return null;
+    $geometry = normalizeNotamGeometry($geometry);
+    if ($geometry === null) return null;
 
     return [
         'type' => 'Feature',
@@ -595,6 +597,129 @@ function airspaceFeature(array $row): ?array {
             'upper_unlimited' => (int)$row['upper_unlimited'],
         ],
     ];
+}
+
+
+function normalizeNotamGeometry(array $geometry): ?array {
+    $type = (string)($geometry['type'] ?? '');
+    if ($type !== 'GeometryCollection') return $type !== '' ? $geometry : null;
+
+    $items = $geometry['geometries'] ?? null;
+    if (!is_array($items) || !$items) return null;
+
+    $points = [];
+    $lines = [];
+    $polygons = [];
+
+    $collect = static function (?array $g) use (&$points, &$lines, &$polygons): void {
+        if (!is_array($g)) return;
+        $t = (string)($g['type'] ?? '');
+        $coords = $g['coordinates'] ?? null;
+
+        if ($t === 'Point' && is_array($coords)) {
+            $points[] = $coords;
+        } elseif ($t === 'MultiPoint' && is_array($coords)) {
+            foreach ($coords as $p) if (is_array($p)) $points[] = $p;
+        } elseif ($t === 'LineString' && is_array($coords)) {
+            $lines[] = $coords;
+        } elseif ($t === 'MultiLineString' && is_array($coords)) {
+            foreach ($coords as $line) if (is_array($line)) $lines[] = $line;
+        } elseif ($t === 'Polygon' && is_array($coords)) {
+            $polygons[] = $coords;
+        } elseif ($t === 'MultiPolygon' && is_array($coords)) {
+            foreach ($coords as $polygon) if (is_array($polygon)) $polygons[] = $polygon;
+        }
+    };
+
+    foreach ($items as $item) {
+        if (!is_array($item)) continue;
+        $normalized = normalizeNotamGeometry($item);
+        $collect($normalized);
+    }
+
+    // For mixed FAA collections prefer the highest-dimensional affected shape.
+    // A point bundled with a polygon is normally a reference/anchor, not a
+    // second affected area.
+    if ($polygons) {
+        return count($polygons) === 1
+            ? ['type' => 'Polygon', 'coordinates' => $polygons[0]]
+            : ['type' => 'MultiPolygon', 'coordinates' => $polygons];
+    }
+    if ($lines) {
+        return count($lines) === 1
+            ? ['type' => 'LineString', 'coordinates' => $lines[0]]
+            : ['type' => 'MultiLineString', 'coordinates' => $lines];
+    }
+    if ($points) {
+        return count($points) === 1
+            ? ['type' => 'Point', 'coordinates' => $points[0]]
+            : ['type' => 'MultiPoint', 'coordinates' => $points];
+    }
+
+    return null;
+}
+
+function notamSemanticNeedsText(array $row): bool {
+    $semantic = notamSemantic($row);
+    return in_array(
+        $semantic['semantic_class'] ?? '',
+        [
+            'RESTRICTED_AIRSPACE',
+            'AERIAL_SURVEY',
+            'EXERCISE',
+            'AIR_REFUELING',
+            'FIRING',
+            'UAV_ACTIVITY',
+            'AERIAL_SPORT_ACTIVITY',
+            'CONTROLLED_AIRSPACE',
+            'OBSTACLE',
+        ],
+        true
+    );
+}
+
+function hydrateNotamTexts(PDO $pdo, array $rows): array {
+    $ids = [];
+
+    foreach ($rows as $row) {
+        if (!notamSemanticNeedsText($row)) continue;
+
+        $geometry = json_decode((string)($row['geometry'] ?? ''), true);
+        $geometry = is_array($geometry) ? normalizeNotamGeometry($geometry) : null;
+        $type = (string)($geometry['type'] ?? '');
+
+        // Authoritative polygon/line geometry does not need E-text to draw.
+        if ($type !== '' && !in_array($type, ['Point', 'MultiPoint'], true)) continue;
+
+        $id = trim((string)($row['nms_id'] ?? ''));
+        if ($id !== '') $ids[$id] = true;
+    }
+
+    if (!$ids) return $rows;
+
+    $texts = [];
+    foreach (array_chunk(array_keys($ids), 400) as $chunk) {
+        $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT nms_id, notam_text
+             FROM notams
+             WHERE source = 'FAA_NMS'
+               AND environment = 'production'
+               AND nms_id IN ($placeholders)"
+        );
+        $stmt->execute($chunk);
+        while ($r = $stmt->fetch()) {
+            $texts[(string)$r['nms_id']] = $r['notam_text'];
+        }
+    }
+
+    foreach ($rows as &$row) {
+        $id = (string)($row['nms_id'] ?? '');
+        $row['notam_text'] = $texts[$id] ?? null;
+    }
+    unset($row);
+
+    return $rows;
 }
 
 function notamFeature(array $row): ?array {
@@ -689,7 +814,6 @@ function notamFeature(array $row): ?array {
             'display_group' => $semantic['display_group'],
             'category' => $category,
             'map_render_type' => $mapRenderType,
-            'text' => $row['notam_text'],
             'geometry_source' => $geometrySource,
             'geometry_accuracy' => $geometryAccuracy,
         ],
@@ -734,6 +858,32 @@ function bboxGeometrySql(float $west, float $south, float $east, float $north, a
 
 $action = strtolower((string)($_GET['action'] ?? 'viewport'));
 $pdo = db();
+
+
+if ($action === 'notam-detail') {
+    $id = trim((string)($_GET['id'] ?? ''));
+    if ($id === '' || strlen($id) > 160) {
+        respond(400, ['ok' => false, 'error' => 'Geçersiz NOTAM id.']);
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT
+            nms_id, series, number, year, notam_type, classification,
+            location, icao_location, selection_code, traffic, purpose, scope,
+            effective_start, effective_end, effective_end_raw,
+            lower_limit, upper_limit, radius_nm, notam_text, status, last_updated
+         FROM notams
+         WHERE source = 'FAA_NMS'
+           AND environment = 'production'
+           AND nms_id = :id
+         LIMIT 1"
+    );
+    $stmt->execute(['id' => $id]);
+    $row = $stmt->fetch();
+    if (!$row) respond(404, ['ok' => false, 'error' => 'NOTAM bulunamadı.']);
+
+    respond(200, ['ok' => true, 'notam' => $row]);
+}
 
 if ($action === 'health') {
     $counts = [];
@@ -1031,7 +1181,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v7',
+            'v8',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -1071,7 +1221,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
                 n.nms_id, n.series, n.number, n.year, n.classification,
                 n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                 n.effective_start, n.effective_end,
-                n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                n.effective_end_raw, n.lower_limit, n.upper_limit,
                 ST_AsGeoJSON(n.geometry, 6) AS geometry,
                 \'faa-geometry\' AS geometry_source
             FROM notams n
@@ -1087,7 +1237,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $notamCount = 0;
     $seenNotams = [];
     $seenMapFeatures = [];
-    while ($row = $stmt->fetch()) {
+    $rows = hydrateNotamTexts($pdo, $stmt->fetchAll());
+    foreach ($rows as $row) {
         $feature = notamFeature($row);
         if (!$feature) continue;
         $seenNotams[(string)$row['nms_id']] = true;
@@ -1118,7 +1269,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
                 n.nms_id, n.series, n.number, n.year, n.classification,
                 n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                 n.effective_start, n.effective_end,
-                n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                n.effective_end_raw, n.lower_limit, n.upper_limit,
                 JSON_OBJECT(
                     \'type\', \'Point\',
                     \'coordinates\', JSON_ARRAY(p.lon, p.lat)
@@ -1140,7 +1291,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $fallbackStmt = $pdo->prepare($fallbackSql);
     $fallbackStmt->execute($fallbackParams);
-    while ($row = $fallbackStmt->fetch()) {
+    $fallbackRows = hydrateNotamTexts($pdo, $fallbackStmt->fetchAll());
+    foreach ($fallbackRows as $row) {
         $id = (string)$row['nms_id'];
         if (isset($seenNotams[$id])) continue;
         $feature = notamFeature($row);
@@ -1171,24 +1323,16 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         ? 'q.lon BETWEEN :west AND :east'
         : '(q.lon >= :west OR q.lon <= :east)';
 
-    $coordTokenExpr = "CASE
-        WHEN NULLIF(TRIM(n.coordinates_raw), '') IS NOT NULL THEN
-            REGEXP_SUBSTR(
-                UPPER(n.coordinates_raw),
-                '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
-            )
-        ELSE
-            REGEXP_SUBSTR(
-                UPPER(COALESCE(n.notam_text, '')),
-                '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
-            )
-    END";
+    $coordTokenExpr = "REGEXP_SUBSTR(
+        UPPER(COALESCE(n.coordinates_raw, '')),
+        '([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])'
+    )";
 
     $coordSql = 'SELECT
             q.nms_id, q.series, q.number, q.year, q.classification,
             q.location, q.icao_location, q.radius_nm, q.selection_code, q.traffic, q.purpose, q.scope, q.coordinates_raw,
             q.effective_start, q.effective_end,
-            q.effective_end_raw, q.lower_limit, q.upper_limit, q.notam_text,
+            q.effective_end_raw, q.lower_limit, q.upper_limit,
             JSON_OBJECT(
                 \'type\', \'Point\',
                 \'coordinates\', JSON_ARRAY(q.lon, q.lat)
@@ -1230,7 +1374,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
                     n.nms_id, n.series, n.number, n.year, n.classification,
                     n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                     n.effective_start, n.effective_end,
-                    n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
+                    n.effective_end_raw, n.lower_limit, n.upper_limit,
                     ' . $coordTokenExpr . ' AS coord_token
                 FROM notams n
                 WHERE ' . $baseTimeWhere . '
@@ -1245,7 +1389,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $coordStmt = $pdo->prepare($coordSql);
     $coordStmt->execute($coordParams);
-    while ($row = $coordStmt->fetch()) {
+    $coordRows = hydrateNotamTexts($pdo, $coordStmt->fetchAll());
+    foreach ($coordRows as $row) {
         $id = (string)$row['nms_id'];
         if (isset($seenNotams[$id])) continue;
         $feature = notamFeature($row);
