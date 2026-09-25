@@ -551,7 +551,7 @@
 
       const current = popup?.getElement()?.querySelector("[data-notam-detail]");
       if (!current) return;
-      current.textContent = payload.notam.notam_text || "NOTAM metni bulunamadı.";
+      current.textContent = payload.notam.text || "NOTAM metni bulunamadı.";
     } catch (error) {
       const current = popup?.getElement()?.querySelector("[data-notam-detail]");
       if (current) current.textContent = "NOTAM metni yüklenemedi.";
