@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071018">
+  <meta name="description" content="YulCaribe FAA NMS NOTAM listesi ve gelişmiş filtreleme ekranı.">
+  <title>NOTAM | YulCaribe</title>
+  <link rel="stylesheet" href="/main/notam/notam.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/main/">YulCaribe</a>
+    <nav>
+      <a href="/main/navmap/">NavMap</a>
+      <a href="/main/briefing/">Pilot Brief</a>
+      <a class="active" href="/main/notam/">NOTAM</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <span class="eyebrow">FAA NMS · API v1</span>
+        <h1>NOTAM Listesi</h1>
+        <p>FAA NMS veritabanındaki NOTAM'ları zaman, meydan, FIR, Q-code ve operasyonel alanlara göre filtrele.</p>
+      </div>
+      <div class="hero-meta">
+        <span id="source-state">Kaynak hazırlanıyor…</span>
+        <span>Geçmiş saklama: 3 gün</span>
+      </div>
+    </section>
+
+    <section class="filter-panel" aria-label="NOTAM filtreleri">
+      <div class="filter-grid">
+        <label>
+          <span>Arama</span>
+          <input id="f-q" type="search" placeholder="NOTAM no, metin, Q-code…">
+        </label>
+        <label>
+          <span>ICAO</span>
+          <input id="f-icao" inputmode="latin" maxlength="4" placeholder="LTAI">
+        </label>
+        <label>
+          <span>FIR</span>
+          <input id="f-fir" inputmode="latin" maxlength="4" placeholder="LTAA">
+        </label>
+        <label>
+          <span>Zaman durumu</span>
+          <select id="f-state">
+            <option value="valid">Seçilen zamanda geçerli</option>
+            <option value="future">Gelecek</option>
+            <option value="expired">Süresi geçmiş</option>
+            <option value="cancelled">İptal edilmiş</option>
+            <option value="all">Tümü</option>
+          </select>
+        </label>
+        <label>
+          <span>UTC zamanı</span>
+          <input id="f-at" type="datetime-local" step="60">
+        </label>
+        <label>
+          <span>NOTAM tipi</span>
+          <select id="f-type"><option value="">Tümü</option></select>
+        </label>
+        <label>
+          <span>Classification</span>
+          <select id="f-classification"><option value="">Tümü</option></select>
+        </label>
+        <label>
+          <span>Scope</span>
+          <select id="f-scope"><option value="">Tümü</option></select>
+        </label>
+        <label>
+          <span>Traffic</span>
+          <select id="f-traffic"><option value="">Tümü</option></select>
+        </label>
+        <label>
+          <span>Purpose</span>
+          <input id="f-purpose" maxlength="12" placeholder="NBOM…">
+        </label>
+        <label>
+          <span>Q / Selection code</span>
+          <input id="f-selection" maxlength="12" placeholder="QMRLC">
+        </label>
+        <label>
+          <span>Sıralama</span>
+          <select id="f-sort">
+            <option value="updated_desc">Son güncellenen</option>
+            <option value="start_desc">Başlangıç · yeni → eski</option>
+            <option value="start_asc">Başlangıç · eski → yeni</option>
+            <option value="ident">NOTAM numarası</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="filter-actions">
+        <button id="apply" type="button">Filtrele</button>
+        <button id="reset" class="secondary" type="button">Sıfırla</button>
+        <label class="limit-label">
+          <span>Sayfa</span>
+          <select id="f-limit">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="result-head">
+      <div>
+        <strong id="result-count">—</strong>
+        <span id="result-label">NOTAM</span>
+      </div>
+      <span id="status">Hazırlanıyor…</span>
+    </section>
+
+    <section id="results" class="results" aria-live="polite"></section>
+
+    <nav class="pager" aria-label="Sayfalama">
+      <button id="prev" type="button" class="secondary">← Önceki</button>
+      <span id="page-info">—</span>
+      <button id="next" type="button" class="secondary">Sonraki →</button>
+    </nav>
+  </main>
+
+  <template id="notam-template">
+    <article class="notam-card">
+      <div class="notam-head">
+        <div>
+          <strong data-ident></strong>
+          <span data-location></span>
+        </div>
+        <div class="badges" data-badges></div>
+      </div>
+      <div class="notam-meta" data-meta></div>
+      <pre data-text></pre>
+      <div class="notam-foot">
+        <span data-limits></span>
+        <button type="button" class="copy-btn" data-copy>Kopyala</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/main/notam/notam.js?v=1" defer></script>
+</body>
+</html>
