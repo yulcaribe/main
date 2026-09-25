@@ -659,6 +659,87 @@ function normalizeNotamGeometry(array $geometry): ?array {
     return null;
 }
 
+
+function notamIdentifierKey(array $row): ?string {
+    $series = strtoupper(trim((string)($row['series'] ?? '')));
+    $numberRaw = strtoupper(trim((string)($row['number'] ?? '')));
+    $yearRaw = trim((string)($row['year'] ?? ''));
+
+    if ($series === '' || $numberRaw === '') return null;
+
+    if (!preg_match('/([0-9]{4})/', $numberRaw, $numberMatch)) return null;
+    $serial = $numberMatch[1];
+
+    $year2 = '';
+    if (preg_match('/\/([0-9]{2})\b/', $numberRaw, $yearMatch)) {
+        $year2 = $yearMatch[1];
+    } elseif ($yearRaw !== '' && preg_match('/([0-9]{2})$/', $yearRaw, $yearMatch)) {
+        $year2 = $yearMatch[1];
+    }
+
+    if ($year2 === '') return null;
+
+    // FAA NOTAM cancellation references use the one-letter series form.
+    $seriesKey = substr($series, 0, 1);
+    return $seriesKey . $serial . '/' . $year2;
+}
+
+function notamCancellationTargetsAfter(PDO $pdo, string $environment, string $atSql): array {
+    $stmt = $pdo->prepare(
+        "SELECT notam_text, COALESCE(effective_start, last_updated) AS cancellation_time
+         FROM notams
+         WHERE source = 'FAA_NMS'
+           AND environment = :environment
+           AND status = 'cancelled'
+           AND UPPER(COALESCE(notam_type, '')) = 'C'
+           AND COALESCE(effective_start, last_updated) > :at"
+    );
+    $stmt->execute([
+        'environment' => $environment,
+        'at' => $atSql,
+    ]);
+
+    $targets = [];
+    while ($row = $stmt->fetch()) {
+        $text = (string)($row['notam_text'] ?? '');
+        if (!preg_match('/\bNOTAMC\s+([A-Z])([0-9]{4})\/([0-9]{2})\b/i', $text, $m)) continue;
+
+        $key = strtoupper($m[1]) . $m[2] . '/' . $m[3];
+        $time = (string)($row['cancellation_time'] ?? '');
+        if ($time === '') continue;
+
+        if (!isset($targets[$key]) || strcmp($time, $targets[$key]) < 0) {
+            $targets[$key] = $time;
+        }
+    }
+
+    return $targets;
+}
+
+function filterNotamRowsForSelectedTime(array $rows, bool $timeTravel, array $futureCancellations): array {
+    if (!$timeTravel) return $rows;
+
+    $filtered = [];
+    foreach ($rows as $row) {
+        if (($row['status'] ?? '') !== 'cancelled') {
+            $filtered[] = $row;
+            continue;
+        }
+
+        // A cancellation message itself is administrative, not an affected
+        // feature. A target NOTAM is visible only if its cancellation happens
+        // after the selected playback time.
+        if (strtoupper((string)($row['notam_type'] ?? '')) === 'C') continue;
+
+        $key = notamIdentifierKey($row);
+        if ($key !== null && isset($futureCancellations[$key])) {
+            $filtered[] = $row;
+        }
+    }
+
+    return $filtered;
+}
+
 function notamSemanticNeedsText(array $row): bool {
     $semantic = notamSemantic($row);
     return in_array(
@@ -1184,10 +1265,20 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
     $atSql = $at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
+    $nowUtc = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $timeTravel = abs($at->getTimestamp() - $nowUtc->getTimestamp()) > 300;
+    $futureCancellations = [];
+
+    if ($timeTravel) {
+        $cancelStart = microtime(true);
+        $futureCancellations = notamCancellationTargetsAfter($pdo, 'production', $atSql);
+        $notamPerf['cancel_sql'] = (microtime(true) - $cancelStart) * 1000.0;
+    }
+
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v10',
+            'v11',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -1212,10 +1303,14 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         header('X-YC-NavMap-Cache: MISS');
     }
 
+    $statusTimeWhere = $timeTravel
+        ? "AND (n.status <> 'cancelled' OR UPPER(COALESCE(n.notam_type, '')) <> 'C')"
+        : "AND n.status <> 'cancelled'";
+
     $baseTimeWhere = "
               n.source = 'FAA_NMS'
               AND n.environment = :environment
-              AND n.status <> 'cancelled'
+              " . $statusTimeWhere . "
               AND (n.effective_start IS NULL OR n.effective_start <= :at_start)
               AND (
                     UPPER(COALESCE(n.effective_end_raw, '')) = 'PERM'
@@ -1229,7 +1324,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $bboxExpr = sprintf($bboxExpr, 'n.geometry', 'n.geometry');
 
     $sql = 'SELECT
-                n.nms_id, n.series, n.number, n.year, n.classification,
+                n.nms_id, n.series, n.number, n.year, n.notam_type, n.status, n.classification,
                 n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                 n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit,
@@ -1245,7 +1340,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $faaSqlStart = microtime(true);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $faaRows = $stmt->fetchAll();
+    $faaRows = filterNotamRowsForSelectedTime($stmt->fetchAll(), $timeTravel, $futureCancellations);
     $notamPerf['faa_sql'] = (microtime(true) - $faaSqlStart) * 1000.0;
 
     $notamCount = 0;
@@ -1326,7 +1421,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             }
 
             $airportNotamSql = 'SELECT
-                    n.nms_id, n.series, n.number, n.year, n.classification,
+                    n.nms_id, n.series, n.number, n.year, n.notam_type, n.status, n.classification,
                     n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                     n.effective_start, n.effective_end,
                     n.effective_end_raw, n.lower_limit, n.upper_limit
@@ -1361,7 +1456,8 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $notamPerf['airport_sql'] = (microtime(true) - $airportSqlStart) * 1000.0;
 
     $airportTextStart = microtime(true);
-    $fallbackRows = hydrateNotamTexts($pdo, array_values($airportRowsById));
+    $fallbackRows = filterNotamRowsForSelectedTime(array_values($airportRowsById), $timeTravel, $futureCancellations);
+    $fallbackRows = hydrateNotamTexts($pdo, $fallbackRows);
     $notamPerf['airport_text'] = (microtime(true) - $airportTextStart) * 1000.0;
 
     $airportBuildStart = microtime(true);
@@ -1403,7 +1499,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     )";
 
     $coordSql = 'SELECT
-            q.nms_id, q.series, q.number, q.year, q.classification,
+            q.nms_id, q.series, q.number, q.year, q.notam_type, q.status, q.classification,
             q.location, q.icao_location, q.radius_nm, q.selection_code, q.traffic, q.purpose, q.scope, q.coordinates_raw,
             q.effective_start, q.effective_end,
             q.effective_end_raw, q.lower_limit, q.upper_limit,
@@ -1445,7 +1541,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
                 END AS lon
             FROM (
                 SELECT
-                    n.nms_id, n.series, n.number, n.year, n.classification,
+                    n.nms_id, n.series, n.number, n.year, n.notam_type, n.status, n.classification,
                     n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                     n.effective_start, n.effective_end,
                     n.effective_end_raw, n.lower_limit, n.upper_limit,
@@ -1464,7 +1560,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     $coordSqlStart = microtime(true);
     $coordStmt = $pdo->prepare($coordSql);
     $coordStmt->execute($coordParams);
-    $coordRowsRaw = $coordStmt->fetchAll();
+    $coordRowsRaw = filterNotamRowsForSelectedTime($coordStmt->fetchAll(), $timeTravel, $futureCancellations);
     $notamPerf['coord_sql'] = (microtime(true) - $coordSqlStart) * 1000.0;
 
     $coordTextStart = microtime(true);
