@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+header('X-YC-API-Version: 1');
+header('X-YC-API-Resource: charts');
+
 // Canonical chart/navdata API. During migration this delegates to the proven
 // NavMap backend while explicitly preventing NOTAM data from leaking into the
 // chart resource.
