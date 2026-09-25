@@ -203,7 +203,7 @@
         let ok=false;
         for(const src of sources){try{await load(src);if(window.L){ok=true;break;}}catch(e){}}
         if(!ok){detail.textContent="Leaflet yüklenemedi. CDN erişimini kontrol et.";return;}
-        try{await load("/main/enroute/enroute.js?v=2");boot.classList.add("hide");setTimeout(()=>boot.remove(),450);}catch(e){detail.textContent="Yolboyu hava kodu yüklenemedi.";}
+        try{await load("/main/enroute/enroute.js?v=3");boot.classList.add("hide");setTimeout(()=>boot.remove(),450);}catch(e){detail.textContent="Yolboyu hava kodu yüklenemedi.";}
       })();
     })();
   </script>
