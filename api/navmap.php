@@ -75,22 +75,29 @@ function parseNotamCoordinate(string $token): ?array {
     return null;
 }
 
-function extractNotamCoordinates(?string $text): array {
+function extractNotamCoordinates(?string $text, bool $dedupe = true): array {
     $text = strtoupper(trim((string)$text));
     if ($text === '') return [];
-
     if (!preg_match_all(notamCoordinateRegex(), $text, $matches)) return [];
 
     $coords = [];
+    $seen = [];
     foreach ($matches[0] as $token) {
         $coord = parseNotamCoordinate((string)$token);
         if ($coord === null) continue;
 
-        $key = sprintf('%.6F,%.6F', $coord[0], $coord[1]);
-        if (!isset($coords[$key])) $coords[$key] = $coord;
-    }
+        if (!$dedupe) {
+            $coords[] = $coord;
+            continue;
+        }
 
-    return array_values($coords);
+        $key = sprintf('%.6F,%.6F', $coord[0], $coord[1]);
+        if (!isset($seen[$key])) {
+            $seen[$key] = true;
+            $coords[] = $coord;
+        }
+    }
+    return $coords;
 }
 
 function polygonFromCoordinateList(array $coords): ?array {
@@ -105,64 +112,265 @@ function polygonFromCoordinateList(array $coords): ?array {
         $ring[] = $first;
     }
 
+    return ['type' => 'Polygon', 'coordinates' => [$ring]];
+}
+
+function radiusToNm(float $value, string $unit): ?float {
+    $unit = strtoupper(trim($unit));
+    if ($value <= 0.0) return null;
+    return match ($unit) {
+        'NM' => $value,
+        'KM' => $value / 1.852,
+        'M' => $value / 1852.0,
+        default => null,
+    };
+}
+
+function destinationPoint(float $lon, float $lat, float $bearingDeg, float $distanceNm): array {
+    $earthRadiusNm = 3440.065;
+    $angularDistance = max(0.0, $distanceNm) / $earthRadiusNm;
+    $bearing = deg2rad($bearingDeg);
+    $lat1 = deg2rad($lat);
+    $lon1 = deg2rad($lon);
+
+    $sinLat2 = sin($lat1) * cos($angularDistance)
+        + cos($lat1) * sin($angularDistance) * cos($bearing);
+    $lat2 = asin(max(-1.0, min(1.0, $sinLat2)));
+    $lon2 = $lon1 + atan2(
+        sin($bearing) * sin($angularDistance) * cos($lat1),
+        cos($angularDistance) - sin($lat1) * sin($lat2)
+    );
+
     return [
-        'type' => 'Polygon',
-        'coordinates' => [$ring],
+        round(normalizeLon(rad2deg($lon2)), 6),
+        round(rad2deg($lat2), 6),
     ];
 }
 
-function notamAreaPolygon(array $row): ?array {
-    $text = (string)($row['notam_text'] ?? '');
+function initialBearingDeg(array $from, array $to): float {
+    $lat1 = deg2rad((float)$from[1]);
+    $lat2 = deg2rad((float)$to[1]);
+    $dLon = deg2rad((float)$to[0] - (float)$from[0]);
 
-    if (preg_match('/\bAREA\s*:\s*/i', $text, $m, PREG_OFFSET_CAPTURE)) {
-        $marker = $m[0][0];
+    $y = sin($dLon) * cos($lat2);
+    $x = cos($lat1) * sin($lat2) - sin($lat1) * cos($lat2) * cos($dLon);
+    $bearing = rad2deg(atan2($y, $x));
+    return fmod($bearing + 360.0, 360.0);
+}
+
+function corridorGeometry(array $coords, float $halfWidthNm): ?array {
+    if (count($coords) < 2 || $halfWidthNm <= 0.0) return null;
+
+    $polygons = [];
+    for ($i = 0; $i < count($coords) - 1; $i++) {
+        $a = $coords[$i];
+        $b = $coords[$i + 1];
+        if (abs((float)$a[0] - (float)$b[0]) < 0.000001
+            && abs((float)$a[1] - (float)$b[1]) < 0.000001) {
+            continue;
+        }
+
+        $bearing = initialBearingDeg($a, $b);
+        $left = $bearing - 90.0;
+        $right = $bearing + 90.0;
+
+        $aLeft = destinationPoint((float)$a[0], (float)$a[1], $left, $halfWidthNm);
+        $bLeft = destinationPoint((float)$b[0], (float)$b[1], $left, $halfWidthNm);
+        $bRight = destinationPoint((float)$b[0], (float)$b[1], $right, $halfWidthNm);
+        $aRight = destinationPoint((float)$a[0], (float)$a[1], $right, $halfWidthNm);
+
+        $polygons[] = [[$aLeft, $bLeft, $bRight, $aRight, $aLeft]];
+    }
+
+    if (!$polygons) return null;
+    if (count($polygons) === 1) {
+        return ['type' => 'Polygon', 'coordinates' => $polygons[0]];
+    }
+
+    return ['type' => 'MultiPolygon', 'coordinates' => $polygons];
+}
+
+function notamQSubject(array $row): string {
+    $q = strtoupper(trim((string)($row['selection_code'] ?? '')));
+    if (preg_match('/^Q([A-Z]{2})[A-Z]{2}$/', $q, $m)) return $m[1];
+    return '';
+}
+
+function notamSemantic(array $row): array {
+    $subject = notamQSubject($row);
+
+    $semantic = match ($subject) {
+        'RD', 'RP', 'RR', 'RT' => 'RESTRICTED_AIRSPACE',
+        'WY' => 'AERIAL_SURVEY',
+        'WE' => 'EXERCISE',
+        'WF' => 'AIR_REFUELING',
+        'WM' => 'FIRING',
+        'WU' => 'UAV_ACTIVITY',
+        'WG', 'WL', 'WP', 'WT' => 'AERIAL_SPORT_ACTIVITY',
+        'OB' => 'OBSTACLE',
+        'AC' => 'CONTROLLED_AIRSPACE',
+        'MR' => 'RUNWAY',
+        default => 'OTHER',
+    };
+
+    $displayGroup = match ($subject) {
+        'WG', 'WL', 'WP', 'WT' => 'AERIAL_SPORT',
+        'RD', 'RP', 'RR', 'RT' => 'RESTRICTED_AIRSPACE',
+        'WY' => 'AERIAL_SURVEY',
+        'WE', 'WF', 'WM', 'WU' => 'TRAINING_MILITARY',
+        default => 'OTHER',
+    };
+
+    return [
+        'q_subject' => $subject,
+        'semantic_class' => $semantic,
+        'display_group' => $displayGroup,
+    ];
+}
+
+function notamTextSpatialSegment(string $text): ?string {
+    $patterns = [
+        '/\bWI(?:THIN)?\s+AREA\b\s*:?\s*/i',
+        '/\bAREA\s+BOUNDED\s+BY\b\s*:?\s*/i',
+        '/\bBOUNDED\s+BY\b\s*:?\s*/i',
+        '/\bBOUNDARY\b\s*:?\s*/i',
+        '/\bAREA\b\s*:?\s*/i',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (!preg_match($pattern, $text, $m, PREG_OFFSET_CAPTURE)) continue;
+        $marker = (string)$m[0][0];
         $offset = (int)$m[0][1] + strlen($marker);
         $segment = substr($text, $offset);
 
-        if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b)/i', $segment, $stop, PREG_OFFSET_CAPTURE)) {
+        if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b|NOTE\b)/i', $segment, $stop, PREG_OFFSET_CAPTURE)) {
             $segment = substr($segment, 0, (int)$stop[0][1]);
         }
 
-        $polygon = polygonFromCoordinateList(extractNotamCoordinates($segment));
-        if ($polygon !== null) {
-            return ['geometry' => $polygon, 'source' => 'notam-area-polygon'];
-        }
-    }
-
-    $rawPolygon = polygonFromCoordinateList(
-        extractNotamCoordinates((string)($row['coordinates_raw'] ?? ''))
-    );
-    if ($rawPolygon !== null) {
-        return ['geometry' => $rawPolygon, 'source' => 'coordinates-polygon'];
+        return $segment;
     }
 
     return null;
 }
 
-function notamFirstCoordinate(array $row): ?array {
-    $raw = extractNotamCoordinates((string)($row['coordinates_raw'] ?? ''));
-    if ($raw) return $raw[0];
+function notamExplicitPolygon(array $row): ?array {
+    $text = (string)($row['notam_text'] ?? '');
+    $segment = notamTextSpatialSegment($text);
+    if ($segment === null) return null;
 
-    $text = extractNotamCoordinates((string)($row['notam_text'] ?? ''));
-    return $text[0] ?? null;
+    $coords = extractNotamCoordinates($segment, true);
+    $polygon = polygonFromCoordinateList($coords);
+    if ($polygon === null) return null;
+
+    return [
+        'geometry' => $polygon,
+        'source' => 'e-text-polygon',
+        'render_type' => 'AREA',
+        'confidence' => 'EXPLICIT',
+        'explicit_radius_nm' => null,
+    ];
 }
 
-function notamCategory(array $row): string {
-    $haystack = strtoupper(trim(
-        (string)($row['selection_code'] ?? '') . ' ' .
-        (string)($row['notam_text'] ?? '')
-    ));
+function notamExplicitCircle(array $row): ?array {
+    $text = strtoupper((string)($row['notam_text'] ?? ''));
+    if ($text === '' || stripos($text, 'RADIUS') === false) return null;
 
-    if (preg_match('/\b(UAS|UAV|DRONE|UNMANNED)\b/', $haystack)) return 'UAV';
-    if (preg_match('/\b(PARACHUTE|PARA\s*JUMP|PJE)\b/', $haystack)) return 'PARACHUTE';
-    if (preg_match('/\b(RWY|RUNWAY)\b/', $haystack)) return 'RWY';
-    if (preg_match('/\b(TWY|TAXIWAY)\b/', $haystack)) return 'TWY';
-    if (preg_match('/\b(OBST|OBSTACLE|CRANE|TOWER)\b/', $haystack)) return 'OBSTACLE';
-    if (preg_match('/\b(VOR|DME|NDB|ILS|LOCALIZER|LOC|VORTAC|TACAN)\b/', $haystack)) return 'NAV';
-    if (preg_match('/\b(COM|COMM|FREQ|FREQUENCY)\b/', $haystack)) return 'COM';
-    if (preg_match('/\b(AIRSPACE|RESTRICTED|PROHIBITED|DANGER|FIRING|EXERCISE|TRA|TSA|CBA)\b/', $haystack)) return 'AIRSPACE';
+    $coordPattern = '(?:[0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])';
+    $patterns = [
+        '/(' . $coordPattern . ').{0,180}?\bRADIUS(?:\s+OF)?\s*([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\b/is',
+        '/([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+RADIUS.{0,180}?(' . $coordPattern . ')/is',
+        '/\bRADIUS(?:\s+OF)?\s*([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M).{0,180}?(' . $coordPattern . ')/is',
+    ];
 
-    return 'GENERAL';
+    foreach ($patterns as $index => $pattern) {
+        if (!preg_match($pattern, $text, $m)) continue;
+
+        if ($index === 0) {
+            $coordToken = $m[1];
+            $radiusValue = (float)$m[2];
+            $unit = $m[3];
+        } else {
+            $radiusValue = (float)$m[1];
+            $unit = $m[2];
+            $coordToken = $m[3];
+        }
+
+        $coord = parseNotamCoordinate($coordToken);
+        $radiusNm = radiusToNm($radiusValue, $unit);
+        if ($coord === null || $radiusNm === null) continue;
+
+        return [
+            'geometry' => circlePolygon((float)$coord[0], (float)$coord[1], $radiusNm, 60),
+            'source' => 'e-text-circle',
+            'render_type' => 'CIRCLE',
+            'confidence' => 'EXPLICIT',
+            'explicit_radius_nm' => round($radiusNm, 3),
+        ];
+    }
+
+    return null;
+}
+
+function notamExplicitCorridor(array $row): ?array {
+    $text = strtoupper((string)($row['notam_text'] ?? ''));
+    if ($text === '' || stripos($text, 'EITHER SIDE') === false) return null;
+
+    if (!preg_match('/([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+EITHER\s+SIDE\s+OF(?:\s+A)?\s+LINE/i', $text, $m)) {
+        return null;
+    }
+
+    $halfWidthNm = radiusToNm((float)$m[1], $m[2]);
+    if ($halfWidthNm === null) return null;
+
+    $coords = extractNotamCoordinates($text, false);
+    if (count($coords) < 2) return null;
+
+    $geometry = corridorGeometry($coords, $halfWidthNm);
+    if ($geometry === null) return null;
+
+    return [
+        'geometry' => $geometry,
+        'source' => 'e-text-corridor',
+        'render_type' => 'CORRIDOR',
+        'confidence' => 'EXPLICIT',
+        'explicit_radius_nm' => round($halfWidthNm, 3),
+    ];
+}
+
+function resolveNotamExplicitGeometry(array $row): ?array {
+    // A real polygon boundary beats every derived shape. Corridor and circle
+    // are only used when the NOTAM explicitly defines those spatial forms.
+    $polygon = notamExplicitPolygon($row);
+    if ($polygon !== null) return $polygon;
+
+    $corridor = notamExplicitCorridor($row);
+    if ($corridor !== null) return $corridor;
+
+    return notamExplicitCircle($row);
+}
+
+function notamPointIsRenderable(array $row, string $geometrySource, array $semantic): bool {
+    if (($semantic['semantic_class'] ?? '') === 'OBSTACLE') return true;
+
+    $scope = strtoupper((string)($row['scope'] ?? ''));
+    if ($geometrySource === 'airport-location' && str_contains($scope, 'A')) return true;
+
+    return false;
+}
+
+function notamCategory(array $row, ?array $semantic = null): string {
+    $semantic ??= notamSemantic($row);
+    return match ($semantic['semantic_class'] ?? 'OTHER') {
+        'RESTRICTED_AIRSPACE' => 'AIRSPACE',
+        'AERIAL_SURVEY' => 'AIRSPACE',
+        'EXERCISE', 'AIR_REFUELING', 'FIRING' => 'AIRSPACE',
+        'UAV_ACTIVITY' => 'UAV',
+        'AERIAL_SPORT_ACTIVITY' => 'AIRSPACE',
+        'OBSTACLE' => 'OBSTACLE',
+        'RUNWAY' => 'RWY',
+        'CONTROLLED_AIRSPACE' => 'AIRSPACE',
+        default => 'GENERAL',
+    };
 }
 
 function navmapCacheDir(): string {
@@ -355,59 +563,46 @@ function notamFeature(array $row): ?array {
     if (!is_array($geometry) || !isset($geometry['type'])) return null;
 
     $geometrySource = (string)($row['geometry_source'] ?? 'faa-geometry');
-    $radiusNm = isset($row['radius_nm']) && is_numeric((string)$row['radius_nm'])
+    $qlineRadiusNm = isset($row['radius_nm']) && is_numeric((string)$row['radius_nm'])
         ? (float)$row['radius_nm']
         : null;
 
-    // FAA line/polygon geometry wins. Point geometry can be refined by
-    // explicit NOTAM AREA coordinates before any radius envelope is drawn.
-    if (($geometry['type'] ?? '') === 'Point') {
-        $area = notamAreaPolygon($row);
-        if ($area !== null) {
-            $geometry = $area['geometry'];
-            $geometrySource = $area['source'];
-        } elseif ($geometrySource === 'airport-location') {
-            $coord = notamFirstCoordinate($row);
-            if ($coord !== null) {
-                $geometry = [
-                    'type' => 'Point',
-                    'coordinates' => [(float)$coord[0], (float)$coord[1]],
-                ];
-                $geometrySource = 'qline-coordinate';
-            }
+    $semantic = notamSemantic($row);
+    $explicit = null;
+    $geometryType = (string)($geometry['type'] ?? '');
+
+    // FAA non-point geometry is authoritative. A point is only an anchor:
+    // first try the explicit spatial definition from E-text. Q-line radius is
+    // deliberately NOT converted into display geometry.
+    if ($geometryType === 'Point') {
+        $explicit = resolveNotamExplicitGeometry($row);
+        if ($explicit !== null) {
+            $geometry = $explicit['geometry'];
+            $geometrySource = $explicit['source'];
+            $geometryType = (string)$geometry['type'];
+        } elseif (!notamPointIsRenderable($row, $geometrySource, $semantic)) {
+            return null;
         }
     }
 
-    if (($geometry['type'] ?? '') === 'Point' && $radiusNm !== null && $radiusNm > 0.0) {
-        $coords = $geometry['coordinates'] ?? null;
-        if (is_array($coords) && count($coords) >= 2) {
-            $geometry = circlePolygon((float)$coords[0], (float)$coords[1], $radiusNm);
-
-            if ($geometrySource === 'airport-location') {
-                $geometrySource = 'airport-radius-circle';
-            } elseif ($geometrySource === 'qline-coordinate') {
-                $geometrySource = 'qline-radius-circle';
-            } elseif ($geometrySource === 'faa-geometry') {
-                $geometrySource = 'faa-radius-circle';
-            } else {
-                $geometrySource = 'derived-radius-circle';
-            }
-        }
-    }
+    $mapRenderType = match ($geometryType) {
+        'Polygon', 'MultiPolygon' => $explicit['render_type'] ?? 'AREA',
+        'LineString', 'MultiLineString' => 'LINE',
+        'Point', 'MultiPoint' => $geometrySource === 'airport-location' ? 'ENTITY' : 'POINT',
+        default => 'NONE',
+    };
 
     $geometryAccuracy = match ($geometrySource) {
         'faa-geometry' => 'authoritative FAA geometry',
-        'notam-area-polygon', 'coordinates-polygon' => 'derived from NOTAM coordinates',
-        'qline-radius-circle', 'airport-radius-circle', 'faa-radius-circle', 'derived-radius-circle' => 'approximate coverage envelope',
-        'qline-coordinate' => 'coordinate fallback',
-        'airport-location' => 'airport fallback',
+        'e-text-polygon' => 'explicit NOTAM boundary',
+        'e-text-circle' => 'explicit NOTAM circle',
+        'e-text-corridor' => 'explicit NOTAM corridor',
+        'qline-coordinate' => 'coordinate point fallback',
+        'airport-location' => 'airport entity location',
         default => 'derived',
     };
 
-    $category = notamCategory($row);
-    if ($category === 'GENERAL' && in_array($geometrySource, ['notam-area-polygon', 'coordinates-polygon'], true)) {
-        $category = 'AIRSPACE';
-    }
+    $category = notamCategory($row, $semantic);
 
     $series = trim((string)($row['series'] ?? ''));
     $number = trim((string)($row['number'] ?? ''));
@@ -430,9 +625,14 @@ function notamFeature(array $row): ?array {
             'effective_end_raw' => $row['effective_end_raw'],
             'lower_limit' => $row['lower_limit'],
             'upper_limit' => $row['upper_limit'],
-            'radius_nm' => $radiusNm,
+            'qline_radius_nm' => $qlineRadiusNm,
+            'explicit_radius_nm' => $explicit['explicit_radius_nm'] ?? null,
             'selection_code' => $row['selection_code'] ?? null,
+            'q_subject' => $semantic['q_subject'],
+            'semantic_class' => $semantic['semantic_class'],
+            'display_group' => $semantic['display_group'],
             'category' => $category,
+            'map_render_type' => $mapRenderType,
             'text' => $row['notam_text'],
             'geometry_source' => $geometrySource,
             'geometry_accuracy' => $geometryAccuracy,
@@ -764,7 +964,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v3',
+            'v4',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -802,7 +1002,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $sql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                 n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 ST_AsGeoJSON(n.geometry, 6) AS geometry,
@@ -845,7 +1045,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $fallbackSql = 'SELECT
                 n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                 n.effective_start, n.effective_end,
                 n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                 JSON_OBJECT(
@@ -912,7 +1112,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $coordSql = 'SELECT
             q.nms_id, q.series, q.number, q.year, q.classification,
-            q.location, q.icao_location, q.radius_nm, q.selection_code, q.coordinates_raw,
+            q.location, q.icao_location, q.radius_nm, q.selection_code, q.traffic, q.purpose, q.scope, q.coordinates_raw,
             q.effective_start, q.effective_end,
             q.effective_end_raw, q.lower_limit, q.upper_limit, q.notam_text,
             JSON_OBJECT(
@@ -954,7 +1154,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
             FROM (
                 SELECT
                     n.nms_id, n.series, n.number, n.year, n.classification,
-                    n.location, n.icao_location, n.radius_nm, n.selection_code, n.coordinates_raw,
+                    n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
                     n.effective_start, n.effective_end,
                     n.effective_end_raw, n.lower_limit, n.upper_limit, n.notam_text,
                     ' . $coordTokenExpr . ' AS coord_token
