@@ -1187,7 +1187,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v9',
+            'v10',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -1270,53 +1270,98 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     }
     $notamPerf['faa_build'] = (microtime(true) - $faaBuildStart) * 1000.0;
 
-    // 2) Many Initial Load AIXM records have no GeoJSON geometry. Anchor those
-    // airport NOTAMs to the matching navdata airport instead of silently hiding them.
-    $whereLon = $west <= $east
-        ? 'p.lon BETWEEN :west AND :east'
-        : '(p.lon >= :west OR p.lon <= :east)';
-    $fallbackParams = [
-        'at_start' => $atSql,
-        'at_end' => $atSql,
-        'environment' => 'production',
+    // 2) Many Initial Load AIXM records have no GeoJSON geometry. Resolve the
+    // small set of airports visible in the viewport first, then query NOTAMs
+    // against their indexed location columns. This deliberately avoids the
+    // previous UPPER(...)=UPPER(...) OR join, which forced MariaDB into a very
+    // expensive join plan on the full NOTAM set.
+    $airportWhereLon = $west <= $east
+        ? 'lon BETWEEN :west AND :east'
+        : '(lon >= :west OR lon <= :east)';
+
+    $airportPointStart = microtime(true);
+    $airportPointStmt = $pdo->prepare(
+        "SELECT ident, lat, lon
+         FROM nav_points
+         WHERE kind = 'airport'
+           AND lat BETWEEN :south AND :north
+           AND " . $airportWhereLon
+    );
+    $airportPointStmt->execute([
         'south' => $south,
         'north' => $north,
         'west' => $west,
         'east' => $east,
-    ];
+    ]);
 
-    $fallbackSql = 'SELECT
-                n.nms_id, n.series, n.number, n.year, n.classification,
-                n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
-                n.effective_start, n.effective_end,
-                n.effective_end_raw, n.lower_limit, n.upper_limit,
-                JSON_OBJECT(
-                    \'type\', \'Point\',
-                    \'coordinates\', JSON_ARRAY(p.lon, p.lat)
-                ) AS geometry,
-                \'airport-location\' AS geometry_source
-            FROM notams n
-            JOIN nav_points p
-              ON p.kind = \'airport\'
-             AND (
-                    UPPER(p.ident) = UPPER(NULLIF(n.icao_location, \'\'))
-                    OR UPPER(p.ident) = UPPER(NULLIF(n.location, \'\'))
-                 )
-            WHERE ' . $baseTimeWhere . '
-              AND n.geometry IS NULL
-              AND p.lat BETWEEN :south AND :north
-              AND ' . $whereLon . '
-            ORDER BY n.effective_start DESC
-            LIMIT 5000';
+    $airportByIdent = [];
+    while ($airport = $airportPointStmt->fetch()) {
+        $ident = strtoupper(trim((string)($airport['ident'] ?? '')));
+        if ($ident === '') continue;
+        $airportByIdent[$ident] = [
+            'lat' => (float)$airport['lat'],
+            'lon' => (float)$airport['lon'],
+        ];
+    }
+    $notamPerf['airport_points_sql'] = (microtime(true) - $airportPointStart) * 1000.0;
 
     $airportSqlStart = microtime(true);
-    $fallbackStmt = $pdo->prepare($fallbackSql);
-    $fallbackStmt->execute($fallbackParams);
-    $airportRowsRaw = $fallbackStmt->fetchAll();
+    $airportRowsById = [];
+
+    if ($airportByIdent) {
+        $airportIdents = array_keys($airportByIdent);
+
+        foreach (['icao_location', 'location'] as $airportColumn) {
+            $params = [
+                'at_start' => $atSql,
+                'at_end' => $atSql,
+                'environment' => 'production',
+            ];
+            $placeholders = [];
+
+            foreach ($airportIdents as $i => $ident) {
+                $key = 'airport_' . $airportColumn . '_' . $i;
+                $placeholders[] = ':' . $key;
+                $params[$key] = $ident;
+            }
+
+            $airportNotamSql = 'SELECT
+                    n.nms_id, n.series, n.number, n.year, n.classification,
+                    n.location, n.icao_location, n.radius_nm, n.selection_code, n.traffic, n.purpose, n.scope, n.coordinates_raw,
+                    n.effective_start, n.effective_end,
+                    n.effective_end_raw, n.lower_limit, n.upper_limit
+                FROM notams n
+                WHERE ' . $baseTimeWhere . '
+                  AND n.geometry IS NULL
+                  AND n.' . $airportColumn . ' IN (' . implode(',', $placeholders) . ')
+                ORDER BY n.effective_start DESC
+                LIMIT 5000';
+
+            $airportNotamStmt = $pdo->prepare($airportNotamSql);
+            $airportNotamStmt->execute($params);
+
+            while ($row = $airportNotamStmt->fetch()) {
+                $id = (string)$row['nms_id'];
+                if ($id === '' || isset($airportRowsById[$id])) continue;
+
+                $airportIdent = strtoupper(trim((string)($row[$airportColumn] ?? '')));
+                $point = $airportByIdent[$airportIdent] ?? null;
+                if ($point === null) continue;
+
+                $row['geometry'] = json_encode([
+                    'type' => 'Point',
+                    'coordinates' => [$point['lon'], $point['lat']],
+                ], JSON_UNESCAPED_SLASHES);
+                $row['geometry_source'] = 'airport-location';
+                $airportRowsById[$id] = $row;
+            }
+        }
+    }
+
     $notamPerf['airport_sql'] = (microtime(true) - $airportSqlStart) * 1000.0;
 
     $airportTextStart = microtime(true);
-    $fallbackRows = hydrateNotamTexts($pdo, $airportRowsRaw);
+    $fallbackRows = hydrateNotamTexts($pdo, array_values($airportRowsById));
     $notamPerf['airport_text'] = (microtime(true) - $airportTextStart) * 1000.0;
 
     $airportBuildStart = microtime(true);
