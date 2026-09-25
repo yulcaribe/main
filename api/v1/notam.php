@@ -1,22 +1,38 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/_common.php';
+require_once dirname(__DIR__, 2) . '/notam/core.php';
+
 $action = strtolower(trim((string)($_GET['action'] ?? 'list')));
+ycApiV1Method('GET');
 
 // Keep the proven map geometry path during the migration, but expose it through
 // the canonical NOTAM API. The map client no longer needs to know navmap.php.
 if ($action === 'map') {
+    try {
+        $at = ycNotamUtc(isset($_GET['at']) ? (string)$_GET['at'] : null);
+        $cutoff = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->modify('-' . YC_NOTAM_RETENTION_DAYS . ' days');
+        if ($at < $cutoff) {
+            ycApiV1Headers('no-store, max-age=0');
+            ycApiV1Respond(422, [
+                'ok' => false,
+                'error' => 'İstenen UTC, saklanan 3 günlük NOTAM geçmişinin dışında.'
+            ]);
+        }
+    } catch (Throwable) {
+        ycApiV1Headers('no-store, max-age=0');
+        ycApiV1Respond(400, ['ok' => false, 'error' => 'Geçersiz NOTAM zamanı.']);
+    }
+
     $_GET['action'] = 'viewport';
     $_GET['layers'] = 'notam';
     require dirname(__DIR__) . '/navmap.php';
     exit;
 }
 
-require_once __DIR__ . '/_common.php';
-require_once dirname(__DIR__, 2) . '/notam/core.php';
-
 ycApiV1Headers($action === 'filters' ? 'public, max-age=300, stale-while-revalidate=600' : 'no-store, max-age=0');
-ycApiV1Method('GET');
 
 try {
     $pdo = nmsDb();
@@ -94,6 +110,11 @@ try {
             'hasNext' => $pages > 0 && $page < $pages,
         ],
         'items' => $result['items'],
+    ]);
+} catch (OutOfRangeException $e) {
+    ycApiV1Respond(422, [
+        'ok' => false,
+        'error' => 'İstenen UTC, saklanan 3 günlük NOTAM geçmişinin dışında.',
     ]);
 } catch (Throwable $e) {
     ycApiV1Respond(500, [
