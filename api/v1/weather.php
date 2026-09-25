@@ -4,7 +4,60 @@ declare(strict_types=1);
 header('X-YC-API-Version: 1');
 header('X-YC-API-Resource: weather');
 
-// Canonical weather API. METAR/TAF currently share the existing resilient AWC
-// fetch/cache implementation; product-specific v1 endpoints can be added later
-// without changing clients that use this combined resource.
-require dirname(__DIR__, 2) . '/weather/backend.php';
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, max-age=0');
+header('X-Content-Type-Options: nosniff');
+
+require_once dirname(__DIR__, 2) . '/weather/core.php';
+
+function respond(int $status, array $payload): never {
+    http_response_code($status);
+    echo json_encode(
+        $payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
+    );
+    exit;
+}
+
+$icao = ycWeatherNormalizeIcao($_GET['icao'] ?? null);
+if ($icao === null) {
+    respond(400, [
+        'ok' => false,
+        'error' => '4 karakterli geçerli bir ICAO kodu girin. Örnek: LTAI.'
+    ]);
+}
+
+try {
+    $combined = ycWeatherCombined($icao);
+} catch (Throwable $e) {
+    respond(500, [
+        'ok' => false,
+        'icao' => $icao,
+        'error' => 'Hava verisi hazırlanamadı.'
+    ]);
+}
+
+if (!($combined['ok'] ?? false)) {
+    respond(502, [
+        'ok' => false,
+        'icao' => $icao,
+        'error' => 'AviationWeather.gov isteği başarısız.',
+        'metarError' => $combined['errors']['metar'] ?? null,
+        'tafError' => $combined['errors']['taf'] ?? null,
+    ]);
+}
+
+respond(200, [
+    'ok' => true,
+    'icao' => $icao,
+    'source' => 'AviationWeather.gov',
+    'fetchedAt' => $combined['fetchedAt'],
+    'metar' => $combined['metar'],
+    'taf' => $combined['taf'],
+    'cache' => [
+        'hit' => (bool)(($combined['cache']['metarHit'] ?? false) && ($combined['cache']['tafHit'] ?? false)),
+        'metarHit' => (bool)($combined['cache']['metarHit'] ?? false),
+        'tafHit' => (bool)($combined['cache']['tafHit'] ?? false),
+        'ageSeconds' => 0,
+    ],
+]);
