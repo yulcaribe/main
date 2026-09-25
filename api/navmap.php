@@ -580,8 +580,24 @@ function notamFeature(array $row): ?array {
             $geometry = $explicit['geometry'];
             $geometrySource = $explicit['source'];
             $geometryType = (string)$geometry['type'];
-        } elseif (!notamPointIsRenderable($row, $geometrySource, $semantic)) {
-            return null;
+        } else {
+            // Point-like obstacle NOTAMs often carry a more precise E-text
+            // coordinate than the Q-line centre. Prefer that explicit point.
+            if (($semantic['semantic_class'] ?? '') === 'OBSTACLE') {
+                $textCoords = extractNotamCoordinates((string)($row['notam_text'] ?? ''), true);
+                if ($textCoords) {
+                    $geometry = [
+                        'type' => 'Point',
+                        'coordinates' => [(float)$textCoords[0][0], (float)$textCoords[0][1]],
+                    ];
+                    $geometrySource = 'e-text-point';
+                    $geometryType = 'Point';
+                }
+            }
+
+            if (!notamPointIsRenderable($row, $geometrySource, $semantic)) {
+                return null;
+            }
         }
     }
 
@@ -597,6 +613,7 @@ function notamFeature(array $row): ?array {
         'e-text-polygon' => 'explicit NOTAM boundary',
         'e-text-circle' => 'explicit NOTAM circle',
         'e-text-corridor' => 'explicit NOTAM corridor',
+        'e-text-point' => 'explicit NOTAM point',
         'qline-coordinate' => 'coordinate point fallback',
         'airport-location' => 'airport entity location',
         default => 'derived',
@@ -964,7 +981,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v4',
+            'v5',
             $cacheVersion,
             $zoom,
             round($west, 5),
