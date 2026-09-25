@@ -1154,7 +1154,7 @@ async function requestAirportWeather(icao){
 
   try{
     const response=await fetch(
-      "/main/api/weather.php?icao="+encodeURIComponent(code),
+      "/main/api/v1/weather.php?icao="+encodeURIComponent(code),
       {
         cache:"no-store",
         signal:weatherRequestController.signal,
