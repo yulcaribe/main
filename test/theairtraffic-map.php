@@ -122,6 +122,12 @@ if (isset($_GET['feed'])) {
     }
     .maplibregl-popup-tip{border-top-color:#08131d!important}
     .ac-title{font-weight:800;font-size:15px;margin-bottom:6px}
+    .aircraft-marker{
+        width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+        filter:drop-shadow(0 1px 2px rgba(0,0,0,.75));
+        cursor:pointer;
+    }
+    .aircraft-marker svg{width:24px;height:24px;display:block}
     .ac-grid{display:grid;grid-template-columns:auto auto;gap:3px 14px;font-size:12px}
     .ac-grid span:nth-child(odd){color:#8297a8}
 </style>
@@ -159,6 +165,7 @@ if (isset($_GET['feed'])) {
     let aborter = null;
     let refreshTimer = null;
     let requestSeq = 0;
+    const aircraftMarkers = new Map();
 
     const map = new maplibregl.Map({
         container: "map",
@@ -197,42 +204,6 @@ if (isset($_GET['feed'])) {
     function setStatus(text, ok = null) {
         statusEl.textContent = text;
         statusEl.className = ok === true ? "live" : ok === false ? "bad" : "";
-    }
-
-    function makeAircraftIcon() {
-        const canvas = document.createElement("canvas");
-        canvas.width = 64;
-        canvas.height = 64;
-        const c = canvas.getContext("2d");
-
-        c.translate(32, 32);
-        c.beginPath();
-        c.moveTo(0, -29);
-        c.lineTo(5, -7);
-        c.lineTo(25, 1);
-        c.lineTo(25, 7);
-        c.lineTo(5, 4);
-        c.lineTo(4, 19);
-        c.lineTo(12, 24);
-        c.lineTo(12, 28);
-        c.lineTo(0, 25);
-        c.lineTo(-12, 28);
-        c.lineTo(-12, 24);
-        c.lineTo(-4, 19);
-        c.lineTo(-5, 4);
-        c.lineTo(-25, 7);
-        c.lineTo(-25, 1);
-        c.lineTo(-5, -7);
-        c.closePath();
-
-        c.fillStyle = "#f5fbff";
-        c.strokeStyle = "#071019";
-        c.lineWidth = 3;
-        c.lineJoin = "round";
-        c.fill();
-        c.stroke();
-
-        return c.getImageData(0, 0, canvas.width, canvas.height);
     }
 
     function sourceType(code) {
@@ -352,21 +323,83 @@ if (isset($_GET['feed'])) {
         };
     }
 
-    function geojsonFor(data) {
-        return {
-            type: "FeatureCollection",
-            features: data.aircraft.map(ac => ({
-                type: "Feature",
-                id: ac.hex,
-                geometry: { type: "Point", coordinates: [ac.lon, ac.lat] },
-                properties: {
-                    ...ac,
-                    altLabel: ac.alt === "ground" ? "GND" : (Number.isFinite(ac.alt) ? Math.round(ac.alt) + " ft" : "—"),
-                    gsLabel: Number.isFinite(ac.gs) ? Math.round(ac.gs) + " kt" : "—",
-                    label: ac.flight || ac.registration || ac.hex.toUpperCase()
+    function aircraftPopupHtml(ac) {
+        const track = Number(ac.track);
+        const vr = Number(ac.baroRate);
+        const altLabel = ac.alt === "ground" ? "GND" : (Number.isFinite(ac.alt) ? Math.round(ac.alt) + " ft" : "—");
+        const gsLabel = Number.isFinite(ac.gs) ? Math.round(ac.gs) + " kt" : "—";
+        return `
+            <div class="ac-title">${escapeHtml(ac.flight || ac.registration || ac.hex || "Aircraft")}</div>
+            <div class="ac-grid">
+                <span>Hex</span><b>${escapeHtml((ac.hex || "").toUpperCase())}</b>
+                <span>Reg</span><b>${escapeHtml(ac.registration || "—")}</b>
+                <span>Type</span><b>${escapeHtml(ac.typeCode || "—")}</b>
+                <span>Altitude</span><b>${escapeHtml(altLabel)}</b>
+                <span>Speed</span><b>${escapeHtml(gsLabel)}</b>
+                <span>Track</span><b>${Number.isFinite(track) ? track.toFixed(0) + "°" : "—"}</b>
+                <span>V/S</span><b>${Number.isFinite(vr) ? Math.round(vr) + " ft/min" : "—"}</b>
+                <span>Source</span><b>${escapeHtml(ac.type || "—")}</b>
+            </div>`;
+    }
+
+    function createAircraftElement() {
+        const el = document.createElement("div");
+        el.className = "aircraft-marker";
+        el.innerHTML = `
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+                <path d="M32 2 L37 25 L58 33 L58 39 L37 36 L36 50 L44 56 L44 60 L32 56 L20 60 L20 56 L28 50 L27 36 L6 39 L6 33 L27 25 Z"
+                      fill="#f5fbff" stroke="#071019" stroke-width="3" stroke-linejoin="round"/>
+            </svg>`;
+        return el;
+    }
+
+    function syncAircraftMarkers(aircraft) {
+        const live = new Set();
+
+        for (const ac of aircraft) {
+            live.add(ac.hex);
+            let item = aircraftMarkers.get(ac.hex);
+
+            if (!item) {
+                const el = createAircraftElement();
+                const popup = new maplibregl.Popup({ closeButton: true, offset: 16 });
+                const marker = new maplibregl.Marker({
+                    element: el,
+                    rotationAlignment: "map",
+                    pitchAlignment: "map"
+                })
+                    .setLngLat([ac.lon, ac.lat])
+                    .setRotation(Number.isFinite(ac.heading) ? ac.heading : 0)
+                    .addTo(map);
+
+                el.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    const current = aircraftMarkers.get(ac.hex);
+                    if (!current) return;
+                    current.popup
+                        .setLngLat([current.data.lon, current.data.lat])
+                        .setHTML(aircraftPopupHtml(current.data))
+                        .addTo(map);
+                });
+
+                item = { marker, popup, el, data: ac };
+                aircraftMarkers.set(ac.hex, item);
+            } else {
+                item.data = ac;
+                item.marker.setLngLat([ac.lon, ac.lat]);
+                if (typeof item.marker.setRotation === "function") {
+                    item.marker.setRotation(Number.isFinite(ac.heading) ? ac.heading : 0);
                 }
-            }))
-        };
+            }
+        }
+
+        for (const [hex, item] of aircraftMarkers) {
+            if (!live.has(hex)) {
+                item.popup.remove();
+                item.marker.remove();
+                aircraftMarkers.delete(hex);
+            }
+        }
     }
 
     function boxString() {
@@ -417,12 +450,9 @@ if (isset($_GET['feed'])) {
 
             const decoded = decoder.decode(compressed);
             const parsed = parseBinCraft(decoded);
-            const fc = geojsonFor(parsed);
+            syncAircraftMarkers(parsed.aircraft);
 
-            const source = map.getSource(SOURCE);
-            if (source) source.setData(fc);
-
-            countEl.textContent = String(fc.features.length);
+            countEl.textContent = String(parsed.aircraft.length);
             payloadEl.textContent = compressed.byteLength + " B → " + decoded.byteLength + " B";
             updatedEl.textContent = new Date().toLocaleTimeString("tr-TR");
             hintEl.textContent = "binCraft v" + parsed.version + " · stride " + parsed.stride + " · global " + parsed.globalCount;
@@ -447,71 +477,6 @@ if (isset($_GET['feed'])) {
     }
 
     map.on("load", async () => {
-        map.addImage("aircraft", makeAircraftIcon(), { pixelRatio: 2 });
-
-        map.addSource(SOURCE, {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: [] }
-        });
-
-        map.addLayer({
-            id: "tat-aircraft-icons",
-            type: "symbol",
-            source: SOURCE,
-            layout: {
-                "icon-image": "aircraft",
-                "icon-size": [
-                    "interpolate", ["linear"], ["zoom"],
-                    4, 0.42,
-                    8, 0.55,
-                    12, 0.72
-                ],
-                "icon-allow-overlap": true,
-                "icon-ignore-placement": true,
-                "icon-rotate": ["coalesce", ["to-number", ["get", "heading"]], 0],
-                "icon-rotation-alignment": "map",
-                "text-field": ["get", "label"],
-                "text-font": ["Open Sans Bold"],
-                "text-size": 11,
-                "text-offset": [0, 1.8],
-                "text-anchor": "top",
-                "text-optional": true,
-                "text-allow-overlap": false
-            },
-            paint: {
-                "text-color": "#f1f8fc",
-                "text-halo-color": "#071019",
-                "text-halo-width": 1.5
-            }
-        });
-
-        map.on("click", "tat-aircraft-icons", e => {
-            const f = e.features && e.features[0];
-            if (!f) return;
-            const p = f.properties || {};
-            const track = Number(p.track);
-            const vr = Number(p.baroRate);
-            const html = `
-                <div class="ac-title">${escapeHtml(p.flight || p.registration || p.hex || "Aircraft")}</div>
-                <div class="ac-grid">
-                    <span>Hex</span><b>${escapeHtml((p.hex || "").toUpperCase())}</b>
-                    <span>Reg</span><b>${escapeHtml(p.registration || "—")}</b>
-                    <span>Type</span><b>${escapeHtml(p.typeCode || "—")}</b>
-                    <span>Altitude</span><b>${escapeHtml(p.altLabel || "—")}</b>
-                    <span>Speed</span><b>${escapeHtml(p.gsLabel || "—")}</b>
-                    <span>Track</span><b>${Number.isFinite(track) ? track.toFixed(0) + "°" : "—"}</b>
-                    <span>V/S</span><b>${Number.isFinite(vr) ? Math.round(vr) + " ft/min" : "—"}</b>
-                    <span>Source</span><b>${escapeHtml(p.type || "—")}</b>
-                </div>`;
-            new maplibregl.Popup({ closeButton: true })
-                .setLngLat(f.geometry.coordinates)
-                .setHTML(html)
-                .addTo(map);
-        });
-
-        map.on("mouseenter", "tat-aircraft-icons", () => map.getCanvas().style.cursor = "pointer");
-        map.on("mouseleave", "tat-aircraft-icons", () => map.getCanvas().style.cursor = "");
-
         try {
             setStatus("Decoder hazırlanıyor…");
             await initDecoder();
