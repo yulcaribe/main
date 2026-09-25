@@ -171,7 +171,7 @@ function healthSettings(): array {
     $nms = is_array($cfg['nms'] ?? null) ? $cfg['nms'] : [];
     return [
         'healthKeyConfigured'=>nmsHealthPasswordHash()!=='' || nmsAdminKey()!=='',
-        'healthKeyManagedByEnv'=>(bool)(getenv('HEALTH_ADMIN_KEY') ?: getenv('NMS_ADMIN_KEY')),
+        'healthKeyManagedByEnv'=>(bool)getenv('HEALTH_ADMIN_KEY'),
         'nms'=>[
             'environment'=>$nms['env']??'staging',
             'clientId'=>healthMask((string)($nms['client_id']??'')),
@@ -226,10 +226,13 @@ function healthSaveSettings(array $body): array {
     if (!isset($cfg['nms']) || !is_array($cfg['nms'])) $cfg['nms'] = [];
     $nms = $cfg['nms'];
 
-    if (isset($body['nmsEnvironment'])) {
+    if (isset($body['nmsEnvironment']) && trim((string)$body['nmsEnvironment']) !== '') {
         $env = strtolower(trim((string)$body['nmsEnvironment']));
-        $nms['env'] = in_array($env, ['prod','production'], true) ? 'production' : 'staging';
-        $changed[] = 'nmsEnvironment';
+        $nextEnv = in_array($env, ['prod','production'], true) ? 'production' : 'staging';
+        if (($nms['env'] ?? 'staging') !== $nextEnv) {
+            $nms['env'] = $nextEnv;
+            $changed[] = 'nmsEnvironment';
+        }
     }
     if (trim((string)($body['nmsClientId']??'')) !== '') {
         $nms['client_id'] = trim((string)$body['nmsClientId']);
@@ -250,16 +253,20 @@ function healthSaveSettings(array $body): array {
 
     $dbChanged = false;
     foreach (['dbHost'=>'host','dbName'=>'database','dbUser'=>'user'] as $input=>$key) {
-        if (trim((string)($body[$input]??'')) !== '') {
-            $cfg[$key] = trim((string)$body[$input]);
+        $next = trim((string)($body[$input]??''));
+        if ($next !== '' && (string)($cfg[$key] ?? '') !== $next) {
+            $cfg[$key] = $next;
             $dbChanged = true;
             $changed[] = $input;
         }
     }
     if (isset($body['dbPort']) && is_numeric($body['dbPort'])) {
-        $cfg['port'] = (int)$body['dbPort'];
-        $dbChanged = true;
-        $changed[] = 'dbPort';
+        $nextPort = (int)$body['dbPort'];
+        if ((int)($cfg['port'] ?? 3306) !== $nextPort) {
+            $cfg['port'] = $nextPort;
+            $dbChanged = true;
+            $changed[] = 'dbPort';
+        }
     }
     if (trim((string)($body['dbPassword']??'')) !== '') {
         $cfg['password'] = (string)$body['dbPassword'];
@@ -278,7 +285,7 @@ function healthSaveSettings(array $body): array {
 
     $newHealthKey = trim((string)($body['healthPassword']??''));
     if ($newHealthKey !== '') {
-        if (getenv('HEALTH_ADMIN_KEY') || getenv('NMS_ADMIN_KEY')) {
+        if (getenv('HEALTH_ADMIN_KEY')) {
             throw new RuntimeException('Health şifresi environment variable tarafından yönetiliyor.');
         }
         if (strlen($newHealthKey) < 8) throw new RuntimeException('Health şifresi en az 8 karakter olmalı.');
