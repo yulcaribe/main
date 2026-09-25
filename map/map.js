@@ -1333,6 +1333,47 @@
     };
   }
 
+  async function loadFlights() {
+    if (!map.loaded() || !flightsEnabled()) return;
+    flightController?.abort();
+    flightController = new AbortController();
+
+    const center = map.getCenter();
+    const query = new URLSearchParams({
+      lat: center.lat.toFixed(4),
+      lon: center.lng.toFixed(4),
+      radius: String(flightRadiusNm())
+    });
+
+    try {
+      const response = await fetch(FLIGHTS_API + "?" + query.toString(), {
+        cache: "no-store",
+        signal: flightController.signal
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(payload?.ac)) {
+        throw new Error(payload?.error || ("HTTP " + response.status));
+      }
+
+      flightFeatures = payload.ac.map(aircraftFeature).filter(Boolean);
+      map.getSource(FLIGHT_SOURCE_ID)?.setData({
+        type: "FeatureCollection",
+        features: flightFeatures
+      });
+      flightCountsState = { flight: flightFeatures.length };
+      updateCounts();
+      if (flightsStatus) flightsStatus.textContent = "ADSB.lol · " + flightFeatures.length + " uçak";
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (flightsStatus) flightsStatus.textContent = "ADS-B hata: " + error.message;
+    }
+  }
+
+  function scheduleFlightLoad(delay = 250) {
+    clearTimeout(flightLoadTimer);
+    if (flightsEnabled()) flightLoadTimer = setTimeout(loadFlights, delay);
+  }
+
   function scheduleChartLoad(delay = 180, force = false) {
     clearTimeout(chartLoadTimer);
     chartLoadTimer = setTimeout(() => loadChartViewport(force), delay);
