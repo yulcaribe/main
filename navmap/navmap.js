@@ -85,7 +85,7 @@
   let timelineAnchor = null;
   const PANEL_TIMELINE_RANGES = {
     "chart-panel": 24,
-    "notam-panel": 24,
+    "notam-panel": 168,
     "wafs-panel": 72
   };
   let currentTimelineRange = PANEL_TIMELINE_RANGES["chart-panel"];
@@ -536,6 +536,28 @@
     return `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
   }
 
+  async function loadNotamDetail(nmsId, popup) {
+    const target = popup?.getElement()?.querySelector("[data-notam-detail]");
+    if (!target || !nmsId) return;
+
+    try {
+      const q = new URLSearchParams({ action: "notam-detail", id: String(nmsId) });
+      const response = await fetch(`${API}?${q}`, { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok || !payload?.notam) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      const current = popup?.getElement()?.querySelector("[data-notam-detail]");
+      if (!current) return;
+      current.textContent = payload.notam.notam_text || "NOTAM metni bulunamadı.";
+    } catch (error) {
+      const current = popup?.getElement()?.querySelector("[data-notam-detail]");
+      if (current) current.textContent = "NOTAM metni yüklenemedi.";
+      console.error("[NavMap NOTAM detail]", error);
+    }
+  }
+
   function showPopup(feature, lngLat) {
     const p = feature.properties || {};
     const title = p.ident || p.name || p.layer || "Navdata";
@@ -543,6 +565,7 @@
 
     let rows = "";
     let detailText = "";
+    let detailNotamId = "";
     if (p.layer === "airport" || p.layer === "navaid" || p.layer === "waypoint") {
       rows += infoRow("IATA", p.iata);
       rows += infoRow("Şehir", p.city);
@@ -592,7 +615,7 @@
                     : "FAA geometry";
       rows += infoRow("Map source", mapSource);
       rows += infoRow("Geometry", p.geometry_accuracy);
-      detailText = p.text || "";
+      detailNotamId = String(p.nms_id || "");
     }
 
     const html = `
@@ -600,13 +623,15 @@
         <h3>${esc(title)}</h3>
         <div class="sub">${esc(subtitle)}</div>
         <div class="popup-grid">${rows || "<div><span>Layer</span><strong>" + esc(p.layer) + "</strong></div>"}</div>
-        ${detailText ? '<div class="notam-text">' + esc(detailText) + '</div>' : ''}
+        ${detailNotamId ? '<div class="notam-text" data-notam-detail>NOTAM metni yükleniyor…</div>' : (detailText ? '<div class="notam-text">' + esc(detailText) + '</div>' : '')}
       </div>`;
 
-    new maplibregl.Popup({ closeButton: true, maxWidth: "360px" })
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "360px" })
       .setLngLat(lngLat)
       .setHTML(html)
       .addTo(map);
+
+    if (detailNotamId) loadNotamDetail(detailNotamId, popup);
   }
 
   function updateCounts() {
@@ -726,12 +751,16 @@
     if (!timelineScale) return;
     const labels = range <= 24
       ? [-24, -12, -6, 0, 6, 12, 24]
-      : [-72, -48, -24, 0, 24, 48, 72];
+      : range <= 72
+        ? [-72, -48, -24, 0, 24, 48, 72]
+        : [-168, -120, -72, 0, 72, 120, 168];
 
     timelineScale.innerHTML = labels
       .map(value => {
-        const label = value === 0 ? "NOW" : (value > 0 ? `+${value}h` : `${value}h`);
-        return `<span>${label}</span>`;
+        if (value === 0) return "<span>NOW</span>";
+        const abs = Math.abs(value);
+        const amount = abs >= 48 && abs % 24 === 0 ? `${abs / 24}d` : `${abs}h`;
+        return `<span>${value > 0 ? "+" : "-"}${amount}</span>`;
       })
       .join("");
   }
@@ -751,7 +780,7 @@
   }
 
   function setTimelineRange(rangeHours, reload = false) {
-    currentTimelineRange = Number(rangeHours) >= 72 ? 72 : 24;
+    currentTimelineRange = Number(rangeHours) >= 168 ? 168 : Number(rangeHours) >= 72 ? 72 : 24;
     renderTimelineScale(currentTimelineRange);
 
     if (timeSlider) {
