@@ -218,6 +218,11 @@ function ycNotamList(PDO $pdo, array $input): array {
     $state = strtolower(trim((string)($input['state'] ?? 'valid')));
     if (!in_array($state, ['valid', 'future', 'expired', 'cancelled', 'all'], true)) $state = 'valid';
 
+    $retentionCutoff = $now->modify('-' . YC_NOTAM_RETENTION_DAYS . ' days');
+    if ($at < $retentionCutoff) {
+        throw new OutOfRangeException('Requested UTC is outside retained NOTAM history.');
+    }
+
     $page = max(1, (int)($input['page'] ?? 1));
     $limit = max(1, min(200, (int)($input['limit'] ?? 50)));
     $offset = ($page - 1) * $limit;
