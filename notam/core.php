@@ -106,6 +106,26 @@ function ycNotamFilterHistoricalRows(array $rows, DateTimeImmutable $at, array $
     return $filtered;
 }
 
+function ycNotamTemporalState(array $row, DateTimeImmutable $at, array $futureCancellations = []): string {
+    $status = strtolower((string)($row['status'] ?? ''));
+    $type = strtoupper((string)($row['notam_type'] ?? ''));
+
+    if ($status === 'cancelled') {
+        if ($type === 'C') return 'cancelled';
+        $key = ycNotamIdentifierKey($row);
+        if ($key === null || !isset($futureCancellations[$key])) return 'cancelled';
+    }
+
+    $atTs = $at->getTimestamp();
+    $start = !empty($row['effective_start']) ? strtotime((string)$row['effective_start'] . ' UTC') : false;
+    $endRaw = strtoupper(trim((string)($row['effective_end_raw'] ?? '')));
+    $end = !empty($row['effective_end']) ? strtotime((string)$row['effective_end'] . ' UTC') : false;
+
+    if ($start !== false && $start > $atTs) return 'future';
+    if ($endRaw !== 'PERM' && $end !== false && $end < $atTs) return 'expired';
+    return 'valid';
+}
+
 function ycNotamCsvValues(?string $raw, string $pattern, int $max = 20): array {
     $items = array_filter(array_map(
         static fn(string $v): string => strtoupper(trim($v)),
@@ -355,15 +375,20 @@ function ycNotamList(PDO $pdo, array $input): array {
     $stmt->execute($params);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if ($state === 'valid' && $timeTravel) {
+    $futureCancellations = [];
+    if ($timeTravel) {
         $futureCancellations = ycNotamCancellationTargetsAfter($pdo, $at);
+    }
+    if ($state === 'valid' && $timeTravel) {
         $rows = ycNotamFilterHistoricalRows($rows, $at, $futureCancellations);
     }
 
-    $items = array_map(
-        static fn(array $row): array => ycNotamFormatRow($row, $includeText, $includeGeometry),
-        $rows
-    );
+    $items = [];
+    foreach ($rows as $row) {
+        $item = ycNotamFormatRow($row, $includeText, $includeGeometry);
+        $item['temporalState'] = ycNotamTemporalState($row, $at, $futureCancellations);
+        $items[] = $item;
+    }
 
     return [
         'atUtc' => $at->format(DateTimeInterface::ATOM),
