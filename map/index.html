@@ -3,108 +3,181 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#07131f">
-  <meta name="description" content="YulCaribe canlı uçuş haritası">
-  <title>Canlı Uçuş Haritası | YulCaribe</title>
+  <meta name="theme-color" content="#06111a">
+  <meta name="description" content="YulCaribe unified aviation map">
+  <title>Aviation Map | YulCaribe</title>
 
-  <style>
-    html,body,#map{width:100%;height:100%;margin:0}
-    body{overflow:hidden;background:#07131f;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    #map{position:fixed;inset:0;z-index:1}
-    #boot-status{position:fixed;z-index:9999;inset:0;display:grid;place-items:center;background:#07131f;color:#eef6fb;text-align:center;padding:24px}
-    #boot-status small{display:block;margin-top:8px;color:#94a9b9}
-    #boot-status.hidden{display:none}
-  </style>
-
-  <link id="leaflet-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/main/map/map.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/main/map/map.css?v=1">
 </head>
+<body>
+  <div id="map" aria-label="Aeronautical navigation map"></div>
 
-<body data-theme="night">
-  <div id="map" aria-label="Canlı uçuş haritası"></div>
-
-  <div id="boot-status">
+  <div class="boot" id="boot">
     <div>
-      <strong>Harita yükleniyor…</strong>
-      <small id="boot-detail">Leaflet başlatılıyor</small>
+      <strong>Aviation Map yükleniyor…</strong>
+      <small id="boot-detail">MapLibre hazırlanıyor</small>
     </div>
   </div>
 
-  <header class="map-header">
-    <a class="back-button" href="/" aria-label="Ana sayfaya dön">←</a>
+  <header class="topbar">
+    <a class="back" href="/" aria-label="Ana sayfaya dön">←</a>
 
-    <div class="map-brand">
+    <div class="brand">
       <strong>YulCaribe</strong>
-      <span>Live Flight Map</span>
+      <span>Unified Aviation Map</span>
     </div>
 
-    <div class="header-spacer"></div>
-
-    <div class="search-wrap">
-      <input id="flight-search" type="search" autocomplete="off"
-             placeholder="Uçuş / tescil / ICAO ara"
-             aria-label="Uçuş ara">
+    <div class="search">
+      <input
+        id="nav-search"
+        type="search"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="ICAO / waypoint / airway / SID / STAR ara"
+        aria-label="Navdata ara"
+      >
+      <div class="search-results" id="search-results"></div>
     </div>
-
   </header>
 
-  <aside class="status-panel">
-    <div class="status-item">
-      <span class="status-dot" id="feed-dot"></span>
-      <div><small>CANLI</small><strong id="aircraft-count">0 uçak</strong></div>
+  <section class="status" aria-live="polite">
+    <span class="dot" id="status-dot"></span>
+    <div>
+      <span>VERİ</span>
+      <strong id="status-text">Bağlanıyor…</strong>
     </div>
-    <div class="status-separator"></div>
-    <div class="status-item compact">
-      <div><small>KAYNAK</small><strong id="source-label">Bağlanıyor…</strong></div>
-    </div>
-    <div class="status-separator desktop-only"></div>
-    <div class="status-item compact desktop-only">
-      <div><small>GÜNCELLEME</small><strong id="update-label">—</strong></div>
-    </div>
-  </aside>
-
-  <button id="options-toggle" class="options-toggle" type="button" aria-expanded="false" aria-controls="options-panel">
-    ⚙ <span>Options</span>
-  </button>
-
-  <section id="options-panel" class="options-panel" aria-hidden="true">
-    <div class="options-head">
-      <div>
-        <strong>Harita Ayarları</strong>
-        <small>Görünümü sana göre ayarla</small>
-      </div>
-      <button id="options-close" type="button" aria-label="Ayarları kapat">×</button>
-    </div>
-
-    <div class="option-group">
-      <span class="option-label">Harita modu</span>
-      <div class="segmented">
-        <button type="button" data-theme-value="day">☀ Gündüz</button>
-        <button type="button" data-theme-value="night">☾ Gece</button>
-      </div>
-    </div>
-
-    <div class="option-group">
-      <span class="option-label">Uçak boyutu</span>
-      <div class="segmented three">
-        <button type="button" data-size-value="small">Küçük</button>
-        <button type="button" data-size-value="medium">Orta</button>
-        <button type="button" data-size-value="large">Büyük</button>
-      </div>
+    <div>
+      <span>GÖRÜNÜM</span>
+      <strong id="feature-count">0 obje</strong>
     </div>
   </section>
 
-  <div class="map-hint" id="map-hint">Haritayı taşıdığında o bölgedeki uçaklar yüklenir.</div>
+  <div class="map-mode-dock" role="toolbar" aria-label="Harita modları">
+    <button class="mode-btn" type="button" data-panel-target="flights-panel">FLIGHTS <span data-layer-count="flight">0</span></button>
+    <button class="mode-btn active" type="button" data-panel-target="chart-panel">CHARTS</button>
+    <button class="mode-btn" type="button" data-panel-target="notam-panel">NOTAMS <span data-layer-count="notam">0</span></button>
+    <button class="mode-btn" type="button" data-panel-target="wafs-panel">WAFS</button>
+  </div>
+
+  <aside class="tool-panel" id="flights-panel">
+    <div class="tool-head">
+      <div><strong>FLIGHTS</strong><small>ADSB.lol · live aircraft</small></div>
+      <button type="button" data-panel-close>×</button>
+    </div>
+    <label class="master-row"><span><i class="legend-dot flight-swatch"></i>Canlı uçuşlar</span><input id="flights-enabled" type="checkbox"></label>
+    <div class="notam-stat"><strong data-layer-count="flight">0</strong><span>görünümdeki uçak</span></div>
+    <div class="card-note" id="flights-status">ADS-B katmanı kapalı.</div>
+  </aside>
+
+  <aside class="tool-panel open" id="chart-panel">
+    <div class="tool-head">
+      <div><strong>CHARTS</strong><small>Aeronautical navdata · MariaDB</small></div>
+      <button type="button" data-panel-close>×</button>
+    </div>
+    <div class="layer-group">
+      <span class="layer-group-title">Points</span>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airport"><span class="legend-dot" style="background:#7ee7ff"></span>Airports</label><span class="layer-count" data-layer-count="airport">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="navaid"><span class="legend-dot" style="background:#ffc76b"></span>Navaids</label><span class="layer-count" data-layer-count="navaid">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="waypoint"><span class="legend-dot" style="background:#d6e1e7"></span>Waypoints</label><span class="layer-count" data-layer-count="waypoint">0</span></div>
+    </div>
+    <div class="layer-group">
+      <span class="layer-group-title">Routes</span>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airway"><span class="legend-line" style="background:#5fdbe8"></span>Airways</label><span class="layer-count" data-layer-count="airway">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="sid"><span class="legend-line" style="background:#70e8a7"></span>SID</label><span class="layer-count" data-layer-count="sid">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="star"><span class="legend-line" style="background:#bc9cff"></span>STAR</label><span class="layer-count" data-layer-count="star">0</span></div>
+    </div>
+    <div class="layer-group">
+      <span class="layer-group-title">Airspace</span>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airspace"><span class="legend-line" style="background:#ff7f94"></span>Airspace</label><span class="layer-count" data-layer-count="airspace">0</span></div>
+    </div>
+  </aside>
+
+  <aside class="tool-panel" id="notam-panel">
+    <div class="tool-head">
+      <div><strong>NOTAMS</strong><small>FAA NMS · seçilen UTC'de geçerli</small></div>
+      <button type="button" data-panel-close>×</button>
+    </div>
+    <label class="master-row"><span><i class="legend-line notam-swatch"></i>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
+    <div class="notam-stat"><strong data-layer-count="notam">0</strong><span>haritada gösterilen NOTAM</span></div>
+    <div class="card-note" id="notam-time-status">FAA geometry ve E-text içinde açıkça tanımlanan alan/circle/corridor geometrileri gösterilir.</div>
+    <div class="notam-legend" aria-label="NOTAM harita lejandı">
+      <span><i data-notam-color="aerial"></i>AERIAL SPORT</span>
+      <span><i data-notam-color="restricted"></i>DANGER/RESTRICTED</span>
+      <span><i data-notam-color="survey"></i>PHOTO/SURVEY</span>
+      <span><i data-notam-color="training"></i>TRAINING/MIL</span>
+      <span><i data-notam-color="other"></i>OTHER</span>
+    </div>
+    <div class="card-note">Q-line radius harita alanı değildir. Öncelik: FAA geometry → açık E-text polygon → corridor → explicit radius circle → kontrollü point/entity.</div>
+  </aside>
+
+  <aside class="tool-panel" id="wafs-panel">
+    <div class="tool-head">
+      <div><strong>WAFS</strong><small>AviationWeather.gov · AWC visual forecast</small></div>
+      <button type="button" data-panel-close>×</button>
+    </div>
+    <label class="master-row"><span>WAFS katmanları</span><input id="wafs-enabled" type="checkbox"></label>
+    <label class="field-row"><span>Flight level</span><input id="wafs-fl" type="number" min="50" max="600" step="10" value="360"></label>
+
+    <div class="wafs-product-list">
+      <div class="wafs-product-row">
+        <label><span><i class="wafs-swatch swatch-edr"></i>Turbulence / EDR</span><input type="checkbox" data-wafs-product="edr" checked></label>
+        <input type="range" min="10" max="85" value="38" data-wafs-opacity="edr" aria-label="EDR opacity">
+        <small data-wafs-meta="edr">—</small>
+      </div>
+      <div class="wafs-product-row">
+        <label><span><i class="wafs-swatch swatch-icing"></i>Icing severity</span><input type="checkbox" data-wafs-product="icing"></label>
+        <input type="range" min="10" max="85" value="34" data-wafs-opacity="icing" aria-label="Icing opacity">
+        <small data-wafs-meta="icing">—</small>
+      </div>
+      <div class="wafs-product-row">
+        <label><span><i class="wafs-swatch swatch-cbextent"></i>CB horizontal extent</span><input type="checkbox" data-wafs-product="cbextent" checked></label>
+        <input type="range" min="10" max="85" value="56" data-wafs-opacity="cbextent" aria-label="CB extent opacity">
+        <small data-wafs-meta="cbextent">—</small>
+      </div>
+      <div class="wafs-product-row">
+        <label><span><i class="wafs-swatch swatch-cbtop"></i>CB tops</span><input type="checkbox" data-wafs-product="cbtop" checked></label>
+        <input type="range" min="10" max="85" value="60" data-wafs-opacity="cbtop" aria-label="CB tops opacity">
+        <small data-wafs-meta="cbtop">—</small>
+      </div>
+      <div class="wafs-product-row">
+        <label><span><i class="wafs-swatch swatch-wind"></i>Wind speed</span><input type="checkbox" data-wafs-product="wind"></label>
+        <input type="range" min="10" max="85" value="32" data-wafs-opacity="wind" aria-label="Wind opacity">
+        <small data-wafs-meta="wind">—</small>
+      </div>
+    </div>
+    <div class="card-note" id="wafs-status">WAFS kapalı. Public AWC forecast frame'leri seçilen UTC'ye göre yüklenir.</div>
+  </aside>
+
+  <section class="timeline-dock" aria-label="Zaman çizgisi">
+    <div class="timeline-head">
+      <div class="timeline-head-main">
+        <strong id="selected-time-label">—</strong>
+        <span id="timeline-offset">0h</span>
+      </div>
+      <div class="timeline-actions">
+        <button class="time-step" data-time-step="-6" type="button">-6h</button>
+        <button class="time-step" data-time-step="-1" type="button">-1h</button>
+        <button id="time-now" type="button">NOW</button>
+        <button class="time-step" data-time-step="1" type="button">+1h</button>
+        <button class="time-step" data-time-step="6" type="button">+6h</button>
+      </div>
+    </div>
+    <div class="timeline-scale" id="timeline-scale">
+      <span>-24h</span><span>-12h</span><span>-6h</span><span>NOW</span><span>+6h</span><span>+12h</span><span>+24h</span>
+    </div>
+    <input id="map-time-slider" class="timeline-range" type="range" min="-24" max="24" step="1" value="0" aria-label="UTC zamanını ileri geri sar">
+    <input id="map-time" type="datetime-local" step="60" aria-label="UTC zamanını elle seç">
+  </section>
+
+  <div class="zoom-hint" id="zoom-hint">Navdata için biraz yaklaş · z5+</div>
 
   <script>
     (function () {
       const detail = document.getElementById("boot-detail");
-      const status = document.getElementById("boot-status");
-
-      const leafletSources = [
-        "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js",
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
-        "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      const sources = [
+        "https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js",
+        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
       ];
 
       function loadScript(src) {
@@ -119,43 +192,27 @@
       }
 
       async function boot() {
-        let loaded = false;
-
-        for (const src of leafletSources) {
+        for (const src of sources) {
           try {
             detail.textContent = "Harita motoru yükleniyor…";
             await loadScript(src);
-            if (window.L) {
-              loaded = true;
-              break;
-            }
-          } catch (e) {
-            console.warn("Leaflet CDN yüklenemedi:", src, e);
+            if (window.maplibregl) break;
+          } catch (error) {
+            console.warn("MapLibre CDN yüklenemedi:", src, error);
           }
         }
 
-        if (!loaded) {
-          status.innerHTML =
-            '<div><strong>Harita motoru yüklenemedi</strong><small>Leaflet CDN bağlantıları engelleniyor.</small></div>';
+        if (!window.maplibregl) {
+          detail.textContent = "MapLibre CDN bağlantıları yüklenemedi.";
           return;
         }
 
         try {
-          detail.textContent = "Harita hazırlanıyor…";
-          await loadScript("/main/map/map.js?v=2");
-
-          setTimeout(() => {
-            if (document.querySelector(".leaflet-container")) {
-              status.classList.add("hidden");
-            } else {
-              status.innerHTML =
-                '<div><strong>Harita başlatılamadı</strong><small>map.js çalıştı ancak Leaflet haritası oluşmadı.</small></div>';
-            }
-          }, 300);
-        } catch (e) {
-          console.error(e);
-          status.innerHTML =
-            '<div><strong>Harita kodu yüklenemedi</strong><small>/main/map/map.js erişimini kontrol et.</small></div>';
+          detail.textContent = "Harita istemcisi yükleniyor…";
+          await loadScript("/main/map/map.js?v=1");
+        } catch (error) {
+          console.error(error);
+          detail.textContent = "/main/map/map.js yüklenemedi.";
         }
       }
 
