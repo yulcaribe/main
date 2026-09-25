@@ -148,7 +148,7 @@
         fl:String(fl),
         valid:requested.slice(0,16).replace("T"," ")
       });
-      const r=await fetch(`/main/api/wafs.php?${q}`,{cache:"no-store",signal});
+      const r=await fetch(`/main/api/v1/wafs.php?${q}`,{cache:"no-store",signal});
       if(!r.ok){
         const j=await r.json().catch(()=>null);
         throw new Error(j?.error||`WAFS HTTP ${r.status}`);
