@@ -501,9 +501,11 @@
       type: "circle",
       source: FLIGHT_SOURCE_ID,
       paint: {
-        "circle-radius": 12,
-        "circle-opacity": 0.01,
-        "circle-color": "#8cf2ff"
+        "circle-radius": 4,
+        "circle-opacity": 1,
+        "circle-color": ["case", ["==", ["get", "emergency"], true], "#ff5f6d", "#8cf2ff"],
+        "circle-stroke-color": "#06111a",
+        "circle-stroke-width": 1.5
       },
       layout: { visibility: flightsEnabledInput?.checked ? "visible" : "none" }
     });
@@ -518,7 +520,7 @@
         "text-rotate": ["coalesce", ["to-number", ["get", "track"]], 0],
         "text-rotation-alignment": "map",
         "text-allow-overlap": true,
-        "visibility": flightsEnabledInput?.checked ? "visible" : "none"
+        "visibility": "none"
       },
       paint: {
         "text-color": ["case", ["==", ["get", "emergency"], true], "#ff5f6d", "#8cf2ff"],
@@ -1291,7 +1293,7 @@
 
   function setFlightVisibility() {
     const visibility = flightsEnabled() ? "visible" : "none";
-    for (const id of ["flight-hit", "flight-symbol", "flight-label"]) {
+    for (const id of ["flight-hit", "flight-label"]) {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
     }
   }
