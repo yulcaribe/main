@@ -123,11 +123,11 @@ if (isset($_GET['feed'])) {
     .maplibregl-popup-tip{border-top-color:#08131d!important}
     .ac-title{font-weight:800;font-size:15px;margin-bottom:6px}
     .aircraft-marker{
-        width:24px;height:24px;display:flex;align-items:center;justify-content:center;
-        filter:drop-shadow(0 1px 2px rgba(0,0,0,.75));
+        width:18px;height:18px;display:flex;align-items:center;justify-content:center;
+        filter:drop-shadow(0 1px 1px rgba(0,0,0,.7));
         cursor:pointer;
     }
-    .aircraft-marker svg{width:24px;height:24px;display:block}
+    .aircraft-marker svg{width:18px;height:18px;display:block}
     .ac-grid{display:grid;grid-template-columns:auto auto;gap:3px 14px;font-size:12px}
     .ac-grid span:nth-child(odd){color:#8297a8}
 </style>
@@ -173,6 +173,8 @@ if (isset($_GET['feed'])) {
     let haveSourceClock = false;
     let lastAnimationFrame = 0;
     let activeFetchBox = null;
+    let lastMoveZoom = null;
+    let lastMoveCenter = null;
     const aircraftMarkers = new Map();
 
     const map = new maplibregl.Map({
@@ -355,8 +357,26 @@ if (isset($_GET['feed'])) {
         el.className = "aircraft-marker";
         el.innerHTML = `
             <svg viewBox="0 0 64 64" aria-hidden="true">
-                <path d="M32 2 L37 25 L58 33 L58 39 L37 36 L36 50 L44 56 L44 60 L32 56 L20 60 L20 56 L28 50 L27 36 L6 39 L6 33 L27 25 Z"
-                      fill="#f5fbff" stroke="#071019" stroke-width="3" stroke-linejoin="round"/>
+                <path d="M32 3
+                         C29.8 3 28.7 5.4 28.4 8.4
+                         L26.8 25.2
+                         L7 34.4
+                         L7 39
+                         L27.8 34.4
+                         L28.2 49.5
+                         L20.2 55.5
+                         L20.2 59
+                         L32 56
+                         L43.8 59
+                         L43.8 55.5
+                         L35.8 49.5
+                         L36.2 34.4
+                         L57 39
+                         L57 34.4
+                         L37.2 25.2
+                         L35.6 8.4
+                         C35.3 5.4 34.2 3 32 3 Z"
+                      fill="#f4f8fb" stroke="#071019" stroke-width="1.6" stroke-linejoin="round"/>
             </svg>`;
         return el;
     }
@@ -642,7 +662,7 @@ if (isset($_GET['feed'])) {
             countEl.textContent = String(parsed.aircraft.length);
             payloadEl.textContent = compressed.byteLength + " B → " + decoded.byteLength + " B";
             updatedEl.textContent = new Date().toLocaleTimeString("tr-TR");
-            hintEl.textContent = "binCraft v" + parsed.version + " · " + (RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer · sticky bbox · global " + parsed.globalCount;
+            hintEl.textContent = "binCraft v" + parsed.version + " · " + (RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer · zoom-cache/pan-refresh · global " + parsed.globalCount;
             setStatus("CANLI", true);
         } catch (err) {
             if (err && err.name === "AbortError") return;
@@ -669,6 +689,8 @@ if (isset($_GET['feed'])) {
             await initDecoder();
             setStatus("Hazır");
             ensureFetchBox(true);
+            lastMoveZoom = map.getZoom();
+            lastMoveCenter = map.getCenter();
             requestAnimationFrame(animationLoop);
             refresh();
         } catch (err) {
@@ -679,11 +701,38 @@ if (isset($_GET['feed'])) {
     });
 
     map.on("moveend", () => {
+        const zoomNow = map.getZoom();
+        const centerNow = map.getCenter();
+
+        if (lastMoveZoom == null) lastMoveZoom = zoomNow;
+        if (lastMoveCenter == null) lastMoveCenter = centerNow;
+
+        const zoomChanged = Math.abs(zoomNow - lastMoveZoom) > 0.01;
+        const centerChanged =
+            Math.abs(centerNow.lng - lastMoveCenter.lng) > 0.00001 ||
+            Math.abs(centerNow.lat - lastMoveCenter.lat) > 0.00001;
+
+        const zoomedOut = zoomNow < lastMoveZoom - 0.01;
+
+        lastMoveZoom = zoomNow;
+        lastMoveCenter = centerNow;
+
         if (!decoderReady) return;
 
-        // Zooming or panning inside the already-fetched coverage must not
-        // restart the aircraft stream. Keep the current bbox and RAM samples.
-        if (!viewFitsInsideFetchBox()) {
+        if (zoomChanged) {
+            // Zoom-in keeps the same upstream bbox and the existing RAM samples,
+            // so the aircraft being followed never loses interpolation.
+            // Zoom-out only refetches if the old coverage no longer contains the view.
+            if (zoomedOut && !viewFitsInsideFetchBox()) {
+                ensureFetchBox(true);
+                refresh();
+            }
+            return;
+        }
+
+        if (centerChanged) {
+            // A real pan is a new area: fetch a fresh bbox immediately.
+            // Existing aircraft objects and interpolation samples remain in RAM.
             ensureFetchBox(true);
             refresh();
         }
