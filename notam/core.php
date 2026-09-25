@@ -234,13 +234,21 @@ function ycNotamList(PDO $pdo, array $input): array {
         $where[] = "n.status = 'cancelled'";
     }
 
-    ycNotamAddInFilter(
-        $where,
-        $params,
-        'UPPER(COALESCE(n.icao_location, n.location, \'\'))',
-        'icao',
-        ycNotamCsvValues(isset($input['icao']) ? (string)$input['icao'] : null, '/^[A-Z0-9]{4}$/')
+    $icaoValues = ycNotamCsvValues(
+        isset($input['icao']) ? (string)$input['icao'] : null,
+        '/^[A-Z0-9]{4}$/'
     );
+    if ($icaoValues) {
+        $icaoHolders = [];
+        foreach ($icaoValues as $i => $value) {
+            $key = 'icao' . $i;
+            $icaoHolders[] = ':' . $key;
+            $params[$key] = $value;
+        }
+        $icaoIn = '(' . implode(',', $icaoHolders) . ')';
+        $where[] = "(UPPER(COALESCE(n.icao_location, '')) IN {$icaoIn}
+                    OR UPPER(COALESCE(n.location, '')) IN {$icaoIn})";
+    }
     ycNotamAddInFilter(
         $where,
         $params,
