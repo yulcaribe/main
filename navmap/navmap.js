@@ -579,15 +579,17 @@
       const mapSource =
         sourceKey === "airport-location"
           ? "Airport entity location"
-          : sourceKey === "qline-coordinate"
-            ? "Explicit point / coordinate fallback"
-            : sourceKey === "e-text-polygon"
-              ? "NOTAM E-text boundary"
-              : sourceKey === "e-text-circle"
-                ? "NOTAM E-text circle"
-                : sourceKey === "e-text-corridor"
-                  ? "NOTAM E-text corridor"
-                  : "FAA geometry";
+          : sourceKey === "e-text-point"
+            ? "NOTAM E-text point"
+            : sourceKey === "qline-coordinate"
+              ? "Q-line coordinate fallback"
+              : sourceKey === "e-text-polygon"
+                ? "NOTAM E-text boundary"
+                : sourceKey === "e-text-circle"
+                  ? "NOTAM E-text circle"
+                  : sourceKey === "e-text-corridor"
+                    ? "NOTAM E-text corridor"
+                    : "FAA geometry";
       rows += infoRow("Map source", mapSource);
       rows += infoRow("Geometry", p.geometry_accuracy);
       detailText = p.text || "";
