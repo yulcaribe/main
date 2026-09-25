@@ -1390,6 +1390,22 @@
   }
 
   async function search(q) {
+    const needle = q.trim().toLowerCase();
+    if (needle.length >= 2) {
+      const hit = flightFeatures.find(feature => {
+        const p = feature.properties || {};
+        return [p.flight, p.registration, p.hex, p.aircraft_type]
+          .some(value => String(value || "").toLowerCase().includes(needle));
+      });
+      if (hit) {
+        const [lon, lat] = hit.geometry.coordinates;
+        map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 9), essential: true });
+        showPopup(hit, new maplibregl.LngLat(lon, lat));
+        searchResults.classList.remove("open");
+        return;
+      }
+    }
+
     if (searchController) searchController.abort();
     searchController = new AbortController();
 
@@ -1559,6 +1575,17 @@
       modeButtons.forEach(b => b.classList.remove("active"));
     });
   });
+
+  setTimeout(() => {
+    const panel = initialMode === "flights"
+      ? "flights-panel"
+      : initialMode === "notam"
+        ? "notam-panel"
+        : initialMode === "wafs"
+          ? "wafs-panel"
+          : "chart-panel";
+    activatePanel(panel, false);
+  }, 0);
 
   setInterval(() => {
     if (!map.loaded() || !notamEnabled()) return;
