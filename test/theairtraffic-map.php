@@ -159,12 +159,18 @@ if (isset($_GET['feed'])) {
     const SOURCE = "tat-aircraft";
     const REFRESH_MS = 2000;
     const MIN_FETCH_ZOOM = 4.2;
+    const RENDER_DELAY_MS = 4200;
+    const SAMPLE_KEEP_MS = 20000;
+    const ANIMATION_FRAME_MS = 32;
 
     let decoder = null;
     let decoderReady = false;
     let aborter = null;
     let refreshTimer = null;
     let requestSeq = 0;
+    let sourceClockOffsetMs = 0;
+    let haveSourceClock = false;
+    let lastAnimationFrame = 0;
     const aircraftMarkers = new Map();
 
     const map = new maplibregl.Map({
@@ -353,53 +359,179 @@ if (isset($_GET['feed'])) {
         return el;
     }
 
-    function syncAircraftMarkers(aircraft) {
-        const live = new Set();
+    function shortestAngle(a, b) {
+        let delta = ((b - a + 540) % 360) - 180;
+        return a + delta;
+    }
+
+    function lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    function interpolateAircraft(a, b, t) {
+        const headingB = shortestAngle(a.heading ?? 0, b.heading ?? a.heading ?? 0);
+        return {
+            ...b,
+            lon: lerp(a.lon, b.lon, t),
+            lat: lerp(a.lat, b.lat, t),
+            heading: ((lerp(a.heading ?? 0, headingB, t) % 360) + 360) % 360
+        };
+    }
+
+    function ensureAircraftMarker(ac) {
+        let item = aircraftMarkers.get(ac.hex);
+        if (item) return item;
+
+        const el = createAircraftElement();
+        el.style.display = "none";
+
+        const popup = new maplibregl.Popup({ closeButton: true, offset: 16 });
+        const marker = new maplibregl.Marker({
+            element: el,
+            rotationAlignment: "map",
+            pitchAlignment: "map"
+        })
+            .setLngLat([ac.lon, ac.lat])
+            .setRotation(Number.isFinite(ac.heading) ? ac.heading : 0)
+            .addTo(map);
+
+        item = {
+            marker,
+            popup,
+            el,
+            data: ac,
+            rendered: ac,
+            samples: [],
+            lastSeenAt: Date.now()
+        };
+
+        el.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const current = aircraftMarkers.get(ac.hex);
+            if (!current) return;
+            const shown = current.rendered || current.data;
+            current.popup
+                .setLngLat([shown.lon, shown.lat])
+                .setHTML(aircraftPopupHtml(current.data))
+                .addTo(map);
+        });
+
+        aircraftMarkers.set(ac.hex, item);
+        return item;
+    }
+
+    function ingestAircraftSnapshot(aircraft, sourceNowMs) {
+        const seenNow = new Set();
 
         for (const ac of aircraft) {
-            live.add(ac.hex);
-            let item = aircraftMarkers.get(ac.hex);
+            seenNow.add(ac.hex);
+            const item = ensureAircraftMarker(ac);
+            item.data = ac;
+            item.lastSeenAt = Date.now();
 
-            if (!item) {
-                const el = createAircraftElement();
-                const popup = new maplibregl.Popup({ closeButton: true, offset: 16 });
-                const marker = new maplibregl.Marker({
-                    element: el,
-                    rotationAlignment: "map",
-                    pitchAlignment: "map"
-                })
-                    .setLngLat([ac.lon, ac.lat])
-                    .setRotation(Number.isFinite(ac.heading) ? ac.heading : 0)
-                    .addTo(map);
+            const ageMs = Number.isFinite(ac.seenPos) ? Math.max(0, ac.seenPos * 1000) : 0;
+            const sampleTime = sourceNowMs - ageMs;
+            const last = item.samples[item.samples.length - 1];
 
-                el.addEventListener("click", (event) => {
-                    event.stopPropagation();
-                    const current = aircraftMarkers.get(ac.hex);
-                    if (!current) return;
-                    current.popup
-                        .setLngLat([current.data.lon, current.data.lat])
-                        .setHTML(aircraftPopupHtml(current.data))
-                        .addTo(map);
+            const sameTimestamp = last && Math.abs(last.t - sampleTime) < 50;
+            const samePosition = last &&
+                Math.abs(last.lon - ac.lon) < 1e-9 &&
+                Math.abs(last.lat - ac.lat) < 1e-9;
+
+            if (!sameTimestamp && !samePosition) {
+                item.samples.push({
+                    t: sampleTime,
+                    lon: ac.lon,
+                    lat: ac.lat,
+                    heading: Number.isFinite(ac.heading) ? ac.heading : 0,
+                    data: ac
                 });
+            } else if (last) {
+                last.data = ac;
+                last.heading = Number.isFinite(ac.heading) ? ac.heading : last.heading;
+            }
 
-                item = { marker, popup, el, data: ac };
-                aircraftMarkers.set(ac.hex, item);
-            } else {
-                item.data = ac;
-                item.marker.setLngLat([ac.lon, ac.lat]);
-                if (typeof item.marker.setRotation === "function") {
-                    item.marker.setRotation(Number.isFinite(ac.heading) ? ac.heading : 0);
-                }
+            const cutoff = sourceNowMs - SAMPLE_KEEP_MS;
+            while (item.samples.length > 2 && item.samples[1].t < cutoff) {
+                item.samples.shift();
             }
         }
 
+        const staleClientCutoff = Date.now() - 15000;
         for (const [hex, item] of aircraftMarkers) {
-            if (!live.has(hex)) {
+            if (!seenNow.has(hex) && item.lastSeenAt < staleClientCutoff) {
                 item.popup.remove();
                 item.marker.remove();
                 aircraftMarkers.delete(hex);
             }
         }
+    }
+
+    function renderBufferedAircraft(nowClientMs) {
+        if (!haveSourceClock) return;
+
+        const targetSourceTime = nowClientMs - sourceClockOffsetMs - RENDER_DELAY_MS;
+
+        for (const item of aircraftMarkers.values()) {
+            const samples = item.samples;
+            if (!samples.length) {
+                item.el.style.display = "none";
+                continue;
+            }
+
+            let before = null;
+            let after = null;
+
+            for (let i = 0; i < samples.length; i++) {
+                const s = samples[i];
+                if (s.t <= targetSourceTime) before = s;
+                if (s.t >= targetSourceTime) {
+                    after = s;
+                    break;
+                }
+            }
+
+            if (!before) {
+                item.el.style.display = "none";
+                continue;
+            }
+
+            let shown;
+
+            if (after && after !== before && after.t > before.t) {
+                const t = Math.max(0, Math.min(1, (targetSourceTime - before.t) / (after.t - before.t)));
+                const a = { ...before.data, lon: before.lon, lat: before.lat, heading: before.heading };
+                const b = { ...after.data, lon: after.lon, lat: after.lat, heading: after.heading };
+                shown = interpolateAircraft(a, b, t);
+            } else {
+                shown = {
+                    ...before.data,
+                    lon: before.lon,
+                    lat: before.lat,
+                    heading: before.heading
+                };
+            }
+
+            item.rendered = shown;
+            item.el.style.display = "";
+            item.marker.setLngLat([shown.lon, shown.lat]);
+
+            if (typeof item.marker.setRotation === "function") {
+                item.marker.setRotation(Number.isFinite(shown.heading) ? shown.heading : 0);
+            }
+
+            if (item.popup.isOpen()) {
+                item.popup.setLngLat([shown.lon, shown.lat]);
+            }
+        }
+    }
+
+    function animationLoop(ts) {
+        if (ts - lastAnimationFrame >= ANIMATION_FRAME_MS) {
+            lastAnimationFrame = ts;
+            renderBufferedAircraft(Date.now());
+        }
+        requestAnimationFrame(animationLoop);
     }
 
     function boxString() {
@@ -450,12 +582,22 @@ if (isset($_GET['feed'])) {
 
             const decoded = decoder.decode(compressed);
             const parsed = parseBinCraft(decoded);
-            syncAircraftMarkers(parsed.aircraft);
+
+            const sourceNowMs = parsed.now * 1000;
+            const measuredOffset = Date.now() - sourceNowMs;
+            if (!haveSourceClock) {
+                sourceClockOffsetMs = measuredOffset;
+                haveSourceClock = true;
+            } else {
+                sourceClockOffsetMs = sourceClockOffsetMs * 0.85 + measuredOffset * 0.15;
+            }
+
+            ingestAircraftSnapshot(parsed.aircraft, sourceNowMs);
 
             countEl.textContent = String(parsed.aircraft.length);
             payloadEl.textContent = compressed.byteLength + " B → " + decoded.byteLength + " B";
             updatedEl.textContent = new Date().toLocaleTimeString("tr-TR");
-            hintEl.textContent = "binCraft v" + parsed.version + " · stride " + parsed.stride + " · global " + parsed.globalCount;
+            hintEl.textContent = "binCraft v" + parsed.version + " · " + (RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer · global " + parsed.globalCount;
             setStatus("CANLI", true);
         } catch (err) {
             if (err && err.name === "AbortError") return;
@@ -481,6 +623,7 @@ if (isset($_GET['feed'])) {
             setStatus("Decoder hazırlanıyor…");
             await initDecoder();
             setStatus("Hazır");
+            requestAnimationFrame(animationLoop);
             refresh();
         } catch (err) {
             console.error(err);
