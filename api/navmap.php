@@ -696,6 +696,17 @@ function notamFeature(array $row): ?array {
     ];
 }
 
+function notamFeatureFingerprint(array $feature): string {
+    $p = $feature['properties'] ?? [];
+    return hash('sha256', json_encode([
+        $p['ident'] ?? '',
+        $p['effective_start'] ?? '',
+        $p['effective_end_raw'] ?? ($p['effective_end'] ?? ''),
+        $p['text'] ?? '',
+        $feature['geometry'] ?? null,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
 function bboxGeometrySql(float $west, float $south, float $east, float $north, array &$params): string {
     if ($west <= $east) {
         $params['bbox'] = sprintf(
@@ -1020,7 +1031,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v6',
+            'v7',
             $cacheVersion,
             $zoom,
             round($west, 5),
@@ -1075,10 +1086,14 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
 
     $notamCount = 0;
     $seenNotams = [];
+    $seenMapFeatures = [];
     while ($row = $stmt->fetch()) {
         $feature = notamFeature($row);
         if (!$feature) continue;
         $seenNotams[(string)$row['nms_id']] = true;
+        $fingerprint = notamFeatureFingerprint($feature);
+        if (isset($seenMapFeatures[$fingerprint])) continue;
+        $seenMapFeatures[$fingerprint] = true;
         $features[] = $feature;
         $counts['notam']++;
         $notamCount++;
@@ -1131,6 +1146,9 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $feature = notamFeature($row);
         if (!$feature) continue;
         $seenNotams[$id] = true;
+        $fingerprint = notamFeatureFingerprint($feature);
+        if (isset($seenMapFeatures[$fingerprint])) continue;
+        $seenMapFeatures[$fingerprint] = true;
         $features[] = $feature;
         $counts['notam']++;
         $notamCount++;
@@ -1233,6 +1251,9 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
         $feature = notamFeature($row);
         if (!$feature) continue;
         $seenNotams[$id] = true;
+        $fingerprint = notamFeatureFingerprint($feature);
+        if (isset($seenMapFeatures[$fingerprint])) continue;
+        $seenMapFeatures[$fingerprint] = true;
         $features[] = $feature;
         $counts['notam']++;
         $notamCount++;
