@@ -124,8 +124,7 @@ function healthProbe(bool $force): ?array {
     $osm = healthHttp('https://tile.openstreetmap.org/0/0/0.png', true, 8);
     $wafsUpstream = healthHttp('https://aviationweather.gov/data/products/wafs/', true, 8);
 
-    foreach ([$maplibre, $leaflet, $osm, $wafsUpstream] as &$item) unset($item['body']);
-    unset($item);
+    unset($maplibre['body'], $leaflet['body'], $osm['body'], $wafsUpstream['body']);
 
     $result = [
         'checkedAt'=>gmdate('c'),
