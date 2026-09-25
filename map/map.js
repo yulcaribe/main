@@ -67,7 +67,7 @@
   let requestInFlight = false;
   let pendingRefresh = false;
   let viewRevision = 0;
-  const LOCAL_FLIGHT_API = "/main/api/flights.php";
+  const LOCAL_FLIGHT_API = "/main/api/v1/flights.php";
 
   function esc(value) {
     return String(value ?? "")
