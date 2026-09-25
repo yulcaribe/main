@@ -1167,11 +1167,19 @@
       refreshViewportStatus();
 
       const cacheState = response.headers.get("x-yc-navmap-cache");
-      statusText.textContent = notamTruncated
+      const timingState = response.headers.get("x-yc-navmap-timing");
+      const timingShort = timingState
+        ? timingState
+            .split(",")
+            .filter(part => /^(faa_sql|airport_sql|coord_sql|total)=/.test(part))
+            .join(" · ")
+        : "";
+      const baseStatus = notamTruncated
         ? "NOTAM · yoğun görünüm"
         : cacheState === "HIT"
           ? "NOTAM · cache"
           : "NOTAM · canlı görünüm";
+      statusText.textContent = timingShort ? `${baseStatus} · ${timingShort}` : baseStatus;
       statusDot.classList.add("ok");
       statusDot.classList.remove("bad");
     } catch (error) {
