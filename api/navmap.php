@@ -50,13 +50,15 @@ function circlePolygon(float $lon, float $lat, float $radiusNm, int $steps = 32)
 }
 
 function notamCoordinateRegex(): string {
-    return '/(?:[0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])/i';
+    // Compact ICAO coordinates, including decimal minute/second variants seen
+    // in E-text (e.g. 4100.020N02913.030E or 364313.27N0284719.24E).
+    return '/(?:[0-9]{6}(?:\.[0-9]+)?[NS][0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][0-9]{5}(?:\.[0-9]+)?[EW])/i';
 }
 
 function parseNotamCoordinate(string $token): ?array {
     $token = strtoupper(trim($token));
 
-    if (preg_match('/^([0-9]{2})([0-9]{2})([NS])([0-9]{3})([0-9]{2})([EW])$/', $token, $m)) {
+    if (preg_match('/^([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2}(?:\.[0-9]+)?)([EW])$/', $token, $m)) {
         $lat = (float)$m[1] + (float)$m[2] / 60.0;
         $lon = (float)$m[4] + (float)$m[5] / 60.0;
         if ($m[3] === 'S') $lat *= -1;
@@ -64,7 +66,7 @@ function parseNotamCoordinate(string $token): ?array {
         return [$lon, $lat];
     }
 
-    if (preg_match('/^([0-9]{2})([0-9]{2})([0-9]{2})([NS])([0-9]{3})([0-9]{2})([0-9]{2})([EW])$/', $token, $m)) {
+    if (preg_match('/^([0-9]{2})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([EW])$/', $token, $m)) {
         $lat = (float)$m[1] + (float)$m[2] / 60.0 + (float)$m[3] / 3600.0;
         $lon = (float)$m[5] + (float)$m[6] / 60.0 + (float)$m[7] / 3600.0;
         if ($m[4] === 'S') $lat *= -1;
@@ -234,6 +236,7 @@ function notamTextSpatialSegment(string $text): ?string {
         '/\bAREA\s+BOUNDED\s+BY\b\s*:?\s*/i',
         '/\bBOUNDED\s+BY\b\s*:?\s*/i',
         '/\bBOUNDARY\b\s*:?\s*/i',
+        '/\bLATERAL\s+LIMITS?\b\s*:?\s*/i',
         '/\bAREA\b\s*:?\s*/i',
     ];
 
@@ -256,6 +259,42 @@ function notamTextSpatialSegment(string $text): ?string {
 function notamExplicitPolygon(array $row): ?array {
     $text = (string)($row['notam_text'] ?? '');
     $segment = notamTextSpatialSegment($text);
+
+    // Some Turkish NOTAMs use "WI:" or plain "COORDINATES:" instead of
+    // "AREA:". Only accept those weaker markers for Q-code families that are
+    // themselves spatial-area activities. This avoids turning obstacle point
+    // lists or administrative coordinates into accidental polygons.
+    if ($segment === null) {
+        $semantic = notamSemantic($row);
+        $areaSemantic = in_array(
+            $semantic['semantic_class'] ?? '',
+            [
+                'RESTRICTED_AIRSPACE',
+                'AERIAL_SURVEY',
+                'EXERCISE',
+                'AIR_REFUELING',
+                'FIRING',
+                'UAV_ACTIVITY',
+                'AERIAL_SPORT_ACTIVITY',
+                'CONTROLLED_AIRSPACE',
+            ],
+            true
+        );
+
+        if ($areaSemantic) {
+            foreach (['/\bWI\s*:\s*/i', '/\bCOORDINATES?\s*:\s*/i'] as $pattern) {
+                if (!preg_match($pattern, $text, $m, PREG_OFFSET_CAPTURE)) continue;
+                $marker = (string)$m[0][0];
+                $offset = (int)$m[0][1] + strlen($marker);
+                $segment = substr($text, $offset);
+                if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b|NOTE\b|VERTICAL\s+LIMITS?\b)/i', $segment, $stop, PREG_OFFSET_CAPTURE)) {
+                    $segment = substr($segment, 0, (int)$stop[0][1]);
+                }
+                break;
+            }
+        }
+    }
+
     if ($segment === null) return null;
 
     $coords = extractNotamCoordinates($segment, true);
@@ -275,7 +314,7 @@ function notamExplicitCircle(array $row): ?array {
     $text = strtoupper((string)($row['notam_text'] ?? ''));
     if ($text === '' || stripos($text, 'RADIUS') === false) return null;
 
-    $coordPattern = '(?:[0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])';
+    $coordPattern = '(?:[0-9]{6}(?:\.[0-9]+)?[NS][0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][0-9]{5}(?:\.[0-9]+)?[EW])';
     $patterns = [
         '/(' . $coordPattern . ').{0,180}?\bRADIUS(?:\s+OF)?\s*([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\b/is',
         '/([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+RADIUS.{0,180}?(' . $coordPattern . ')/is',
@@ -981,7 +1020,7 @@ if (in_array('notam', $layers, true) && $zoom >= 4) {
     if (count($layers) === 1 && $layers[0] === 'notam') {
         $cacheVersion = navmapNotamSyncVersion($pdo, 'production');
         $cacheKey = hash('sha256', json_encode([
-            'v5',
+            'v6',
             $cacheVersion,
             $zoom,
             round($west, 5),
