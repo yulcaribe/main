@@ -83,9 +83,9 @@ function healthJsonProbe(string $path, int $timeout = 12): array {
         'meta'=>is_array($json) ? [
             'resource'=>$json['resource'] ?? null,
             'mode'=>$json['mode'] ?? null,
-            'source'=>$json['source'] ?? null,
-            'count'=>$json['count'] ?? $json['total'] ?? null,
-            'upstreamStatus'=>$json['upstreamStatus'] ?? null,
+            'source'=>$json['source'] ?? ($json['_proxy']['source'] ?? null),
+            'count'=>$json['count'] ?? $json['total'] ?? (is_array($json['ac'] ?? null) ? count($json['ac']) : null),
+            'upstreamStatus'=>$json['upstreamStatus'] ?? ($json['_proxy']['upstreamStatus'] ?? null),
         ] : null,
     ];
 }
@@ -108,7 +108,7 @@ function healthProbe(bool $force): ?array {
     $api = [
         'index'=>healthJsonProbe('/main/api/v1/'),
         'navdata'=>healthJsonProbe('/main/api/v1/navdata.php?action=health'),
-        'notam'=>healthJsonProbe('/main/api/v1/notam.php?action=filters'),
+        'notam'=>healthJsonProbe('/main/api/v1/notam.php?action=map&z=3&west=29&south=36&east=32&north=38'),
         'weather'=>healthJsonProbe('/main/api/v1/weather.php?icao=LTAI'),
         'metar'=>healthJsonProbe('/main/api/v1/metar.php?icao=LTAI'),
         'taf'=>healthJsonProbe('/main/api/v1/taf.php?icao=LTAI'),
@@ -117,7 +117,8 @@ function healthProbe(bool $force): ?array {
     ];
 
     $mapPage = healthHttp(healthBaseUrl() . '/main/map/', false, 10);
-    unset($mapPage['body']);
+    $mapScript = healthHttp(healthBaseUrl() . '/main/map/map.js', true, 10);
+    unset($mapPage['body'], $mapScript['body']);
 
     $maplibre = healthHttp('https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js', true, 8);
     $leaflet = healthHttp('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', true, 8);
@@ -135,6 +136,7 @@ function healthProbe(bool $force): ?array {
         ],
         'api'=>$api,
         'mapPage'=>$mapPage,
+        'mapScript'=>$mapScript,
         'maplibre'=>$maplibre,
         'leaflet'=>$leaflet,
         'osm'=>$osm,
@@ -515,6 +517,7 @@ try {
         $nmsLocal = nmsHealthLocal($cfg['env']);
 
         $apis = [
+            'index',
             'navdata',
             'notam',
             'flights',
