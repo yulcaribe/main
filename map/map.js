@@ -1456,12 +1456,14 @@
 
   map.on("load", () => {
     addNavLayers();
+    setFlightVisibility();
     boot.classList.add("hidden");
     scheduleViewportLoad(0, true);
+    scheduleFlightLoad(0);
     loadWeatherOverlays().catch(console.error);
   });
 
-  map.on("moveend", () => scheduleViewportLoad());
+  map.on("moveend", () => { scheduleViewportLoad(); scheduleFlightLoad(); });
   map.on("zoomend", () => updateZoomHint(chartTruncated || notamTruncated));
 
   layerInputs.forEach(input => {
@@ -1476,6 +1478,23 @@
       }
     });
   });
+
+  flightsEnabledInput?.addEventListener("change", () => {
+    setFlightVisibility();
+    if (!flightsEnabled()) {
+      flightFeatures = [];
+      flightCountsState = { flight: 0 };
+      map.getSource(FLIGHT_SOURCE_ID)?.setData(emptyGeojson());
+      updateCounts();
+      if (flightsStatus) flightsStatus.textContent = "ADS-B katmanı kapalı.";
+      return;
+    }
+    scheduleFlightLoad(0);
+  });
+
+  setInterval(() => {
+    if (map.loaded() && flightsEnabled()) scheduleFlightLoad(0);
+  }, 8000);
 
   timeSlider?.addEventListener("input", () => {
     if (!timelineAnchor) return;
