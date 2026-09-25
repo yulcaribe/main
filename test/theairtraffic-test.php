@@ -6,11 +6,16 @@ $box = isset($_GET['box']) && preg_match('/^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.
     ? $_GET['box']
     : $defaultBox;
 
-$format = ($_GET['format'] ?? 'json') === 'binary' ? 'binary' : 'json';
+$requestedFormat = $_GET['format'] ?? 'json';
+$format = in_array($requestedFormat, ['json', 'binary', 'raw'], true) ? $requestedFormat : 'json';
 
-$target = $format === 'binary'
-    ? "https://globe.theairtraffic.com/re-api/?binCraft&zstd&box=" . $box
-    : "https://globe.theairtraffic.com/re-api/?json&box=" . $box;
+if ($format === 'binary') {
+    $target = "https://globe.theairtraffic.com/re-api/?binCraft&zstd&box=" . $box;
+} elseif ($format === 'raw') {
+    $target = "https://globe.theairtraffic.com/re-api/?binCraft&box=" . $box;
+} else {
+    $target = "https://globe.theairtraffic.com/re-api/?json&box=" . $box;
+}
 
 $status = 0;
 $error = '';
@@ -178,6 +183,7 @@ $ok = $status >= 200 && $status < 300;
             <select name="format">
                 <option value="json" <?= $format === 'json' ? 'selected' : '' ?>>JSON</option>
                 <option value="binary" <?= $format === 'binary' ? 'selected' : '' ?>>binCraft + zstd</option>
+                <option value="raw" <?= $format === 'raw' ? 'selected' : '' ?>>binCraft (zstd yok)</option>
             </select>
 
             <br>
@@ -214,7 +220,7 @@ $ok = $status >= 200 && $status < 300;
     <div class="card">
         <h2>Response body</h2>
 
-        <?php if ($format === 'binary'): ?>
+        <?php if ($format === 'binary' || $format === 'raw'): ?>
             <p class="small">
                 Binary cevap ekrana ham basılmıyor. İlk 120 byte base64 olarak gösteriliyor.
             </p>
