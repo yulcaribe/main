@@ -142,7 +142,7 @@
 
         try {
           detail.textContent = "Harita hazırlanıyor…";
-          await loadScript("/main/map/map.js");
+          await loadScript("/main/map/map.js?v=2");
 
           setTimeout(() => {
             if (document.querySelector(".leaflet-container")) {
