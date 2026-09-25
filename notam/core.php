@@ -239,15 +239,18 @@ function ycNotamList(PDO $pdo, array $input): array {
         '/^[A-Z0-9]{4}$/'
     );
     if ($icaoValues) {
-        $icaoHolders = [];
+        $icaoLocationHolders = [];
+        $locationHolders = [];
         foreach ($icaoValues as $i => $value) {
-            $key = 'icao' . $i;
-            $icaoHolders[] = ':' . $key;
-            $params[$key] = $value;
+            $icaoKey = 'icao_location_' . $i;
+            $locationKey = 'location_' . $i;
+            $icaoLocationHolders[] = ':' . $icaoKey;
+            $locationHolders[] = ':' . $locationKey;
+            $params[$icaoKey] = $value;
+            $params[$locationKey] = $value;
         }
-        $icaoIn = '(' . implode(',', $icaoHolders) . ')';
-        $where[] = "(UPPER(COALESCE(n.icao_location, '')) IN {$icaoIn}
-                    OR UPPER(COALESCE(n.location, '')) IN {$icaoIn})";
+        $where[] = "(UPPER(COALESCE(n.icao_location, '')) IN (" . implode(',', $icaoLocationHolders) . ")
+                    OR UPPER(COALESCE(n.location, '')) IN (" . implode(',', $locationHolders) . "))";
     }
     ycNotamAddInFilter(
         $where,
