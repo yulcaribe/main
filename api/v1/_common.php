@@ -29,3 +29,51 @@ function ycApiV1String(array $source, string $key, int $maxLength = 200): string
     if (function_exists('mb_substr')) return mb_substr($value, 0, $maxLength);
     return substr($value, 0, $maxLength);
 }
+
+
+function ycApiDb(): PDO {
+    static $pdo = null;
+    if ($pdo instanceof PDO) return $pdo;
+
+    if (!extension_loaded('pdo_mysql')) {
+        ycApiV1Respond(500, ['ok' => false, 'error' => 'PDO MySQL aktif değil.']);
+    }
+
+    $path = dirname(__DIR__, 4) . '/data.php';
+    if (!is_file($path)) {
+        ycApiV1Respond(500, ['ok' => false, 'error' => 'Veritabanı yapılandırması bulunamadı.']);
+    }
+
+    $cfg = require $path;
+    if (!is_array($cfg)) {
+        ycApiV1Respond(500, ['ok' => false, 'error' => 'Veritabanı yapılandırması geçersiz.']);
+    }
+
+    foreach (['host', 'port', 'database', 'user', 'password'] as $key) {
+        if (!array_key_exists($key, $cfg)) {
+            ycApiV1Respond(500, ['ok' => false, 'error' => 'Veritabanı yapılandırması eksik.']);
+        }
+    }
+
+    try {
+        $pdo = new PDO(
+            sprintf(
+                'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                $cfg['host'],
+                (int)$cfg['port'],
+                $cfg['database']
+            ),
+            $cfg['user'],
+            $cfg['password'],
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]
+        );
+    } catch (Throwable) {
+        ycApiV1Respond(500, ['ok' => false, 'error' => 'Veritabanına bağlanılamadı.']);
+    }
+
+    return $pdo;
+}
