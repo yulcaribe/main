@@ -6,8 +6,9 @@
     return;
   }
 
-  const API = "/main/api/navmap.php";
-  const WAFS_API = "/main/api/wafs.php";
+  const CHART_API = "/main/api/v1/chart.php";
+  const NOTAM_API = "/main/api/v1/notam.php";
+  const WAFS_API = "/main/api/v1/wafs.php";
   const CHART_SOURCE_ID = "navdata-charts";
   const NOTAM_SOURCE_ID = "navdata-notams";
   const CHART_LAYER_NAMES = new Set(["airport", "navaid", "waypoint", "airway", "sid", "star", "airspace"]);
@@ -541,8 +542,8 @@
     if (!target || !nmsId) return;
 
     try {
-      const q = new URLSearchParams({ action: "notam-detail", id: String(nmsId) });
-      const response = await fetch(`${API}?${q}`, { cache: "no-store" });
+      const q = new URLSearchParams({ action: "detail", id: String(nmsId) });
+      const response = await fetch(`${NOTAM_API}?${q}`, { cache: "no-store" });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok || !payload?.notam) {
         throw new Error(payload?.error || `HTTP ${response.status}`);
@@ -1076,7 +1077,7 @@
     const q = viewportQuery(requestBounds, z, layers, false);
 
     try {
-      const response = await fetch(`${API}?${q}`, {
+      const response = await fetch(`${CHART_API}?${q}`, {
         cache: "default",
         signal: chartRequestController.signal
       });
@@ -1143,9 +1144,11 @@
 
     const requestBounds = bboxParams(0.38);
     const q = viewportQuery(requestBounds, z, ["notam"], true);
+    q.set("action", "map");
+    q.delete("layers");
 
     try {
-      const response = await fetch(`${API}?${q}`, {
+      const response = await fetch(`${NOTAM_API}?${q}`, {
         cache: "default",
         signal: notamRequestController.signal
       });
@@ -1216,7 +1219,7 @@
     }
 
     try {
-      const response = await fetch(`${API}?action=search&q=${encodeURIComponent(q.trim())}`, {
+      const response = await fetch(`${CHART_API}?action=search&q=${encodeURIComponent(q.trim())}`, {
         cache: "no-store",
         signal: searchController.signal
       });
