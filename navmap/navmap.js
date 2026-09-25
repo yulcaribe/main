@@ -11,22 +11,16 @@
   const CHART_SOURCE_ID = "navdata-charts";
   const NOTAM_SOURCE_ID = "navdata-notams";
   const CHART_LAYER_NAMES = new Set(["airport", "navaid", "waypoint", "airway", "sid", "star", "airspace"]);
-  const NOTAM_APPROX_SOURCES = [
-    "qline-radius-circle",
-    "airport-radius-circle",
-    "faa-radius-circle",
-    "derived-radius-circle"
-  ];
+  // Q-line radius is metadata for filtering/candidate selection, not display
+  // geometry. Only explicit E-text/FAA geometry reaches polygon rendering.
+  const NOTAM_APPROX_SOURCES = ["qline-coordinate", "airport-location"];
   const NOTAM_COLOR = [
-    "match", ["get", "category"],
-    "RWY", "#ff7a8b",
-    "TWY", "#ffc46b",
-    "UAV", "#b696ff",
-    "PARACHUTE", "#70e8a7",
-    "OBSTACLE", "#ff9d66",
-    "NAV", "#5fe0ef",
-    "COM", "#55b8ff",
-    "AIRSPACE", "#ffd35f",
+    "match", ["get", "display_group"],
+    "AERIAL_SPORT", "#00c5b9",
+    "RESTRICTED_AIRSPACE", "#ff5f6d",
+    "AERIAL_SURVEY", "#ff9b4a",
+    "TRAINING_MILITARY", "#d9e1e5",
+    "OTHER", "#4f8cff",
     "#ffd35f"
   ];
   const WAFS_PRODUCTS = {
@@ -454,7 +448,7 @@
         visibility: visibilityFor("notam"),
         "text-field": [
           "step", ["zoom"],
-          ["coalesce", ["get", "category"], "NOTAM"],
+          ["coalesce", ["get", "semantic_class"], ["get", "category"], "NOTAM"],
           10, ["coalesce", ["get", "ident"], "NOTAM"]
         ],
         "text-size": ["interpolate", ["linear"], ["zoom"], 8, 8.5, 10, 10, 13, 11.5],
@@ -576,27 +570,24 @@
       rows += infoRow("Valid to", p.effective_end_raw || p.effective_end);
       rows += infoRow("Lower", p.lower_limit);
       rows += infoRow("Upper", p.upper_limit);
-      rows += infoRow("Category", p.category);
-      rows += infoRow("Radius", p.radius_nm ? `${p.radius_nm} NM` : null);
+      rows += infoRow("Semantic", p.semantic_class || p.category);
+      rows += infoRow("Display group", p.display_group);
+      rows += infoRow("Map render", p.map_render_type);
+      rows += infoRow("Explicit radius", p.explicit_radius_nm ? `${p.explicit_radius_nm} NM` : null);
+      rows += infoRow("Q-line radius", p.qline_radius_nm ? `${p.qline_radius_nm} NM (metadata)` : null);
       const sourceKey = String(p.geometry_source || "");
       const mapSource =
         sourceKey === "airport-location"
-          ? "Airport marker fallback"
+          ? "Airport entity location"
           : sourceKey === "qline-coordinate"
-            ? "Q-line / NOTAM coordinate"
-            : sourceKey === "airport-radius-circle"
-              ? "Airport approximate envelope"
-              : sourceKey === "qline-radius-circle"
-                ? "Q-line approximate envelope"
-                : sourceKey === "faa-radius-circle"
-                  ? "FAA point + approximate radius"
-                  : sourceKey === "derived-radius-circle"
-                    ? "Derived approximate radius"
-                    : sourceKey === "notam-area-polygon"
-                      ? "NOTAM AREA polygon"
-                      : sourceKey === "coordinates-polygon"
-                        ? "NOTAM coordinate polygon"
-                        : "FAA geometry";
+            ? "Explicit point / coordinate fallback"
+            : sourceKey === "e-text-polygon"
+              ? "NOTAM E-text boundary"
+              : sourceKey === "e-text-circle"
+                ? "NOTAM E-text circle"
+                : sourceKey === "e-text-corridor"
+                  ? "NOTAM E-text corridor"
+                  : "FAA geometry";
       rows += infoRow("Map source", mapSource);
       rows += infoRow("Geometry", p.geometry_accuracy);
       detailText = p.text || "";
@@ -634,7 +625,7 @@
       const n = Number(counts.notam || 0);
       notamTimeStatus.textContent = notamEnabled()
         ? new Intl.NumberFormat("tr-TR").format(n) + " NOTAM · " + formatSelectedUtc()
-        : "FAA geometry, NOTAM AREA polygonları ve kontrollü fallback geometrileri gösterilir.";
+        : "FAA geometry ve E-text içinde açıkça tanımlanan alan/circle/corridor geometrileri gösterilir.";
     }
   }
 
