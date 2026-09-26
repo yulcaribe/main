@@ -34,7 +34,7 @@ $html = str_replace(
 );
 $html = str_replace(
     'await load("/main/briefing/briefing.js?v=15");',
-    'await load("/main/briefing/notam-ui.js?v=1");\n          await load("/main/briefing/briefing.js?v=16");',
+    "await load(\"/main/briefing/notam-ui.js?v=1\");\n          await load(\"/main/briefing/briefing.js?v=16\");",
     $html
 );
 
