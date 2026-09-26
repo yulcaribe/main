@@ -19,12 +19,12 @@ $html = str_replace(
 );
 $html = str_replace(
     "Rota boyunca temsilci METAR/TAF'lar ve rotaya gerçekten yakın aktif SIGMET'ler. Cruise seviyesi ve zaman bağlamı ayrıca değerlendirilir.",
-    "Rota boyunca METAR/TAF, SIGMET, WAFS, model weather ve route-aware NOTAM analizi. OFP yoksa great-circle yalnızca rehber olarak kullanılır; mümkünse MariaDB airway graph üzerinden estimated navdata route üretilir.",
+    "Rota boyunca METAR/TAF, SIGMET, WAFS, model weather ve route-aware NOTAM analizi. OFP yoksa great-circle yalnızca rehber olarak kullanılır; mümkünse MariaDB airway graph ve kısa DCT köprüleri üzerinden estimated navdata route üretilir.",
     $html
 );
 $html = str_replace(
     '<div><strong>OFP / ROUTE</strong><small>İsteğe bağlı. Boşsa great-circle tahmini.</small></div>',
-    '<div><strong>OFP / ROUTE</strong><small>İsteğe bağlı. Boşsa great-circle rehberli navdata airway tahmini; uygun graph bulunamazsa great-circle fallback.</small></div>',
+    '<div><strong>OFP / ROUTE</strong><small>İsteğe bağlı. Boşsa great-circle rehberli navdata airway tahmini; FRA/kopuk bölümlerde kısa DCT köprüleri kullanılabilir, yeterli graph bulunamazsa great-circle fallback.</small></div>',
     $html
 );
 $html = str_replace(
@@ -34,7 +34,7 @@ $html = str_replace(
 );
 $html = str_replace(
     'await load("/main/briefing/briefing.js?v=15");',
-    "await load(\"/main/briefing/notam-ui.js?v=1\");\n          await load(\"/main/briefing/briefing.js?v=16\");",
+    "await load(\"/main/briefing/notam-ui-v2.js?v=2\");\n          await load(\"/main/briefing/briefing.js?v=16\");",
     $html
 );
 
