@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="/main/map/map.css?v=7">
   <link rel="stylesheet" href="/main/map/map-ui-v8.css?v=1">
+  <link rel="stylesheet" href="/main/map/map-wafs-visual-v1.css?v=1">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -165,7 +166,7 @@
         <div class="wafs2-product-head">
           <label><span><i class="wafs-swatch swatch-cbextent"></i>CB horizontal extent</span><input type="checkbox" data-wafs2-product="cbextent"></label>
         </div>
-        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="56" data-wafs2-opacity="cbextent" aria-label="CB extent opacity"></div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="68" data-wafs2-opacity="cbextent" aria-label="CB extent opacity"></div>
         <small data-wafs2-meta="cbextent">Tüm seviye ürünü</small>
       </div>
 
@@ -173,7 +174,7 @@
         <div class="wafs2-product-head">
           <label><span><i class="wafs-swatch swatch-cbtop"></i>CB tops</span><input type="checkbox" data-wafs2-product="cbtop"></label>
         </div>
-        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="60" data-wafs2-opacity="cbtop" aria-label="CB tops opacity"></div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="70" data-wafs2-opacity="cbtop" aria-label="CB tops opacity"></div>
         <small data-wafs2-meta="cbtop">Tüm seviye ürünü</small>
       </div>
     </div>
@@ -263,6 +264,7 @@
           detail.textContent = "Harita istemcisi yükleniyor…";
           await loadScript("/main/map/map.js?v=8");
           await loadScript("/main/map/map-ui-v8.js?v=1");
+          await loadScript("/main/map/map-wafs-visual-v1.js?v=1");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/map/map.js yüklenemedi.";
