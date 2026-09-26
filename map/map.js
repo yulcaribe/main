@@ -47,6 +47,10 @@
   const zoomHint = document.getElementById("zoom-hint");
   const searchInput = document.getElementById("nav-search");
   const searchResults = document.getElementById("search-results");
+  const searchToggle = document.getElementById("search-toggle");
+  const searchShell = document.getElementById("search-shell");
+  const chartsToggleAll = document.getElementById("charts-toggle-all");
+  const timelineDock = document.getElementById("timeline-dock");
   const modeButtons = [...document.querySelectorAll("[data-panel-target]")];
   const toolPanels = [...document.querySelectorAll(".tool-panel")];
   const panelCloseButtons = [...document.querySelectorAll("[data-panel-close]")];
@@ -135,6 +139,14 @@
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
 
   const initialMode = new URLSearchParams(location.search).get("mode") || "charts";
+  let activePanelTarget = initialMode === "flights"
+    ? "flights-panel"
+    : initialMode === "notam"
+      ? "notam-panel"
+      : initialMode === "wafs"
+        ? "wafs-panel"
+        : "chart-panel";
+
   if (initialMode === "flights") {
     layerInputs.forEach(input => { input.checked = false; });
     if (flightsEnabledInput) flightsEnabledInput.checked = true;
@@ -199,10 +211,16 @@
   }
 
   function notamEnabled() {
-    return selectedLayers().includes("notam");
+    return activePanelTarget === "notam-panel" && selectedLayers().includes("notam");
   }
 
   function visibilityFor(name) {
+    if (name === "notam") {
+      return activePanelTarget === "notam-panel" && selectedLayers().includes(name) ? "visible" : "none";
+    }
+    if (CHART_LAYER_NAMES.has(name)) {
+      return activePanelTarget === "chart-panel" && selectedLayers().includes(name) ? "visible" : "none";
+    }
     return selectedLayers().includes(name) ? "visible" : "none";
   }
 
@@ -698,17 +716,41 @@
 
   function updateCounts() {
     const counts = { ...chartCountsState, ...notamCountsState, ...flightCountsState };
-    let total = 0;
 
     for (const key of countKeys) {
       const count = Number(counts[key] || 0);
-      total += count;
       document.querySelectorAll(`[data-layer-count="${key}"]`).forEach(el => {
         el.textContent = new Intl.NumberFormat("tr-TR").format(count);
       });
     }
 
-    featureCount.textContent = new Intl.NumberFormat("tr-TR").format(total) + " obje";
+    let visibleCount = 0;
+    let suffix = " obje";
+
+    if (activePanelTarget === "flights-panel") {
+      visibleCount = Number(flightCountsState.flight || 0);
+      suffix = " aircraft";
+    } else if (activePanelTarget === "notam-panel") {
+      visibleCount = Number(notamCountsState.notam || 0);
+      suffix = " NOTAM";
+    } else if (activePanelTarget === "wafs-panel") {
+      visibleCount = activeWafsProducts().length;
+      suffix = " layer";
+    } else {
+      for (const name of CHART_LAYER_NAMES) {
+        if (selectedLayers().includes(name)) visibleCount += Number(chartCountsState[name] || 0);
+      }
+    }
+
+    featureCount.textContent = new Intl.NumberFormat("tr-TR").format(visibleCount) + suffix;
+
+    if (activePanelTarget === "flights-panel") {
+      statusText.textContent = flightsEnabled()
+        ? (adsbHaveSourceClock ? "LIVE" : "FLIGHTS · bağlanıyor")
+        : "FLIGHTS · OFF";
+    } else if (activePanelTarget === "wafs-panel") {
+      statusText.textContent = "WAFS · FL" + String(wafsFL?.value || "—");
+    }
 
     if (notamTimeStatus) {
       const n = Number(counts.notam || 0);
@@ -904,7 +946,7 @@
   }
 
   function activeWafsProducts() {
-    if (!wafsEnabled?.checked) return [];
+    if (activePanelTarget !== "wafs-panel" || !wafsEnabled?.checked) return [];
     return wafsProductInputs.filter(input => input.checked).map(input => input.dataset.wafsProduct);
   }
 
@@ -1255,7 +1297,7 @@
   }
 
   function flightsEnabled() {
-    return Boolean(flightsEnabledInput?.checked);
+    return activePanelTarget === "flights-panel" && Boolean(flightsEnabledInput?.checked);
   }
 
   function sourceType(code) {
@@ -1814,6 +1856,9 @@
       ingestAircraftSnapshot(parsed.aircraft, sourceNowMs);
       flightFeatures = parsed.aircraft.map(aircraftFeature).filter(Boolean);
       flightCountsState = { flight: flightFeatures.length };
+      statusText.textContent = "LIVE";
+      statusDot.classList.add("ok");
+      statusDot.classList.remove("bad");
       updateCounts();
 
       if (flightsUpdated) flightsUpdated.textContent = new Date().toLocaleTimeString("tr-TR");
@@ -1827,6 +1872,9 @@
     } catch (error) {
       if (error.name === "AbortError") return;
       console.error("[ADS-B TheAirTraffic]", error);
+      statusText.textContent = "ADS-B ERROR";
+      statusDot.classList.add("bad");
+      statusDot.classList.remove("ok");
       if (flightsStatus) flightsStatus.textContent = "ADS-B hata: " + error.message;
     } finally {
       if (flightsEnabled()) flightLoadTimer = setTimeout(loadFlights, ADSB_REFRESH_MS);
@@ -1997,10 +2045,35 @@
   map.on("moveend", () => { scheduleViewportLoad(); handleAdsbMoveEnd(); });
   map.on("zoomend", () => updateZoomHint(chartTruncated || notamTruncated));
 
+  function chartInputs() {
+    return layerInputs.filter(input => CHART_LAYER_NAMES.has(input.dataset.navLayer));
+  }
+
+  function syncChartsToggleAll() {
+    if (!chartsToggleAll) return;
+    const inputs = chartInputs();
+    const allOn = inputs.length > 0 && inputs.every(input => input.checked);
+    chartsToggleAll.textContent = allOn ? "HEPSİNİ KAPAT" : "HEPSİNİ AÇ";
+  }
+
+  chartsToggleAll?.addEventListener("click", () => {
+    const inputs = chartInputs();
+    const turnOn = !inputs.every(input => input.checked);
+    inputs.forEach(input => {
+      input.checked = turnOn;
+      setLayerVisibility(input.dataset.navLayer);
+    });
+    syncChartsToggleAll();
+    updateCounts();
+    if (activePanelTarget === "chart-panel") scheduleChartLoad(0, false);
+  });
+
   layerInputs.forEach(input => {
     input.addEventListener("change", () => {
       const layer = input.dataset.navLayer;
       setLayerVisibility(layer);
+      syncChartsToggleAll();
+      updateCounts();
 
       if (layer === "notam") {
         scheduleNotamLoad(0, false);
@@ -2009,6 +2082,7 @@
       }
     });
   });
+  syncChartsToggleAll();
 
   flightsEnabledInput?.addEventListener("change", async () => {
     setFlightVisibility();
@@ -2071,20 +2145,81 @@
     setSelectedTime(now, true, false);
   });
 
+  function updateModeVisibility() {
+    for (const name of CHART_LAYER_NAMES) setLayerVisibility(name);
+    setLayerVisibility("notam");
+    setFlightVisibility();
+
+    const showTimeline = activePanelTarget === "notam-panel" || activePanelTarget === "wafs-panel";
+    timelineDock?.classList.toggle("mode-hidden", !showTimeline);
+    document.body.classList.toggle("timeline-visible", showTimeline);
+
+    if (activePanelTarget !== "wafs-panel") clearWeatherOverlays();
+    else loadWeatherOverlays().catch(console.error);
+
+    if (activePanelTarget === "flights-panel" && flightsEnabled()) {
+      ensureAdsbFetchBox(true);
+      scheduleFlightLoad(0);
+    } else {
+      flightController?.abort();
+      clearTimeout(flightLoadTimer);
+    }
+
+    if (activePanelTarget === "chart-panel") scheduleChartLoad(0, false);
+    if (activePanelTarget === "notam-panel") scheduleNotamLoad(0, false);
+
+    updateCounts();
+  }
+
   function activatePanel(target, allowToggle = true) {
     const panel = document.getElementById(target);
     const button = modeButtons.find(b => b.dataset.panelTarget === target);
     const wasOpen = panel?.classList.contains("open");
+    const modeChanged = activePanelTarget !== target;
 
     toolPanels.forEach(p => p.classList.remove("open"));
-    modeButtons.forEach(b => b.classList.remove("active"));
+    modeButtons.forEach(b => b.classList.toggle("active", b === button));
 
-    if (allowToggle && wasOpen) return;
+    activePanelTarget = target;
 
-    if (panel) panel.classList.add("open");
-    if (button) button.classList.add("active");
+    if (target === "flights-panel" && modeChanged && flightsEnabledInput) {
+      flightsEnabledInput.checked = true;
+    }
+    if (target === "notam-panel") {
+      const notamInput = layerInputs.find(input => input.dataset.navLayer === "notam");
+      if (notamInput && modeChanged) notamInput.checked = true;
+    }
+    if (target === "wafs-panel" && modeChanged && wafsEnabled) {
+      wafsEnabled.checked = true;
+    }
+
+    const modeName = target === "flights-panel"
+      ? "flights"
+      : target === "notam-panel"
+        ? "notam"
+        : target === "wafs-panel"
+          ? "wafs"
+          : "charts";
+    const url = new URL(location.href);
+    url.searchParams.set("mode", modeName);
+    history.replaceState(null, "", url);
 
     setTimelineRange(PANEL_TIMELINE_RANGES[target] || 24, false);
+    statusDot.classList.remove("bad");
+    if (target === "flights-panel") {
+      statusText.textContent = adsbHaveSourceClock ? "LIVE" : "FLIGHTS · bağlanıyor";
+    } else if (target === "notam-panel") {
+      statusText.textContent = "NOTAM";
+    } else if (target === "wafs-panel") {
+      statusText.textContent = "WAFS · FL" + String(wafsFL?.value || "—");
+    } else {
+      statusText.textContent = "CHARTS";
+    }
+
+    updateModeVisibility();
+
+    if (allowToggle && wasOpen && !modeChanged) return;
+    if (panel) panel.classList.add("open");
   }
 
   modeButtons.forEach(button => {
@@ -2096,7 +2231,6 @@
   panelCloseButtons.forEach(button => {
     button.addEventListener("click", () => {
       button.closest(".tool-panel")?.classList.remove("open");
-      modeButtons.forEach(b => b.classList.remove("active"));
     });
   });
 
@@ -2151,17 +2285,43 @@
     });
   });
 
+  function setSearchOpen(open) {
+    searchShell?.classList.toggle("open", open);
+    searchToggle?.classList.toggle("active", open);
+    searchToggle?.setAttribute("aria-label", open ? "Aramayı kapat" : "Aramayı aç");
+    if (open) requestAnimationFrame(() => searchInput?.focus());
+    else {
+      searchResults.classList.remove("open");
+      searchInput?.blur();
+    }
+  }
+
+  searchToggle?.addEventListener("click", event => {
+    event.stopPropagation();
+    setSearchOpen(!searchShell?.classList.contains("open"));
+  });
+
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => search(searchInput.value), 240);
   });
 
   searchInput.addEventListener("keydown", event => {
-    if (event.key === "Escape") searchResults.classList.remove("open");
+    if (event.key === "Escape") {
+      searchResults.classList.remove("open");
+      setSearchOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") closeAircraftInfo();
   });
 
   document.addEventListener("click", event => {
-    if (!event.target.closest(".search")) searchResults.classList.remove("open");
+    if (!event.target.closest(".search") && !event.target.closest("#search-toggle")) {
+      searchResults.classList.remove("open");
+      if (!searchInput.value.trim()) setSearchOpen(false);
+    }
   });
 
   bootDetail.textContent = "Navdata katmanları hazırlanıyor…";
