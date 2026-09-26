@@ -369,21 +369,35 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
   color:#e3fbff;font-size:9px;font-weight:750;letter-spacing:.02em;
   text-shadow:0 1px 2px #06111a,0 0 3px #06111a
 }
-.adsb-stat-grid{
-  display:grid;grid-template-columns:1fr;gap:6px;margin:12px 0
-}
-.adsb-stat-grid>div{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:8px 9px;border:1px solid rgba(255,255,255,.07);border-radius:10px;
-  background:rgba(255,255,255,.025)
-}
-.adsb-stat-grid span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
-.adsb-stat-grid strong{font-size:11px;color:var(--text);text-align:right;word-break:break-word}
 @media(max-width:560px){
   .aircraft-info{width:min(340px,92vw)}
   .aircraft-info-head{padding-top:16px}
 }
 
+
+
+.flight-health{
+  display:flex;align-items:center;gap:7px;width:max-content;margin-top:10px;
+  color:#9eb4c0;font-size:9px;font-weight:800;letter-spacing:.04em
+}
+.flight-health[hidden]{display:none}
+.flight-health-dot{
+  width:8px;height:8px;flex:0 0 8px;border-radius:50%;
+  background:#e0ad3b;box-shadow:0 0 0 3px rgba(224,173,59,.1)
+}
+.flight-health.is-loading .flight-health-dot{
+  background:#e0ad3b;box-shadow:0 0 0 3px rgba(224,173,59,.1)
+}
+.flight-health.is-ok .flight-health-dot{
+  background:#46d98b;box-shadow:0 0 0 3px rgba(70,217,139,.1)
+}
+.flight-health.is-error .flight-health-dot{
+  background:#ff6678;box-shadow:0 0 0 3px rgba(255,102,120,.1)
+}
+.flight-health.is-ok .flight-health-label{color:#9edfb9}
+.flight-health.is-loading .flight-health-label{color:#d9bb72}
+.flight-health.is-error .flight-health-label{color:#ff9daa}
+.chart-master-row{margin-bottom:4px}
 
 /* v4 compact map UI */
 .topbar{
