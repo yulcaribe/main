@@ -1,5 +1,9 @@
 Options -Indexes
 
 RewriteEngine On
+
+# Internal Pilot Briefing PHP modules are server-side only.
+RewriteRule ^briefing/(engine\.php|internal/.*\.php)$ - [F,L]
+
 # Serve the enhanced Pilot Briefing shell without changing the public URL.
 RewriteRule ^briefing/?$ briefing/index-v2.php [L]
