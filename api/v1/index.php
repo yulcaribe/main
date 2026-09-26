@@ -17,7 +17,7 @@ ycApiV1Respond(200, [
         'metar' => '/main/api/v1/metar.php',
         'taf' => '/main/api/v1/taf.php',
         'wafs' => '/main/api/v1/wafs.php',
-        'flights' => '/main/api/v1/flights.php',
+        'adsb' => '/main/api/v1/adsb.php',
         'briefing' => '/main/api/v1/briefing.php',
         'modelwx' => '/main/api/v1/modelwx.php',
         'health' => '/main/api/v1/health.php',
