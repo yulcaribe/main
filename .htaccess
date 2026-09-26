@@ -5,5 +5,5 @@ RewriteEngine On
 RewriteRule ^briefing/?$ briefing/index-v2.php [L]
 
 # Keep the public Briefing API stable for web and Android while running the
-# estimated navdata auto-router first, then local FAA NMS NOTAM enrichment.
-RewriteRule ^api/v1/briefing\.php$ api/v1/briefing-auto.php [L,QSA]
+# hybrid estimated navdata auto-router, then schedule-aware local FAA NMS NOTAM enrichment.
+RewriteRule ^api/v1/briefing\.php$ api/v1/briefing-auto-v2.php [L,QSA]
