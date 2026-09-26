@@ -9,6 +9,7 @@
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="/main/map/map.css?v=7">
+  <link rel="stylesheet" href="/main/map/map-ui-v8.css?v=1">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -124,37 +125,62 @@
       <button type="button" data-panel-close aria-label="Paneli küçült">−</button>
     </div>
     <label class="master-row"><span>WAFS katmanları</span><input id="wafs-enabled" type="checkbox"></label>
-    <label class="field-row"><span>Flight level</span><input id="wafs-fl" type="number" min="50" max="600" step="10" value="360"></label>
+    <div class="wafs2-intro">Her ürün kendi flight level seviyesini kullanır. Açık katmanlar aynı anda üst üste gösterilir.</div>
 
-    <div class="wafs-product-list">
-      <div class="wafs-product-row">
-        <label><span><i class="wafs-swatch swatch-edr"></i>Turbulence / EDR</span><input type="checkbox" data-wafs-product="edr" checked></label>
-        <input type="range" min="10" max="85" value="38" data-wafs-opacity="edr" aria-label="EDR opacity">
-        <small data-wafs-meta="edr">—</small>
+    <div class="wafs2-product-list">
+      <div class="wafs2-product-row">
+        <div class="wafs2-product-head">
+          <label><span><i class="wafs-swatch swatch-edr"></i>Turbulence / EDR</span><input type="checkbox" data-wafs2-product="edr" checked></label>
+          <select class="wafs2-level" data-wafs2-level="edr" aria-label="Turbulence flight level">
+            <option value="140">FL140</option><option value="180">FL180</option><option value="240">FL240</option><option value="270">FL270</option><option value="300" selected>FL300</option><option value="340">FL340</option><option value="390">FL390</option><option value="450">FL450</option>
+          </select>
+        </div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="38" data-wafs2-opacity="edr" aria-label="EDR opacity"></div>
+        <small data-wafs2-meta="edr">FL300 seçili</small>
       </div>
-      <div class="wafs-product-row">
-        <label><span><i class="wafs-swatch swatch-icing"></i>Icing severity</span><input type="checkbox" data-wafs-product="icing"></label>
-        <input type="range" min="10" max="85" value="34" data-wafs-opacity="icing" aria-label="Icing opacity">
-        <small data-wafs-meta="icing">—</small>
+
+      <div class="wafs2-product-row">
+        <div class="wafs2-product-head">
+          <label><span><i class="wafs-swatch swatch-icing"></i>Icing severity</span><input type="checkbox" data-wafs2-product="icing" checked></label>
+          <select class="wafs2-level" data-wafs2-level="icing" aria-label="Icing flight level">
+            <option value="60">FL060</option><option value="100" selected>FL100</option><option value="140">FL140</option><option value="180">FL180</option><option value="240">FL240</option><option value="300">FL300</option>
+          </select>
+        </div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="34" data-wafs2-opacity="icing" aria-label="Icing opacity"></div>
+        <small data-wafs2-meta="icing">FL100 seçili</small>
       </div>
-      <div class="wafs-product-row">
-        <label><span><i class="wafs-swatch swatch-cbextent"></i>CB horizontal extent</span><input type="checkbox" data-wafs-product="cbextent" checked></label>
-        <input type="range" min="10" max="85" value="56" data-wafs-opacity="cbextent" aria-label="CB extent opacity">
-        <small data-wafs-meta="cbextent">—</small>
+
+      <div class="wafs2-product-row">
+        <div class="wafs2-product-head">
+          <label><span><i class="wafs-swatch swatch-wind"></i>Wind speed</span><input type="checkbox" data-wafs2-product="wind" checked></label>
+          <select class="wafs2-level" data-wafs2-level="wind" aria-label="Wind flight level">
+            <option value="100">FL100</option><option value="140">FL140</option><option value="180">FL180</option><option value="240">FL240</option><option value="270">FL270</option><option value="300" selected>FL300</option><option value="340">FL340</option><option value="390">FL390</option><option value="450">FL450</option>
+          </select>
+        </div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="32" data-wafs2-opacity="wind" aria-label="Wind opacity"></div>
+        <small data-wafs2-meta="wind">FL300 seçili</small>
       </div>
-      <div class="wafs-product-row">
-        <label><span><i class="wafs-swatch swatch-cbtop"></i>CB tops</span><input type="checkbox" data-wafs-product="cbtop" checked></label>
-        <input type="range" min="10" max="85" value="60" data-wafs-opacity="cbtop" aria-label="CB tops opacity">
-        <small data-wafs-meta="cbtop">—</small>
+
+      <div class="wafs2-product-row">
+        <div class="wafs2-product-head">
+          <label><span><i class="wafs-swatch swatch-cbextent"></i>CB horizontal extent</span><input type="checkbox" data-wafs2-product="cbextent"></label>
+        </div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="56" data-wafs2-opacity="cbextent" aria-label="CB extent opacity"></div>
+        <small data-wafs2-meta="cbextent">Tüm seviye ürünü</small>
       </div>
-      <div class="wafs-product-row">
-        <label><span><i class="wafs-swatch swatch-wind"></i>Wind speed</span><input type="checkbox" data-wafs-product="wind"></label>
-        <input type="range" min="10" max="85" value="32" data-wafs-opacity="wind" aria-label="Wind opacity">
-        <small data-wafs-meta="wind">—</small>
+
+      <div class="wafs2-product-row">
+        <div class="wafs2-product-head">
+          <label><span><i class="wafs-swatch swatch-cbtop"></i>CB tops</span><input type="checkbox" data-wafs2-product="cbtop"></label>
+        </div>
+        <div class="wafs2-product-controls"><span>Opacity</span><input type="range" min="10" max="85" value="60" data-wafs2-opacity="cbtop" aria-label="CB tops opacity"></div>
+        <small data-wafs2-meta="cbtop">Tüm seviye ürünü</small>
       </div>
     </div>
-    <div class="card-note" id="wafs-status">WAFS kapalı. Public AWC forecast frame'leri seçilen UTC'ye göre yüklenir.</div>
+    <div class="card-note" id="wafs-status">WAFS kapalı. Ürün seviyeleri bağımsızdır.</div>
   </aside>
+
+  <div class="wafs-active-summary" id="wafs-active-summary" aria-live="polite" hidden></div>
 
   <section class="timeline-dock mode-hidden" id="timeline-dock" aria-label="Zaman çizgisi">
     <div class="timeline-head">
@@ -214,6 +240,18 @@
           return;
         }
 
+        if (!window.__YC_MAP_CAPTURE_INSTALLED__ && window.maplibregl.Map) {
+          const NativeMap = window.maplibregl.Map;
+          window.maplibregl.Map = new Proxy(NativeMap, {
+            construct(Target, args) {
+              const instance = Reflect.construct(Target, args, Target);
+              window.__YC_MAP__ = instance;
+              return instance;
+            }
+          });
+          window.__YC_MAP_CAPTURE_INSTALLED__ = true;
+        }
+
         try {
           detail.textContent = "ADS-B decoder hazırlanıyor…";
           await loadScript("https://cdn.jsdelivr.net/gh/wiedehopf/tar1090@master/html/libs/zstddec-tar1090-0.0.5.js");
@@ -223,7 +261,8 @@
 
         try {
           detail.textContent = "Harita istemcisi yükleniyor…";
-          await loadScript("/main/map/map.js?v=7");
+          await loadScript("/main/map/map.js?v=8");
+          await loadScript("/main/map/map-ui-v8.js?v=1");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/map/map.js yüklenemedi.";
