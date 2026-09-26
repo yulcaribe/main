@@ -117,6 +117,7 @@
   let notamTruncated = false;
   let flightLoadTimer = null;
   let flightController = null;
+  let mapReady = false;
   let flightFeatures = [];
   let flightCountsState = { flight: 0 };
   let adsbDecoder = null;
@@ -1836,9 +1837,9 @@
     clearTimeout(flightLoadTimer);
     if (!flightsEnabled()) return;
 
-    if (!map.loaded()) {
+    if (!mapReady) {
       setFlightHealth("loading");
-      flightLoadTimer = setTimeout(loadFlights, 400);
+      flightLoadTimer = setTimeout(loadFlights, 250);
       return;
     }
 
@@ -1967,44 +1968,90 @@
     scheduleNotamLoad(delay, force);
   }
 
-  async function search(q) {
-    const needle = q.trim().toLowerCase();
-    if (needle.length >= 2) {
-      const hit = flightFeatures.find(feature => {
+  function normalizeAircraftSearch(value) {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+
+  function localAircraftSearch(q) {
+    const needle = normalizeAircraftSearch(q);
+    if (needle.length < 2) return [];
+
+    return flightFeatures
+      .map(feature => {
         const p = feature.properties || {};
-        return [p.flight, p.registration, p.hex, p.aircraft_type]
-          .some(value => String(value || "").toLowerCase().includes(needle));
-      });
-      if (hit) {
-        const [lon, lat] = hit.geometry.coordinates;
-        map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 9), essential: true });
-        selectAircraft(String(hit.properties?.hex || ""));
-        searchResults.classList.remove("open");
-        return;
-      }
-    }
+        const fields = [p.registration, p.flight, p.hex, p.aircraft_type]
+          .map(value => ({ raw: String(value || ""), normalized: normalizeAircraftSearch(value) }))
+          .filter(item => item.normalized);
 
-    if (searchController) searchController.abort();
-    searchController = new AbortController();
+        let score = 99;
+        for (const field of fields) {
+          if (field.normalized === needle) score = Math.min(score, 0);
+          else if (field.normalized.startsWith(needle)) score = Math.min(score, 1);
+          else if (field.normalized.includes(needle)) score = Math.min(score, 2);
+        }
+        if (score === 99) return null;
 
-    if (q.trim().length < 2) {
+        const [lon, lat] = feature.geometry?.coordinates || [];
+        const registration = String(p.registration || "").trim();
+        const flight = String(p.flight || "").trim();
+        const type = String(p.aircraft_type || "").trim();
+        const secondary = [flight && flight !== registration ? flight : "", type]
+          .filter(Boolean)
+          .join(" · ");
+
+        return {
+          kind: "aircraft",
+          ident: registration || flight || String(p.hex || "AIRCRAFT"),
+          name: secondary || String(p.hex || ""),
+          registration,
+          flight,
+          hex: String(p.hex || ""),
+          lon: Number(lon),
+          lat: Number(lat),
+          _score: score
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) =>
+        a._score - b._score ||
+        String(a.ident).localeCompare(String(b.ident), "tr")
+      )
+      .slice(0, 15);
+  }
+
+  async function search(q) {
+    const query = q.trim();
+
+    if (query.length < 2) {
+      if (searchController) searchController.abort();
       searchResults.classList.remove("open");
       searchResults.innerHTML = "";
       return;
     }
 
+    if (searchController) searchController.abort();
+    searchController = new AbortController();
+    const controller = searchController;
+    const aircraftResults = localAircraftSearch(query);
+
+    // Aircraft matches are shown immediately. Typing never selects, zooms or opens
+    // the aircraft drawer; that only happens after the user chooses a row.
+    renderSearch(aircraftResults);
+
     try {
-      const response = await fetch(`${NAVDATA_API}?action=search&q=${encodeURIComponent(q.trim())}`, {
+      const response = await fetch(`${NAVDATA_API}?action=search&q=${encodeURIComponent(query)}`, {
         cache: "no-store",
-        signal: searchController.signal
+        signal: controller.signal
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || "Arama hatası");
+      if (controller !== searchController) return;
 
-      renderSearch(payload.results || []);
+      const navResults = Array.isArray(payload.results) ? payload.results : [];
+      renderSearch([...aircraftResults, ...navResults]);
     } catch (error) {
       if (error.name === "AbortError") return;
-      renderSearch([]);
+      renderSearch(aircraftResults);
     }
   }
 
@@ -2021,7 +2068,7 @@
           <strong>${esc(item.ident || item.name || "—")}</strong>
           <small>${esc(item.name || "")}</small>
         </span>
-        <span class="badge">${esc(item.kind)}</span>
+        <span class="badge">${esc(item.kind === "aircraft" ? "AIRCRAFT" : item.kind)}</span>
       </button>
     `).join("");
 
@@ -2030,7 +2077,20 @@
     searchResults.querySelectorAll("[data-result-index]").forEach(button => {
       button.addEventListener("click", () => {
         const item = results[Number(button.dataset.resultIndex)];
+        if (!item) return;
         searchResults.classList.remove("open");
+
+        if (item.kind === "aircraft" && item.hex) {
+          if (Number.isFinite(item.lon) && Number.isFinite(item.lat)) {
+            map.flyTo({
+              center: [item.lon, item.lat],
+              zoom: Math.max(map.getZoom(), 9),
+              essential: true
+            });
+          }
+          selectAircraft(String(item.hex));
+          return;
+        }
 
         if (Number.isFinite(item.lon) && Number.isFinite(item.lat)) {
           map.flyTo({
@@ -2040,7 +2100,7 @@
           });
         } else {
           searchInput.value = item.ident || "";
-          statusText.textContent = `${item.kind.toUpperCase()} bulundu · haritada görünmesi için ilgili bölgeye git`;
+          statusText.textContent = `${String(item.kind || "ITEM").toUpperCase()} bulundu · haritada görünmesi için ilgili bölgeye git`;
         }
       });
     });
@@ -2049,6 +2109,7 @@
   initializeTime();
 
   map.on("load", async () => {
+    mapReady = true;
     addNavLayers();
     setFlightVisibility();
     boot.classList.add("hidden");
