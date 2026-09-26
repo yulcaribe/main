@@ -1,0 +1,149 @@
+(() => {
+  "use strict";
+
+  window.YCNotam = {
+    create(ctx) {
+      const { map, api, esc, popup, setStatus, bbox, getTimeIso } = ctx;
+      const SOURCE = "yc-notam";
+      const color = [
+        "match",["get","display_group"],
+        "AERIAL_SPORT","#00c5b9",
+        "RESTRICTED_AIRSPACE","#ff5f6d",
+        "AERIAL_SURVEY","#ff9b4a",
+        "TRAINING_MILITARY","#d9e1e5",
+        "OTHER","#4f8cff",
+        "#ffd35f"
+      ];
+      const approx = ["qline-coordinate","airport-location"];
+      let active = false;
+      let controller = null;
+      const toggle = document.querySelector('[data-nav-layer="notam"]');
+      const enabled = () => active && Boolean(toggle?.checked);
+
+      function visibility() { return enabled() ? "visible" : "none"; }
+      function syncVisibility() {
+        ["nav-notam-fill","nav-notam-line","nav-notam-approx-line","nav-notam-circle","nav-notam-label"].forEach(id=>{
+          if(map.getLayer(id)) map.setLayoutProperty(id,"visibility",visibility());
+        });
+      }
+
+      function addLayers() {
+        if (map.getSource(SOURCE)) return;
+        map.addSource(SOURCE,{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+        map.addLayer({
+          id:"nav-notam-fill",type:"fill",source:SOURCE,
+          filter:["all",["==",["get","layer"],"notam"],["==",["geometry-type"],"Polygon"]],
+          paint:{
+            "fill-color":color,
+            "fill-opacity":["interpolate",["linear"],["zoom"],5,.05,8,.10,11,.17]
+          },layout:{visibility:visibility()}
+        });
+        map.addLayer({
+          id:"nav-notam-line",type:"line",source:SOURCE,
+          filter:["all",["==",["get","layer"],"notam"],["!",["in",["get","geometry_source"],["literal",approx]]]],
+          paint:{"line-color":color,"line-width":["interpolate",["linear"],["zoom"],5,1.2,8,1.8,11,2.7],"line-opacity":["interpolate",["linear"],["zoom"],5,.72,9,.96]},
+          layout:{visibility:visibility()}
+        });
+        map.addLayer({
+          id:"nav-notam-approx-line",type:"line",source:SOURCE,
+          filter:["all",["==",["get","layer"],"notam"],["in",["get","geometry_source"],["literal",approx]]],
+          paint:{"line-color":color,"line-width":["interpolate",["linear"],["zoom"],5,1,8,1.5,11,2.2],"line-opacity":.76,"line-dasharray":[2,1.8]},
+          layout:{visibility:visibility()}
+        });
+        map.addLayer({
+          id:"nav-notam-circle",type:"circle",source:SOURCE,
+          filter:["all",["==",["get","layer"],"notam"],["==",["geometry-type"],"Point"]],
+          paint:{"circle-radius":["interpolate",["linear"],["zoom"],5,4,8,5.5,11,7.5],"circle-color":color,"circle-opacity":.96,"circle-stroke-color":"#06111a","circle-stroke-width":1.4},
+          layout:{visibility:visibility()}
+        });
+        map.addLayer({
+          id:"nav-notam-label",type:"symbol",source:SOURCE,filter:["==",["get","layer"],"notam"],minzoom:8,
+          layout:{
+            visibility:visibility(),"text-field":["step",["zoom"],["coalesce",["get","semantic_class"],["get","category"],"NOTAM"],10,["coalesce",["get","ident"],"NOTAM"]],
+            "text-size":["interpolate",["linear"],["zoom"],8,8.5,10,10,13,11.5],"text-font":["Noto Sans Regular"],"text-offset":[.75,.75],"text-optional":true
+          },
+          paint:{"text-color":color,"text-halo-color":"#06111a","text-halo-width":1.6}
+        });
+
+        const ids = ["nav-notam-fill","nav-notam-line","nav-notam-approx-line","nav-notam-circle","nav-notam-label"];
+        const tolerance = matchMedia("(pointer: coarse)").matches ? 18 : 10;
+        function pick(point) {
+          if(!enabled()) return null;
+          const area=[[point.x-tolerance,point.y-tolerance],[point.x+tolerance,point.y+tolerance]];
+          return map.queryRenderedFeatures(area,{layers:ids.filter(id=>map.getLayer(id))})[0] || null;
+        }
+        map.on("mousemove",e=>{if(enabled())map.getCanvas().style.cursor=pick(e.point)?"pointer":"";});
+        map.on("click",e=>{
+          const feature=pick(e.point); if(!feature)return;
+          showCard(feature,e.lngLat);
+        });
+      }
+
+      function infoRow(label,value){
+        if(value===null||value===undefined||value==="")return "";
+        return `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
+      }
+
+      async function showCard(feature,lngLat){
+        const p=feature.properties||{};
+        let rows="";
+        rows+=infoRow("Location",p.icao_location||p.location);
+        rows+=infoRow("Class",p.classification);
+        rows+=infoRow("Valid from",p.effective_start);
+        rows+=infoRow("Valid to",p.effective_end_raw||p.effective_end);
+        rows+=infoRow("Schedule",p.schedule);
+        rows+=infoRow("Schedule state",p.schedule_state ? String(p.schedule_state).toUpperCase() : null);
+        rows+=infoRow("Lower",p.lower_limit);
+        rows+=infoRow("Upper",p.upper_limit);
+        rows+=infoRow("Type",p.semantic_class||p.category);
+        rows+=infoRow("Map source",p.geometry_accuracy||p.geometry_source);
+        const detailId=`notam-detail-${String(p.nms_id||"").replace(/[^a-z0-9_-]/gi,"")}`;
+        const html=`${rows}<div class="notam-text" id="${detailId}">NOTAM metni yükleniyor…</div>`;
+        const pop=popup(lngLat,p.ident||"NOTAM","FAA NMS",html,{maxWidth:"420px"});
+        if(!p.nms_id)return;
+        try{
+          const q=new URLSearchParams({action:"detail",id:String(p.nms_id),at:getTimeIso()});
+          const r=await fetch(`${api.notam}?${q}`,{cache:"no-store"});
+          const d=await r.json().catch(()=>null);
+          const target=pop?.getElement()?.querySelector(`#${CSS.escape(detailId)}`);
+          if(!target)return;
+          if(!r.ok||!d?.ok||!d?.notam){target.textContent="NOTAM metni yüklenemedi.";return;}
+          const n=d.notam;
+          target.textContent=n.text||"NOTAM metni bulunamadı.";
+        }catch{
+          const target=pop?.getElement()?.querySelector(`#${CSS.escape(detailId)}`);
+          if(target)target.textContent="NOTAM metni yüklenemedi.";
+        }
+      }
+
+      async function load(){
+        if(!enabled()){
+          map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});
+          return;
+        }
+        if(map.getZoom()<5)return;
+        controller?.abort();controller=new AbortController();
+        const b=bbox(.38);
+        const q=new URLSearchParams({action:"map",z:String(Math.floor(map.getZoom())),at:getTimeIso(),...b});
+        try{
+          const r=await fetch(`${api.notam}?${q}`,{cache:"default",signal:controller.signal});
+          const d=await r.json().catch(()=>null);
+          if(!r.ok||!d?.ok||!d?.data)throw new Error(d?.error||`HTTP ${r.status}`);
+          map.getSource(SOURCE)?.setData(d.data);
+          const skipped=Number(d.schedule?.outsideSchedule||0);
+          setStatus(skipped>0?`NOTAM · ${skipped} schedule dışı gizlendi`:"NOTAM");
+          const note=document.getElementById("notam-time-status");
+          if(note)note.textContent=`${getTimeIso().slice(0,16).replace("T"," ")}Z · geçerli ve schedule aktif NOTAM geometrileri`;
+        }catch(e){if(e?.name!=="AbortError")setStatus("NOTAM ERROR",true);}
+      }
+
+      toggle?.addEventListener("change",()=>{syncVisibility();load();});
+      return {
+        init(){addLayers();},
+        setActive(value){active=Boolean(value);if(active&&toggle)toggle.checked=true;syncVisibility();if(active)load();else map.getCanvas().style.cursor="";},
+        refresh(){load();},
+        searchLocal(){return[];}
+      };
+    }
+  };
+})();
