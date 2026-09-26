@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-/** Route/time/level-aware local FAA NMS NOTAM enrichment v2. */
+/** Route/time/level-aware local FAA NMS NOTAM enrichment. */
 require_once dirname(__DIR__, 2) . '/notam/core.php';
 
 function ycBn2Utc(?string $raw,?DateTimeImmutable $fallback=null): DateTimeImmutable {
@@ -116,6 +116,16 @@ function ycBn2Enrich(array $payload,array $query): array{
 function ycBn2Failure(array $payload): array{$payload['notamImpact']=['available'=>false,'source'=>'FAA NMS local MariaDB','checkedAt'=>gmdate('c'),'error'=>'NOTAM relevance check unavailable.'];if(!isset($payload['sourceStatus'])||!is_array($payload['sourceStatus']))$payload['sourceStatus']=[];$payload['sourceStatus']['notam']=['ok'=>false,'error'=>'NOTAM relevance check unavailable.'];return$payload;}
 
 ob_start();
-register_shutdown_function(static function():void{$body='';if(ob_get_level()>0){$body=(string)ob_get_contents();@ob_end_clean();}if($body==='')return;$status=http_response_code();$payload=json_decode($body,true);if($status<200||$status>=300||!is_array($payload)||!($payload['ok']??false)){echo$body;return;}try{$payload=ycBn2Enrich($payload,$_GET);}catch(Throwable $e){error_log('[briefing-notam-v2] '.$e->getMessage());$payload=ycBn2Failure($payload);}header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store, max-age=0');echo json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);});
-
-require __DIR__ . '/briefing.php';
+register_shutdown_function(static function():void{
+    $body='';
+    if(ob_get_level()>0){$body=(string)ob_get_contents();@ob_end_clean();}
+    if($body==='')return;
+    $status=http_response_code();
+    $payload=json_decode($body,true);
+    if($status<200||$status>=300||!is_array($payload)||!($payload['ok']??false)){echo$body;return;}
+    try{$payload=ycBn2Enrich($payload,$_GET);}
+    catch(Throwable $e){error_log('[briefing-notam] '.$e->getMessage());$payload=ycBn2Failure($payload);}
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    echo json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+});
