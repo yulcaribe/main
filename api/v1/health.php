@@ -114,7 +114,7 @@ function healthProbe(bool $force): ?array {
         'taf'=>healthJsonProbe('/main/api/v1/taf.php?icao=LTAI'),
         'wafs'=>healthJsonProbe('/main/api/v1/wafs.php?action=status&fl=300'),
         'modelwx'=>healthJsonProbe('/main/api/v1/modelwx.php?action=status&fl=360&left=25&right=45&bottom=30&top=45'),
-        'flights'=>healthJsonProbe('/main/api/v1/flights.php?lat=36.90&lon=30.80&radius=10'),
+        'adsb'=>healthJsonProbe('/main/api/v1/adsb.php?action=status&box=36.500000,37.300000,30.000000,31.200000', 14),
     ];
     $wafsFeed = healthJsonProbe('/main/api/v1/wafs.php?action=health&fl=300', 14);
 
@@ -521,7 +521,7 @@ try {
             'index',
             'navdata',
             'notam',
-            'flights',
+            'adsb',
             'weather',
             'metar',
             'taf',
