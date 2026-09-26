@@ -531,3 +531,37 @@ body.timeline-visible .zoom-hint{bottom:122px}
   }
   .search-results{top:42px}
 }
+
+
+/* v6 search bar stays centered and clears the aircraft drawer */
+.topbar{
+  z-index:1300;
+  left:50%;right:auto;transform:translateX(-50%);
+  width:min(560px,calc(100vw - 32px));
+}
+@media(min-width:561px){
+  body:has(.aircraft-info.open) .topbar{
+    left:calc(340px + (100vw - 340px)/2);
+    width:min(560px,calc(100vw - 372px));
+  }
+}
+@media(max-width:900px) and (min-width:561px){
+  .topbar{
+    top:8px;
+    left:50%;right:auto;transform:translateX(-50%);
+    width:min(520px,calc(100vw - 24px));
+  }
+  body:has(.aircraft-info.open) .topbar{
+    left:calc(340px + (100vw - 340px)/2);
+    width:min(520px,calc(100vw - 364px));
+  }
+}
+@media(max-width:560px){
+  .topbar{
+    top:8px;left:50%;right:auto;transform:translateX(-50%);
+    width:calc(100vw - 16px);z-index:1300
+  }
+  body:has(.aircraft-info.open) .topbar{
+    left:50%;width:calc(100vw - 16px)
+  }
+}
