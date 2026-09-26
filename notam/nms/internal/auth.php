@@ -1,8 +1,25 @@
 <?php
 declare(strict_types=1);
 
+function nmsHealthSessionDir(): string {
+    $homeRoot = dirname(__DIR__, 5);
+    $dir = $homeRoot . '/.yulcaribe_sessions/health';
+
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        return '';
+    }
+
+    @chmod($dir, 0700);
+    return is_writable($dir) ? $dir : '';
+}
+
 function nmsHealthSessionStart(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+
+    $sessionDir = nmsHealthSessionDir();
+    if ($sessionDir !== '') {
+        session_save_path($sessionDir);
+    }
 
     session_name('yulcaribe_health');
     session_set_cookie_params([
@@ -12,7 +29,10 @@ function nmsHealthSessionStart(): void {
         'httponly' => true,
         'samesite' => 'Strict',
     ]);
-    session_start();
+
+    if (!@session_start() || session_status() !== PHP_SESSION_ACTIVE) {
+        throw new RuntimeException('Health session başlatılamadı. save_path=' . session_save_path());
+    }
 }
 
 function nmsAdminKey(): string {
@@ -74,10 +94,14 @@ function nmsHealthLogin(string $provided): bool {
         return false;
     }
 
-    session_regenerate_id(true);
+    if (!session_regenerate_id(true)) {
+        return false;
+    }
+
     $_SESSION['nms_health_authenticated'] = true;
     $_SESSION['nms_health_login_at'] = time();
-    return true;
+
+    return session_write_close();
 }
 
 function nmsHealthLogout(): void {
