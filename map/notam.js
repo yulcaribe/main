@@ -33,10 +33,8 @@
         map.addLayer({
           id:"nav-notam-fill",type:"fill",source:SOURCE,
           filter:["all",["==",["get","layer"],"notam"],["==",["geometry-type"],"Polygon"]],
-          paint:{
-            "fill-color":color,
-            "fill-opacity":["interpolate",["linear"],["zoom"],5,.05,8,.10,11,.17]
-          },layout:{visibility:visibility()}
+          paint:{"fill-color":color,"fill-opacity":["interpolate",["linear"],["zoom"],5,.05,8,.10,11,.17]},
+          layout:{visibility:visibility()}
         });
         map.addLayer({
           id:"nav-notam-line",type:"line",source:SOURCE,
@@ -58,10 +56,7 @@
         });
         map.addLayer({
           id:"nav-notam-label",type:"symbol",source:SOURCE,filter:["==",["get","layer"],"notam"],minzoom:8,
-          layout:{
-            visibility:visibility(),"text-field":["step",["zoom"],["coalesce",["get","semantic_class"],["get","category"],"NOTAM"],10,["coalesce",["get","ident"],"NOTAM"]],
-            "text-size":["interpolate",["linear"],["zoom"],8,8.5,10,10,13,11.5],"text-font":["Noto Sans Regular"],"text-offset":[.75,.75],"text-optional":true
-          },
+          layout:{visibility:visibility(),"text-field":["step",["zoom"],["coalesce",["get","semantic_class"],["get","category"],"NOTAM"],10,["coalesce",["get","ident"],"NOTAM"]],"text-size":["interpolate",["linear"],["zoom"],8,8.5,10,10,13,11.5],"text-font":["Noto Sans Regular"],"text-offset":[.75,.75],"text-optional":true},
           paint:{"text-color":color,"text-halo-color":"#06111a","text-halo-width":1.6}
         });
 
@@ -73,10 +68,7 @@
           return map.queryRenderedFeatures(area,{layers:ids.filter(id=>map.getLayer(id))})[0] || null;
         }
         map.on("mousemove",e=>{if(enabled())map.getCanvas().style.cursor=pick(e.point)?"pointer":"";});
-        map.on("click",e=>{
-          const feature=pick(e.point); if(!feature)return;
-          showCard(feature,e.lngLat);
-        });
+        map.on("click",e=>{const feature=pick(e.point);if(feature)showCard(feature,e.lngLat);});
       }
 
       function infoRow(label,value){
@@ -97,30 +89,25 @@
         rows+=infoRow("Upper",p.upper_limit);
         rows+=infoRow("Type",p.semantic_class||p.category);
         rows+=infoRow("Map source",p.geometry_accuracy||p.geometry_source);
-        const detailId=`notam-detail-${String(p.nms_id||"").replace(/[^a-z0-9_-]/gi,"")}`;
-        const html=`${rows}<div class="notam-text" id="${detailId}">NOTAM metni yükleniyor…</div>`;
-        const pop=popup(lngLat,p.ident||"NOTAM","FAA NMS",html,{maxWidth:"420px"});
+        const html=`<div class="popup-grid">${rows}</div><div class="notam-text" data-notam-detail>NOTAM metni yükleniyor…</div>`;
+        const pop=popup(lngLat,p.ident||"NOTAM","FAA NMS",html,{maxWidth:"420px",raw:true});
         if(!p.nms_id)return;
         try{
           const q=new URLSearchParams({action:"detail",id:String(p.nms_id),at:getTimeIso()});
           const r=await fetch(`${api.notam}?${q}`,{cache:"no-store"});
           const d=await r.json().catch(()=>null);
-          const target=pop?.getElement()?.querySelector(`#${CSS.escape(detailId)}`);
+          const target=pop?.getElement()?.querySelector("[data-notam-detail]");
           if(!target)return;
           if(!r.ok||!d?.ok||!d?.notam){target.textContent="NOTAM metni yüklenemedi.";return;}
-          const n=d.notam;
-          target.textContent=n.text||"NOTAM metni bulunamadı.";
+          target.textContent=d.notam.text||"NOTAM metni bulunamadı.";
         }catch{
-          const target=pop?.getElement()?.querySelector(`#${CSS.escape(detailId)}`);
+          const target=pop?.getElement()?.querySelector("[data-notam-detail]");
           if(target)target.textContent="NOTAM metni yüklenemedi.";
         }
       }
 
       async function load(){
-        if(!enabled()){
-          map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});
-          return;
-        }
+        if(!enabled()){map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});return;}
         if(map.getZoom()<5)return;
         controller?.abort();controller=new AbortController();
         const b=bbox(.38);
