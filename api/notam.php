@@ -59,16 +59,34 @@ function ident(array $row): string {
     return $value;
 }
 
+function identKey(array $row): ?string {
+    $series = strtoupper(trim((string)($row['series'] ?? '')));
+    $number = strtoupper(trim((string)($row['number'] ?? '')));
+    $year = trim((string)($row['year'] ?? ''));
+    if ($series === '' || !preg_match('/([0-9]{4})/', $number, $m)) return null;
+    $serial = $m[1];
+    if (preg_match('/\/([0-9]{2})\b/', $number, $ym)) $year2 = $ym[1];
+    elseif ($year !== '' && preg_match('/([0-9]{2})$/', $year, $ym)) $year2 = $ym[1];
+    else return null;
+    return substr($series, 0, 1) . $serial . '/' . $year2;
+}
+
 function columns(bool $text = true, bool $geometry = false): string {
     $cols = [
         'n.nms_id','n.series','n.number','n.year','n.notam_type','n.classification','n.affected_fir',
         'n.location','n.icao_location','n.selection_code','n.traffic','n.purpose','n.scope',
-        'n.minimum_fl','n.maximum_fl','n.effective_start','n.effective_end','n.effective_end_raw',
+        'n.minimum_fl','n.maximum_fl','n.effective_start','n.effective_end','n.effective_end_raw','n.estimated',
         'n.schedule','n.lower_limit','n.upper_limit','n.coordinates_raw','n.radius_nm','n.status','n.last_updated'
     ];
     if ($text) $cols[] = 'n.notam_text';
     if ($geometry) $cols[] = 'ST_AsGeoJSON(n.geometry,6) AS geometry';
     return implode(',', $cols);
+}
+
+function estimatedEnd(array $row): bool {
+    $raw = strtoupper(trim((string)($row['estimated'] ?? '')));
+    if ($raw !== '' && !in_array($raw, ['0','FALSE','NO','N','NULL'], true)) return true;
+    return str_contains(strtoupper((string)($row['effective_end_raw'] ?? '')), 'EST');
 }
 
 function item(array $row, bool $text = true): array {
@@ -89,6 +107,7 @@ function item(array $row, bool $text = true): array {
         'effectiveStart'=>$row['effective_start'] ?? null,
         'effectiveEnd'=>$row['effective_end'] ?? null,
         'effectiveEndRaw'=>$row['effective_end_raw'] ?? null,
+        'estimatedEnd'=>estimatedEnd($row),
         'schedule'=>$row['schedule'] ?? null,
         'lowerLimit'=>$row['lower_limit'] ?? null,
         'upperLimit'=>$row['upper_limit'] ?? null,
@@ -101,14 +120,253 @@ function item(array $row, bool $text = true): array {
     return $result;
 }
 
-function temporalState(array $row, DateTimeImmutable $at): string {
+function temporalState(array $row, DateTimeImmutable $at, array $replacementIndex = []): string {
+    $id = (string)($row['nms_id'] ?? '');
+    if ($id !== '' && isset($replacementIndex[$id])) return 'replaced';
     if (($row['status'] ?? '') === 'cancelled') return 'cancelled';
     $ts = $at->getTimestamp();
-    $start = $row['effective_start'] ? strtotime((string)$row['effective_start'] . ' UTC') : false;
-    $end = $row['effective_end'] ? strtotime((string)$row['effective_end'] . ' UTC') : false;
+    $start = !empty($row['effective_start']) ? strtotime((string)$row['effective_start'] . ' UTC') : false;
+    $end = !empty($row['effective_end']) ? strtotime((string)$row['effective_end'] . ' UTC') : false;
     if ($start !== false && $start > $ts) return 'future';
-    if (strtoupper((string)($row['effective_end_raw'] ?? '')) !== 'PERM' && $end !== false && $end < $ts) return 'expired';
+    if (strtoupper(trim((string)($row['effective_end_raw'] ?? ''))) !== 'PERM' && $end !== false && $end < $ts) return 'expired';
     return 'valid';
+}
+
+function flattenScheduleValue(mixed $value, array &$parts): void {
+    if ($value === null || $value === '') return;
+    if (is_scalar($value)) {
+        $text = trim((string)$value);
+        if ($text !== '') $parts[] = $text;
+        return;
+    }
+    if (is_array($value)) foreach ($value as $child) flattenScheduleValue($child, $parts);
+}
+
+function scheduleText(mixed $raw): string {
+    $text = trim((string)$raw);
+    if ($text === '') return '';
+    if (($text[0] ?? '') === '[' || ($text[0] ?? '') === '{') {
+        $decoded = json_decode($text, true);
+        if (is_array($decoded)) {
+            $parts = [];
+            flattenScheduleValue($decoded, $parts);
+            if ($parts) return implode(' ', $parts);
+        }
+    }
+    return $text;
+}
+
+function dayNumber(string $day): ?int {
+    return match (strtoupper($day)) {
+        'SUN'=>0,'MON'=>1,'TUE'=>2,'WED'=>3,'THU'=>4,'FRI'=>5,'SAT'=>6,
+        default=>null,
+    };
+}
+
+function expandDayToken(string $token): ?array {
+    $token = strtoupper(trim($token, " ,"));
+    if (preg_match('/^(SUN|MON|TUE|WED|THU|FRI|SAT)$/', $token, $m)) return [dayNumber($m[1])];
+    if (preg_match('/^(SUN|MON|TUE|WED|THU|FRI|SAT)-(SUN|MON|TUE|WED|THU|FRI|SAT)$/', $token, $m)) {
+        $start = dayNumber($m[1]); $end = dayNumber($m[2]);
+        if ($start === null || $end === null) return null;
+        $out = [$start];
+        while (end($out) !== $end && count($out) < 7) $out[] = (end($out) + 1) % 7;
+        return $out;
+    }
+    return null;
+}
+
+function parseClock(string $raw): ?int {
+    if (!preg_match('/^(\d{2})(\d{2})$/', $raw, $m)) return null;
+    $h=(int)$m[1]; $min=(int)$m[2];
+    if ($h > 23 || $min > 59) return null;
+    return $h*60+$min;
+}
+
+function parseTimeRange(string $token): ?array {
+    $token = str_replace(['–','—','−'], '-', strtoupper(trim($token, " ,")));
+    if ($token === 'H24') return [0,1440];
+    if (!preg_match('/^(\d{4})-(\d{4})$/', $token, $m)) return null;
+    $start=parseClock($m[1]); $end=parseClock($m[2]);
+    if ($start === null || $end === null) return null;
+    return [$start,$end];
+}
+
+function scheduleActivity(array $row, DateTimeImmutable $at): array {
+    $raw = scheduleText($row['schedule'] ?? null);
+    if ($raw === '') return ['state'=>'active','active'=>true,'parsed'=>true,'raw'=>null,'reason'=>'continuous'];
+
+    $normalized = strtoupper(str_replace(['–','—','−'], '-', $raw));
+    $normalized = preg_replace('/\s+/', ' ', trim($normalized));
+    $normalized = preg_replace('/\bUTC\b/', '', $normalized);
+    $normalized = preg_replace('/\s+/', ' ', trim((string)$normalized));
+
+    if ($normalized === '') return ['state'=>'active','active'=>true,'parsed'=>true,'raw'=>$raw,'reason'=>'continuous'];
+    if (preg_match('/\b(EXC|SR|SS|SUNRISE|SUNSET)\b/', $normalized)) {
+        return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+    }
+    if (preg_match('/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/', $normalized)) {
+        return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'date_specific_schedule'];
+    }
+
+    $tokens = preg_split('/\s+/', $normalized) ?: [];
+    $clauses = [];
+
+    if ($tokens && in_array($tokens[0], ['DLY','DAILY'], true)) {
+        array_shift($tokens);
+        if (!$tokens) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'missing_time'];
+        foreach ($tokens as $token) {
+            $range = parseTimeRange($token);
+            if ($range === null) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+            $clauses[] = ['days'=>[0,1,2,3,4,5,6],'range'=>$range];
+        }
+    } else {
+        $groupDays=[]; $groupRanges=[];
+        $flush = static function() use (&$clauses,&$groupDays,&$groupRanges): bool {
+            if (!$groupDays && !$groupRanges) return true;
+            if (!$groupDays || !$groupRanges) return false;
+            $days=array_values(array_unique($groupDays));
+            foreach ($groupRanges as $range) $clauses[]=['days'=>$days,'range'=>$range];
+            $groupDays=[]; $groupRanges=[];
+            return true;
+        };
+
+        foreach ($tokens as $token) {
+            $days = expandDayToken($token);
+            if ($days !== null) {
+                if ($groupRanges && !$flush()) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+                $groupDays=array_merge($groupDays,$days);
+                continue;
+            }
+            $range = parseTimeRange($token);
+            if ($range !== null) {
+                if (!$groupDays) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'missing_day'];
+                $groupRanges[]=$range;
+                continue;
+            }
+            return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+        }
+        if (!$flush()) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+    }
+
+    if (!$clauses) return ['state'=>'unknown','active'=>null,'parsed'=>false,'raw'=>$raw,'reason'=>'unsupported_schedule'];
+
+    $day=(int)$at->format('w');
+    $prevDay=($day+6)%7;
+    $minute=((int)$at->format('H'))*60+(int)$at->format('i');
+    foreach ($clauses as $clause) {
+        [$start,$end]=$clause['range'];
+        $days=$clause['days'];
+        if ($end === 1440 || $start < $end) {
+            if (in_array($day,$days,true) && $minute >= $start && $minute < $end) {
+                return ['state'=>'active','active'=>true,'parsed'=>true,'raw'=>$raw,'reason'=>'schedule_match'];
+            }
+        } elseif ($start > $end) {
+            if ((in_array($day,$days,true) && $minute >= $start) || (in_array($prevDay,$days,true) && $minute < $end)) {
+                return ['state'=>'active','active'=>true,'parsed'=>true,'raw'=>$raw,'reason'=>'schedule_match'];
+            }
+        } else {
+            if (in_array($day,$days,true)) return ['state'=>'active','active'=>true,'parsed'=>true,'raw'=>$raw,'reason'=>'schedule_match'];
+        }
+    }
+    return ['state'=>'inactive','active'=>false,'parsed'=>true,'raw'=>$raw,'reason'=>'outside_schedule'];
+}
+
+function collectReplacementStrings(mixed $node, array &$out, bool $replacementContext = false): void {
+    if (is_array($node)) {
+        foreach ($node as $key=>$value) {
+            $keyText=strtolower((string)$key);
+            $context=$replacementContext || str_contains($keyText,'replac') || str_contains($keyText,'supersed') || str_contains($keyText,'previous');
+            collectReplacementStrings($value,$out,$context);
+        }
+        return;
+    }
+    if ($replacementContext && is_scalar($node)) {
+        $text=trim((string)$node);
+        if ($text!=='') $out[]=$text;
+    }
+}
+
+function replacementTargetKey(array $row): ?string {
+    $current=identKey($row);
+    foreach ([(string)($row['notam_text'] ?? ''),(string)($row['raw_json'] ?? '')] as $source) {
+        if ($source !== '' && preg_match('/\bNOTAMR\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$source,$m)) {
+            $candidate=strtoupper($m[1]);
+            if ($candidate !== $current) return $candidate;
+        }
+    }
+
+    $raw=(string)($row['raw_json'] ?? '');
+    if ($raw !== '') {
+        $json=json_decode($raw,true);
+        if (is_array($json)) {
+            $strings=[]; collectReplacementStrings($json,$strings,false);
+            foreach ($strings as $text) {
+                if (preg_match('/\b([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)) {
+                    $candidate=strtoupper($m[1]);
+                    if ($candidate !== $current) return $candidate;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+function replacementIndex(PDO $pdo, DateTimeImmutable $at): array {
+    static $cache=[];
+    $cacheKey=$at->format('Y-m-d H:i');
+    if (isset($cache[$cacheKey])) return $cache[$cacheKey];
+
+    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_text,raw_json,effective_start,last_updated
+                         FROM notams
+                         WHERE source='FAA_NMS' AND environment='production'
+                           AND UPPER(COALESCE(notam_type,''))='R'
+                           AND (effective_start IS NULL OR effective_start<=:at)");
+    $stmt->execute(['at'=>$at->format('Y-m-d H:i:s')]);
+    $targets=[];
+    while($row=$stmt->fetch()) {
+        $target=replacementTargetKey($row);
+        if($target===null || isset($targets[$target])) continue;
+        $targets[$target]=[
+            'replacementId'=>(string)$row['nms_id'],
+            'replacementIdent'=>ident($row),
+            'effectiveStart'=>$row['effective_start'] ?? null,
+        ];
+    }
+
+    $index=[];
+    if ($targets) {
+        $find=$pdo->prepare("SELECT nms_id FROM notams
+                            WHERE source='FAA_NMS' AND environment='production'
+                              AND series=:series
+                              AND (number=:serial OR number=:serial_slash OR number=:target)
+                              AND (year=:year4 OR year=:year2 OR year IS NULL)");
+        foreach($targets as $target=>$meta) {
+            if(!preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/',$target,$m)) continue;
+            $series=$m[1]; $serial=$m[2]; $year2=(int)$m[3]; $year4=2000+$year2;
+            $find->execute([
+                'series'=>$series,'serial'=>$serial,'serial_slash'=>$serial.'/'.$m[3],
+                'target'=>$target,'year4'=>$year4,'year2'=>$year2,
+            ]);
+            while($targetRow=$find->fetch()) {
+                $targetId=(string)$targetRow['nms_id'];
+                if($targetId==='' || $targetId===$meta['replacementId']) continue;
+                $index[$targetId]=$meta;
+            }
+        }
+    }
+    return $cache[$cacheKey]=$index;
+}
+
+function addReplacementExclusion(array $replacementIndex, array &$where, array &$params): void {
+    if (!$replacementIndex) return;
+    $holders=[]; $i=0;
+    foreach(array_keys($replacementIndex) as $id) {
+        $key='repl_'.$i++;
+        $holders[]=':'.$key;
+        $params[$key]=$id;
+    }
+    if ($holders) $where[]='n.nms_id NOT IN ('.implode(',',$holders).')';
 }
 
 function addExact(array &$where, array &$params, string $column, string $key, string $value, string $regex): void {
@@ -122,11 +380,13 @@ function addExact(array &$where, array &$params, string $column, string $key, st
 function listAction(PDO $pdo): never {
     $at = utc($_GET['at'] ?? '');
     $state = strtolower((string)($_GET['state'] ?? 'valid'));
+    if (!in_array($state,['valid','future','expired','cancelled','replaced','all'],true)) $state='valid';
     $page = max(1, (int)($_GET['page'] ?? 1));
     $limit = max(1, min(200, (int)($_GET['limit'] ?? 50)));
     $where = ["n.source='FAA_NMS'", "n.environment='production'"];
     $params = [];
     $time = $at->format('Y-m-d H:i:s');
+    $replacements=replacementIndex($pdo,$at);
 
     if ($state === 'valid') {
         $where[] = "n.status<>'cancelled'";
@@ -134,17 +394,24 @@ function listAction(PDO $pdo): never {
         $where[] = "(UPPER(COALESCE(n.effective_end_raw,''))='PERM' OR n.effective_end IS NULL OR n.effective_end>=:at_end)";
         $params['at_start'] = $time;
         $params['at_end'] = $time;
+        addReplacementExclusion($replacements,$where,$params);
     } elseif ($state === 'future') {
         $where[] = "n.status<>'cancelled'";
         $where[] = 'n.effective_start>:at_start';
         $params['at_start'] = $time;
+        addReplacementExclusion($replacements,$where,$params);
     } elseif ($state === 'expired') {
         $where[] = "n.status<>'cancelled'";
         $where[] = "UPPER(COALESCE(n.effective_end_raw,''))<>'PERM'";
         $where[] = 'n.effective_end<:at_end';
         $params['at_end'] = $time;
+        addReplacementExclusion($replacements,$where,$params);
     } elseif ($state === 'cancelled') {
         $where[] = "n.status='cancelled'";
+    } elseif ($state === 'replaced') {
+        if (!$replacements) out(200,['ok'=>true,'source'=>'FAA NMS','state'=>$state,'atUtc'=>$at->format('c'),'items'=>[],'paging'=>['page'=>1,'limit'=>$limit,'returned'=>0,'total'=>0,'pages'=>0,'hasPrevious'=>false,'hasNext'=>false]]);
+        $ids=[]; foreach(array_keys($replacements) as $i=>$id){$key='only_repl_'.$i;$ids[]=':'.$key;$params[$key]=$id;}
+        $where[]='n.nms_id IN ('.implode(',',$ids).')';
     }
 
     addExact($where,$params,"UPPER(COALESCE(n.affected_fir,''))",'fir',(string)($_GET['fir'] ?? ''),'/^[A-Z0-9]{4}$/');
@@ -186,7 +453,12 @@ function listAction(PDO $pdo): never {
     $items = [];
     while ($row = $stmt->fetch()) {
         $entry = item($row, true);
-        $entry['temporalState'] = temporalState($row, $at);
+        $entry['temporalState'] = temporalState($row, $at, $replacements);
+        $activity=scheduleActivity($row,$at);
+        $entry['activityState']=$activity['state'];
+        $entry['activityActive']=$activity['active'];
+        $entry['scheduleInterpreted']=$activity['parsed'];
+        if(isset($replacements[(string)$row['nms_id']])) $entry['replacedBy']=$replacements[(string)$row['nms_id']];
         $items[] = $entry;
     }
 
@@ -211,11 +483,20 @@ function filtersAction(PDO $pdo): never {
 
 function detailAction(PDO $pdo): never {
     $id = trim((string)($_GET['id'] ?? ''));
+    $at=utc($_GET['at'] ?? '');
     $stmt = $pdo->prepare('SELECT ' . columns(true,false) . " FROM notams n WHERE n.source='FAA_NMS' AND n.environment='production' AND n.nms_id=:id LIMIT 1");
     $stmt->execute(['id'=>$id]);
     $row = $stmt->fetch();
     if (!$row) out(404, ['ok'=>false,'error'=>'NOTAM bulunamadı.']);
-    out(200, ['ok'=>true,'source'=>'FAA NMS','notam'=>item($row,true)]);
+    $replacements=replacementIndex($pdo,$at);
+    $entry=item($row,true);
+    $entry['temporalState']=temporalState($row,$at,$replacements);
+    $activity=scheduleActivity($row,$at);
+    $entry['activityState']=$activity['state'];
+    $entry['activityActive']=$activity['active'];
+    $entry['scheduleInterpreted']=$activity['parsed'];
+    if(isset($replacements[$id]))$entry['replacedBy']=$replacements[$id];
+    out(200, ['ok'=>true,'source'=>'FAA NMS','atUtc'=>$at->format('c'),'notam'=>$entry]);
 }
 
 function normalizeLon(float $lon): float {
@@ -482,7 +763,7 @@ function category(array $semantic): string {
     };
 }
 
-function feature(array $row): ?array {
+function feature(array $row, ?array $activity = null): ?array {
     $geometry=is_array($row['geometry'] ?? null) ? $row['geometry'] : json_decode((string)($row['geometry'] ?? ''),true);
     if (!is_array($geometry)) return null;
     $geometry=normalizeGeometry($geometry); if ($geometry===null) return null;
@@ -537,6 +818,8 @@ function feature(array $row): ?array {
             'classification'=>$row['classification'] ?? null,'location'=>$row['location'] ?? null,'icao_location'=>$row['icao_location'] ?? null,
             'selection_code'=>$row['selection_code'] ?? null,'effective_start'=>$row['effective_start'] ?? null,
             'effective_end'=>$row['effective_end'] ?? null,'effective_end_raw'=>$row['effective_end_raw'] ?? null,
+            'estimated_end'=>estimatedEnd($row),'schedule'=>$row['schedule'] ?? null,
+            'schedule_state'=>$activity['state'] ?? null,'schedule_parsed'=>$activity['parsed'] ?? null,
             'lower_limit'=>$row['lower_limit'] ?? null,'upper_limit'=>$row['upper_limit'] ?? null,
             'qline_radius_nm'=>isset($row['radius_nm']) && is_numeric((string)$row['radius_nm']) ? (float)$row['radius_nm'] : null,
             'explicit_radius_nm'=>$explicit['explicit_radius_nm'] ?? null,
@@ -565,10 +848,14 @@ function validWhere(): string {
     return "n.source='FAA_NMS' AND n.environment='production' AND n.status<>'cancelled' AND (n.effective_start IS NULL OR n.effective_start<=:at_start) AND (UPPER(COALESCE(n.effective_end_raw,''))='PERM' OR n.effective_end IS NULL OR n.effective_end>=:at_end)";
 }
 
-function addFeature(array $row,array &$features,array &$seenIds,array &$seenFeatures): void {
+function addFeature(array $row,array &$features,array &$seenIds,array &$seenFeatures,DateTimeImmutable $at,array $replacementIndex,array &$mapStats): void {
     $id=(string)($row['nms_id'] ?? '');
-    if ($id!=='' && isset($seenIds[$id])) return;
-    $f=feature($row); if ($f===null) return;
+    if ($id!=='' && (isset($seenIds[$id]) || isset($replacementIndex[$id]))) return;
+    if (temporalState($row,$at,$replacementIndex)!=='valid') return;
+    $activity=scheduleActivity($row,$at);
+    if ($activity['active'] === false) { $mapStats['outsideSchedule']++; return; }
+    if ($activity['active'] === null) $mapStats['scheduleUnknown']++;
+    $f=feature($row,$activity); if ($f===null) return;
     $hash=fingerprint($f); if(isset($seenFeatures[$hash]))return;
     if($id!=='')$seenIds[$id]=true; $seenFeatures[$hash]=true; $features[]=$f;
 }
@@ -585,12 +872,14 @@ function mapAction(PDO $pdo): never {
     header('Cache-Control: public, max-age=60, stale-while-revalidate=120');
     $time=$at->format('Y-m-d H:i:s');
     $features=[];$seenIds=[];$seenFeatures=[];$truncated=false;
+    $replacementIndex=replacementIndex($pdo,$at);
+    $mapStats=['outsideSchedule'=>0,'scheduleUnknown'=>0,'replaced'=>count($replacementIndex)];
 
     $params=['at_start'=>$time,'at_end'=>$time];
     $bbox=bboxSql($west,$south,$east,$north,$params);
     $sql='SELECT '.columns(true,true).",'faa-geometry' AS geometry_source FROM notams n WHERE ".validWhere()." AND n.geometry IS NOT NULL AND $bbox ORDER BY n.effective_start DESC LIMIT 5000";
     $stmt=$pdo->prepare($sql); $stmt->execute($params);
-    while($row=$stmt->fetch()) addFeature($row,$features,$seenIds,$seenFeatures);
+    while($row=$stmt->fetch()) addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$mapStats);
     if($stmt->rowCount()>=5000)$truncated=true;
 
     try {
@@ -607,7 +896,7 @@ function mapAction(PDO $pdo): never {
                 while($row=$q->fetch()){
                     $anchor=strtoupper(trim((string)($row['icao_location'] ?: $row['location']))); $point=$airports[$anchor] ?? null; if(!$point)continue;
                     $row['geometry']=['type'=>'Point','coordinates'=>[$point['lon'],$point['lat']]]; $row['geometry_source']='airport-location';
-                    addFeature($row,$features,$seenIds,$seenFeatures);
+                    addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$mapStats);
                 }
             }
         }
@@ -620,7 +909,7 @@ function mapAction(PDO $pdo): never {
         $q=$pdo->prepare($sql);$q->execute(['at_start'=>$time,'at_end'=>$time,'south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);
         while($row=$q->fetch()){
             $row['geometry']=['type'=>'Point','coordinates'=>[(float)$row['lon'],(float)$row['lat']]];$row['geometry_source']='qline-coordinate';
-            addFeature($row,$features,$seenIds,$seenFeatures);
+            addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$mapStats);
         }
     } catch(Throwable $e){ error_log('[notam-map-qline] '.$e->getMessage()); }
 
@@ -629,6 +918,7 @@ function mapAction(PDO $pdo): never {
         'ok'=>true,'source'=>'FAA NMS','atUtc'=>$at->format('c'),
         'data'=>['type'=>'FeatureCollection','features'=>$features],
         'counts'=>['notam'=>count($features)],'total'=>count($features),'truncated'=>$truncated,
+        'schedule'=>['outside'=>$mapStats['outsideSchedule'],'unknown'=>$mapStats['scheduleUnknown']],
     ]);
 }
 
