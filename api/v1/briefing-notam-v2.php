@@ -48,8 +48,8 @@ function ycBn2Semantic(?string $selectionCode): string{
 }
 function ycBn2Priority(string $semantic,string $text): string{
     $u=strtoupper($text);
-    if(in_array($semantic,['RUNWAY','AIRSPACE','RESTRICTED_AIRSPACE'],true)||preg_match('/\b(RWY|ILS|LOC|VOR|NDB|DME|RNAV|RNP|SID|STAR|APCH|APPROACH|OCA|OCH|CLSD|CLOSED|U\/S|UNSERVICEABLE|SUSPENDED|NOT AVBL)\b/',$u))return 'high';
-    if(in_array($semantic,['TAXIWAY','APRON','OBSTACLE','MILITARY_ACTIVITY','UAV_ACTIVITY'],true)||preg_match('/\b(TWY|APRON|PAPI|LIGHT|LIGHTS|BARRIER|HELIPAD|FUEL|CRANE|OBSTACLE)\b/',$u))return 'medium';
+    if(in_array($semantic,['RUNWAY','AIRSPACE','RESTRICTED_AIRSPACE'],true)||preg_match('/\bAD\s+CLSD\b|\b(RWY|ILS|LOC|VOR|NDB|DME|RNAV|RNP|SID|STAR|APCH|APPROACH|OCA|OCH)\b/',$u))return 'high';
+    if(in_array($semantic,['TAXIWAY','APRON','OBSTACLE','MILITARY_ACTIVITY','UAV_ACTIVITY'],true)||preg_match('/\b(TWY|APRON|PAPI|LIGHT|LIGHTS|BARRIER|HELIPAD|FUEL|CRANE|OBSTACLE|CLSD|CLOSED|U\/S|UNSERVICEABLE|SUSPENDED|NOT AVBL)\b/',$u))return 'medium';
     return 'info';
 }
 function ycBn2RouteRefs(array $payload,array $query): array{
