@@ -1,12 +1,1 @@
 Options -Indexes
-
-RewriteEngine On
-
-# Compatibility only: there is no physical api/v1 directory.
-# Existing app builds are routed to the new flat API files.
-RewriteRule ^api/v1/(?:weather|metar|taf)\.php$ api/metartaf.php [L,QSA]
-RewriteRule ^api/v1/adsb\.php$ api/adsb.php [L,QSA]
-RewriteRule ^api/v1/navdata\.php$ api/navdata.php [L,QSA]
-RewriteRule ^api/v1/notam\.php$ api/notam.php [L,QSA]
-RewriteRule ^api/v1/wafs\.php$ api/wafs.php [L,QSA]
-RewriteRule ^api/v1/health\.php$ api/health.php [L,QSA]
