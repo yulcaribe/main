@@ -69,8 +69,6 @@
   const wafsOpacityInputs = [...document.querySelectorAll("[data-wafs-opacity]")];
   const flightsEnabledInput = document.getElementById("flights-enabled");
   const flightsStatus = document.getElementById("flights-status");
-  const flightsUpdated = document.getElementById("flights-updated");
-  const flightsPayload = document.getElementById("flights-payload");
   const aircraftInfoPanel = document.getElementById("aircraft-info");
   const aircraftInfoTitle = document.getElementById("aircraft-info-title");
   const aircraftInfoSubtitle = document.getElementById("aircraft-info-subtitle");
@@ -1300,6 +1298,36 @@
     return activePanelTarget === "flights-panel" && Boolean(flightsEnabledInput?.checked);
   }
 
+  function setFlightHealth(state) {
+    if (!flightsStatus) return;
+    const label = flightsStatus.querySelector(".flight-health-label");
+    flightsStatus.classList.remove("is-loading", "is-ok", "is-error");
+
+    if (state === "off") {
+      flightsStatus.hidden = true;
+      return;
+    }
+
+    flightsStatus.hidden = false;
+    if (state === "ok") {
+      flightsStatus.classList.add("is-ok");
+      if (label) label.textContent = "Güncel";
+      flightsStatus.setAttribute("aria-label", "ADS-B güncel");
+      return;
+    }
+
+    if (state === "error") {
+      flightsStatus.classList.add("is-error");
+      if (label) label.textContent = "Hata";
+      flightsStatus.setAttribute("aria-label", "ADS-B hata");
+      return;
+    }
+
+    flightsStatus.classList.add("is-loading");
+    if (label) label.textContent = "Yükleniyor";
+    flightsStatus.setAttribute("aria-label", "ADS-B yükleniyor");
+  }
+
   function sourceType(code) {
     switch (code) {
       case 0: return "adsb_icao";
@@ -1806,10 +1834,16 @@
 
   async function loadFlights() {
     clearTimeout(flightLoadTimer);
-    if (!map.loaded() || !flightsEnabled()) return;
+    if (!flightsEnabled()) return;
+
+    if (!map.loaded()) {
+      setFlightHealth("loading");
+      flightLoadTimer = setTimeout(loadFlights, 400);
+      return;
+    }
 
     if (map.getZoom() < ADSB_MIN_FETCH_ZOOM) {
-      if (flightsStatus) flightsStatus.textContent = "Canlı ADS-B için biraz yaklaş · z" + ADSB_MIN_FETCH_ZOOM.toFixed(1) + "+";
+      if (!adsbHaveSourceClock) setFlightHealth("loading");
       flightLoadTimer = setTimeout(loadFlights, 1200);
       return;
     }
@@ -1817,7 +1851,7 @@
     try {
       await initAdsbDecoder();
     } catch (error) {
-      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+      setFlightHealth("error");
       return;
     }
 
@@ -1826,7 +1860,7 @@
     const seq = ++adsbRequestSeq;
     const box = adsbBoxString();
 
-    if (flightsStatus) flightsStatus.textContent = "TheAirTraffic · veri alınıyor…";
+    if (!adsbHaveSourceClock) setFlightHealth("loading");
 
     try {
       const response = await fetch(ADSB_API + "?action=feed&box=" + encodeURIComponent(box), {
@@ -1861,21 +1895,14 @@
       statusDot.classList.remove("bad");
       updateCounts();
 
-      if (flightsUpdated) flightsUpdated.textContent = new Date().toLocaleTimeString("tr-TR");
-      if (flightsPayload) flightsPayload.textContent = compressed.byteLength.toLocaleString("tr-TR") + " B → " + decoded.byteLength.toLocaleString("tr-TR") + " B";
-      if (flightsStatus) {
-        flightsStatus.textContent =
-          "TheAirTraffic · " + flightFeatures.length.toLocaleString("tr-TR") +
-          " uçak · binCraft v" + parsed.version +
-          " · " + (ADSB_RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer";
-      }
+      setFlightHealth("ok");
     } catch (error) {
       if (error.name === "AbortError") return;
       console.error("[ADS-B TheAirTraffic]", error);
       statusText.textContent = "ADS-B ERROR";
       statusDot.classList.add("bad");
       statusDot.classList.remove("ok");
-      if (flightsStatus) flightsStatus.textContent = "ADS-B hata: " + error.message;
+      setFlightHealth("error");
     } finally {
       if (flightsEnabled()) flightLoadTimer = setTimeout(loadFlights, ADSB_REFRESH_MS);
     }
@@ -2037,7 +2064,7 @@
       }
     } catch (error) {
       console.error("[ADS-B decoder]", error);
-      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+      setFlightHealth("error");
     }
     loadWeatherOverlays().catch(console.error);
   });
@@ -2052,13 +2079,19 @@
   function syncChartsToggleAll() {
     if (!chartsToggleAll) return;
     const inputs = chartInputs();
-    const allOn = inputs.length > 0 && inputs.every(input => input.checked);
-    chartsToggleAll.textContent = allOn ? "HEPSİNİ KAPAT" : "HEPSİNİ AÇ";
+    const enabled = inputs.filter(input => input.checked).length;
+    chartsToggleAll.checked = inputs.length > 0 && enabled === inputs.length;
+    chartsToggleAll.indeterminate = enabled > 0 && enabled < inputs.length;
+    chartsToggleAll.setAttribute(
+      "aria-checked",
+      chartsToggleAll.indeterminate ? "mixed" : String(chartsToggleAll.checked)
+    );
   }
 
-  chartsToggleAll?.addEventListener("click", () => {
+  chartsToggleAll?.addEventListener("change", () => {
     const inputs = chartInputs();
-    const turnOn = !inputs.every(input => input.checked);
+    const turnOn = chartsToggleAll.checked;
+    chartsToggleAll.indeterminate = false;
     inputs.forEach(input => {
       input.checked = turnOn;
       setLayerVisibility(input.dataset.navLayer);
@@ -2093,12 +2126,11 @@
       flightFeatures = [];
       flightCountsState = { flight: 0 };
       updateCounts();
-      if (flightsUpdated) flightsUpdated.textContent = "—";
-      if (flightsPayload) flightsPayload.textContent = "—";
-      if (flightsStatus) flightsStatus.textContent = "ADS-B katmanı kapalı.";
+      setFlightHealth("off");
       return;
     }
 
+    setFlightHealth("loading");
     try {
       await initAdsbDecoder();
       ensureAdsbFetchBox(true);
@@ -2106,7 +2138,7 @@
       adsbLastMoveCenter = map.getCenter();
       scheduleFlightLoad(0);
     } catch (error) {
-      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+      setFlightHealth("error");
     }
   });
 
@@ -2158,6 +2190,7 @@
     else loadWeatherOverlays().catch(console.error);
 
     if (activePanelTarget === "flights-panel" && flightsEnabled()) {
+      if (!adsbHaveSourceClock) setFlightHealth("loading");
       ensureAdsbFetchBox(true);
       scheduleFlightLoad(0);
     } else {
