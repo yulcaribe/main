@@ -63,6 +63,16 @@ function ycAr2GeoLines(?string $json): array {
     $t=$g['type']??''; $c=$g['coordinates']??null;
     if($t==='LineString'&&is_array($c)) return [$c];
     if($t==='MultiLineString'&&is_array($c)) return $c;
+    if($t==='GeometryCollection'&&is_array($g['geometries']??null)){
+        $out=[];
+        foreach($g['geometries'] as $child){
+            if(!is_array($child)) continue;
+            $ct=$child['type']??''; $cc=$child['coordinates']??null;
+            if($ct==='LineString'&&is_array($cc)) $out[]=$cc;
+            elseif($ct==='MultiLineString'&&is_array($cc)) foreach($cc as $line) if(is_array($line)) $out[]=$line;
+        }
+        return $out;
+    }
     return [];
 }
 
@@ -194,7 +204,7 @@ function ycAr2Build(PDO $pdo,string $from,string $to,int $fl): ?array {
     $west=max(-179.5,min($dep['lon'],$arr['lon'])-$pad); $east=min(179.5,max($dep['lon'],$arr['lon'])+$pad);
     $bbox=sprintf('POLYGON((%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F))',$west,$south,$east,$south,$east,$north,$west,$north,$west,$south);
 
-    $stmt=$pdo->prepare("SELECT rg.from_ident,rg.to_ident,ST_AsGeoJSON(rg.geom,6) AS geometry,r.ident,rm.forward,rm.backward,COALESCE(rm.lower_text,s.lower_text) AS lower_text,COALESCE(rm.upper_text,s.upper_text) AS upper_text,CASE WHEN rm.upper_unlimited=1 OR s.upper_unlimited=1 THEN 1 ELSE 0 END AS upper_unlimited FROM nav_route_geometry rg JOIN nav_route_memberships rm ON rm.segment_id=rg.segment_id JOIN nav_route_segments s ON s.id=rm.segment_id JOIN nav_routes r ON r.id=rm.route_id WHERE r.type='airway' AND MBRIntersects(rg.geom,ST_GeomFromText(:bbox)) LIMIT 60000");
+    $stmt=$pdo->prepare("SELECT COALESCE(NULLIF(TRIM(s.from_ident),''),NULLIF(TRIM(rg.from_ident),'')) AS from_ident,COALESCE(NULLIF(TRIM(s.to_ident),''),NULLIF(TRIM(rg.to_ident),'')) AS to_ident,COALESCE(NULLIF(rg.geometry_json,''),ST_AsGeoJSON(rg.geom,6)) AS geometry,r.ident,rm.forward,rm.backward,COALESCE(NULLIF(TRIM(rm.lower_text),''),s.lower_text) AS lower_text,COALESCE(NULLIF(TRIM(rm.upper_text),''),s.upper_text) AS upper_text,CASE WHEN COALESCE(rm.upper_unlimited,0)=1 OR COALESCE(s.upper_unlimited,0)=1 THEN 1 ELSE 0 END AS upper_unlimited FROM nav_route_geometry rg JOIN nav_route_memberships rm ON rm.segment_id=rg.segment_id JOIN nav_route_segments s ON s.id=rm.segment_id JOIN nav_routes r ON r.id=rm.route_id WHERE r.type='airway' AND rg.geom IS NOT NULL AND MBRIntersects(rg.geom,ST_GeomFromText(:bbox)) LIMIT 60000");
     $stmt->execute(['bbox'=>$bbox]);
 
     $corridor=max(230.0,min(460.0,$direct*0.22));
@@ -231,7 +241,10 @@ function ycAr2Build(PDO $pdo,string $from,string $to,int $fl): ?array {
     }
 
     $bridgeCandidates=ycAr2AddDctBridges($graph,$coords,$metrics,$direct);
-    $terminalRadius=max(175.0,min(310.0,$direct*0.30));$entry=[];$exit=[];
+    // Keep terminal capture well below half the route length. The previous
+    // 175 NM floor let short routes pick the same midpoint node as both entry
+    // and exit, producing a zero-edge "best path" and an empty-path fallback.
+    $terminalRadius=max(55.0,min(165.0,$direct*0.18,$direct*0.42));$entry=[];$exit=[];
     foreach($coords as $id=>$c){
         if(!isset($metrics[$id])) continue;
         $d1=ycAr2Nm($dep['lat'],$dep['lon'],$c['lat'],$c['lon']);$d2=ycAr2Nm($arr['lat'],$arr['lon'],$c['lat'],$c['lon']);$off=$metrics[$id]['off'];
@@ -243,7 +256,15 @@ function ycAr2Build(PDO $pdo,string $from,string $to,int $fl): ?array {
     $GLOBALS['ycAr2Stats']['entries']=count($entry);$GLOBALS['ycAr2Stats']['exits']=count($exit);$GLOBALS['ycAr2Stats']['bridges']=$bridgeCandidates;
     if(!$entry||!$exit)return ycAr2Fail('no-terminal-airway-candidates');
 
-    $goalPenalty=[];foreach($exit as $g)$goalPenalty[$g['id']]=$g['d']*1.08;
+    $entryIds=[];foreach($entry as $e)$entryIds[$e['id']]=true;
+    $goalPenalty=[];
+    foreach($exit as $g){
+        // Never accept a seed entry as the destination. That is not an airway
+        // route; it is just two terminal DCT legs meeting at one midpoint.
+        if(isset($entryIds[$g['id']])) continue;
+        $goalPenalty[$g['id']]=$g['d']*1.08;
+    }
+    if(!$goalPenalty) return ycAr2Fail('terminal-candidates-overlap');
     $dist=[];$prev=[];$pq=new SplPriorityQueue();$pq->setExtractFlags(SplPriorityQueue::EXTR_BOTH);
     foreach($entry as $e){$cost=$e['d']*1.08;if($cost<($dist[$e['id']]??INF)){$dist[$e['id']]=$cost;$pq->insert($e['id'],-$cost);}}
     $bestGoal=null;$bestTotal=INF;$visited=0;
@@ -297,6 +318,8 @@ if(!$routeSupplied){
                 if(isset($stats['eligible']))header('X-YC-Auto-Route-Eligible: '.(int)$stats['eligible']);
                 if(isset($stats['entries']))header('X-YC-Auto-Route-Entries: '.(int)$stats['entries']);
                 if(isset($stats['exits']))header('X-YC-Auto-Route-Exits: '.(int)$stats['exits']);
+                if(isset($stats['levelRejected']))header('X-YC-Auto-Route-Level-Rejected: '.(int)$stats['levelRejected']);
+                if(isset($stats['bridges']))header('X-YC-Auto-Route-Bridge-Candidates: '.(int)$stats['bridges']);
             }
         }catch(Throwable $e){
             error_log('[briefing-auto-v2] '.$e->getMessage());
