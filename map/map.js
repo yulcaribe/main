@@ -47,7 +47,6 @@
   const zoomHint = document.getElementById("zoom-hint");
   const searchInput = document.getElementById("nav-search");
   const searchResults = document.getElementById("search-results");
-  const searchToggle = document.getElementById("search-toggle");
   const searchShell = document.getElementById("search-shell");
   const chartsToggleAll = document.getElementById("charts-toggle-all");
   const timelineDock = document.getElementById("timeline-dock");
@@ -2379,22 +2378,6 @@
     });
   });
 
-  function setSearchOpen(open) {
-    searchShell?.classList.toggle("open", open);
-    searchToggle?.classList.toggle("active", open);
-    searchToggle?.setAttribute("aria-label", open ? "Aramayı kapat" : "Aramayı aç");
-    if (open) requestAnimationFrame(() => searchInput?.focus());
-    else {
-      searchResults.classList.remove("open");
-      searchInput?.blur();
-    }
-  }
-
-  searchToggle?.addEventListener("click", event => {
-    event.stopPropagation();
-    setSearchOpen(!searchShell?.classList.contains("open"));
-  });
-
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => search(searchInput.value), 240);
@@ -2403,7 +2386,7 @@
   searchInput.addEventListener("keydown", event => {
     if (event.key === "Escape") {
       searchResults.classList.remove("open");
-      setSearchOpen(false);
+      searchInput.blur();
     }
   });
 
@@ -2412,9 +2395,8 @@
   });
 
   document.addEventListener("click", event => {
-    if (!event.target.closest(".search") && !event.target.closest("#search-toggle")) {
+    if (!event.target.closest(".search")) {
       searchResults.classList.remove("open");
-      if (!searchInput.value.trim()) setSearchOpen(false);
     }
   });
 
