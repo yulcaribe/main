@@ -44,9 +44,10 @@
     const dot=$("status-dot");if(dot){dot.classList.toggle("bad",error);dot.classList.toggle("ok",!error);}
   }
   function popup(lngLat,title,subtitle,body,options={}){
+    const content = options.raw ? (body || "") : `<div class="popup-grid">${body||""}</div>`;
     return new maplibregl.Popup({closeButton:true,closeOnClick:true,maxWidth:options.maxWidth||"360px"})
       .setLngLat(lngLat)
-      .setHTML(`<div class="popup"><h3>${esc(title)}</h3><div class="sub">${esc(subtitle||"")}</div><div class="popup-grid">${body||""}</div></div>`)
+      .setHTML(`<div class="popup"><h3>${esc(title)}</h3><div class="sub">${esc(subtitle||"")}</div>${content}</div>`)
       .addTo(map);
   }
 
