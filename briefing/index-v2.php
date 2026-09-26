@@ -32,5 +32,10 @@ $html = str_replace(
     '<span>Data: NOAA / NWS Aviation Weather Center + NOAA/NCEP GFS + FAA NMS + YulCaribe navdata</span>',
     $html
 );
+$html = str_replace(
+    '</head>',
+    '  <link rel="stylesheet" href="/main/simple.css?v=1">' . "\n</head>",
+    $html
+);
 
 echo $html;
