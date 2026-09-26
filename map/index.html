@@ -8,7 +8,7 @@
   <title>Aviation Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/map/map.css?v=3">
+  <link rel="stylesheet" href="/main/map/map.css?v=4">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -66,27 +66,23 @@
 
   <aside class="tool-panel" id="flights-panel">
     <div class="tool-head">
-      <div><strong>FLIGHTS</strong><small>TheAirTraffic · binCraft + zstd</small></div>
+      <div><strong>FLIGHTS</strong><small>Canlı trafik</small></div>
       <button type="button" data-panel-close aria-label="Paneli küçült">−</button>
     </div>
     <label class="master-row"><span><i class="legend-dot flight-swatch"></i>Canlı uçuşlar</span><input id="flights-enabled" type="checkbox"></label>
     <div class="notam-stat"><strong data-layer-count="flight">0</strong><span>görünümdeki uçak</span></div>
-    <div class="adsb-stat-grid">
-      <div><span>Kaynak</span><strong>TheAirTraffic</strong></div>
-      <div><span>Son veri</span><strong id="flights-updated">—</strong></div>
-      <div><span>Payload</span><strong id="flights-payload">—</strong></div>
+    <div class="flight-health" id="flights-status" role="status" aria-live="polite" hidden>
+      <span class="flight-health-dot" aria-hidden="true"></span>
+      <span class="flight-health-label">Yükleniyor</span>
     </div>
-    <div class="card-note" id="flights-status">ADS-B katmanı kapalı.</div>
   </aside>
 
   <aside class="tool-panel open" id="chart-panel">
     <div class="tool-head">
       <div><strong>CHARTS</strong><small>Aeronautical navdata · MariaDB</small></div>
-      <div class="tool-actions">
-        <button class="panel-action" id="charts-toggle-all" type="button">HEPSİNİ KAPAT</button>
-        <button type="button" data-panel-close aria-label="Paneli küçült">−</button>
-      </div>
+      <button type="button" data-panel-close aria-label="Paneli küçült">−</button>
     </div>
+    <label class="master-row chart-master-row"><span>Chart katmanları</span><input id="charts-toggle-all" type="checkbox" checked></label>
     <div class="layer-group">
       <span class="layer-group-title">Points</span>
       <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airport"><span class="legend-dot" style="background:#7ee7ff"></span>Airports</label><span class="layer-count" data-layer-count="airport">0</span></div>
@@ -228,7 +224,7 @@
 
         try {
           detail.textContent = "Harita istemcisi yükleniyor…";
-          await loadScript("/main/map/map.js?v=3");
+          await loadScript("/main/map/map.js?v=4");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/map/map.js yüklenemedi.";
