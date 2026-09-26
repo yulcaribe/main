@@ -31,29 +31,6 @@ function nmsCronCleanupLogs(int $days = 3): void {
     }
 }
 
-function nmsCronCleanupHealthSessions(int $maxAgeSeconds = 86400): void {
-    $sessionDir = dirname(__DIR__, 4) . '/.yulcaribe_sessions/health';
-    if (!is_dir($sessionDir)) return;
-
-    $cutoff = time() - max(3600, $maxAgeSeconds);
-    foreach ((array)glob($sessionDir . DIRECTORY_SEPARATOR . 'sess_*') as $file) {
-        if (!is_file($file)) continue;
-
-        $mtime = @filemtime($file);
-        if ($mtime === false || $mtime >= $cutoff) continue;
-
-        $handle = @fopen($file, 'c+');
-        if ($handle === false) continue;
-
-        if (@flock($handle, LOCK_EX | LOCK_NB)) {
-            @unlink($file);
-            @flock($handle, LOCK_UN);
-        }
-
-        @fclose($handle);
-    }
-}
-
 function nmsCronCleanupLegacyLog(int $days = 3): void {
     $path = dirname(__DIR__, 4) . '/nms_cron.log';
     if (!is_file($path)) return;
@@ -90,7 +67,6 @@ function nmsCronLog(string $message): void {
     if (!$cleaned) {
         nmsCronCleanupLogs(3);
         nmsCronCleanupLegacyLog(3);
-        nmsCronCleanupHealthSessions(86400);
         $cleaned = true;
     }
 
