@@ -383,3 +383,87 @@ body{overflow:hidden;background:var(--bg);font-family:Inter,ui-sans-serif,system
   .aircraft-info{width:min(340px,92vw)}
   .aircraft-info-head{padding-top:16px}
 }
+
+
+/* v4 compact map UI */
+.topbar{
+  top:12px;left:12px;right:auto;min-height:46px;width:auto;
+  padding:5px;gap:6px;border-radius:15px
+}
+.back{
+  width:36px;height:36px;flex-basis:36px;border-radius:11px;font-size:18px
+}
+.brand{
+  min-width:0;height:36px;display:flex;align-items:center;padding:0 10px;
+  color:var(--text);text-decoration:none;border-radius:10px
+}
+.brand strong{font-size:11px;letter-spacing:.10em}
+.brand span{display:none}
+.search-toggle{
+  width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);
+  border-radius:11px;background:rgba(255,255,255,.04);color:var(--text);
+  font:800 22px/1 inherit;cursor:pointer
+}
+.search-toggle:hover,.search-toggle.active{
+  border-color:rgba(95,224,239,.45);background:rgba(95,224,239,.09);color:var(--cyan-2)
+}
+.search{
+  margin-left:0;width:0;opacity:0;pointer-events:none;overflow:visible;
+  transition:width .18s ease,opacity .14s ease
+}
+.search.open,.search:focus-within{
+  width:min(420px,calc(100vw - 190px));opacity:1;pointer-events:auto
+}
+.search input{
+  height:36px;border-radius:10px;background:rgba(7,22,33,.98)
+}
+.search-results{top:42px}
+
+.status{
+  top:68px;left:12px;display:flex;align-items:center;gap:7px;
+  padding:8px 11px;border-radius:999px;font-size:10px
+}
+.status strong{font-size:10px;letter-spacing:.06em}
+.status #feature-count{color:#9eb4c0;font-size:9px;font-weight:750}
+.status-sep{color:#526875}
+.status .dot{width:7px;height:7px}
+
+.tool-panel{top:68px;max-height:calc(100vh - 150px)}
+.tool-actions{display:flex;align-items:center;gap:6px}
+.tool-head .panel-action{
+  width:auto;height:30px;padding:0 9px;border:1px solid rgba(95,224,239,.16);
+  border-radius:9px;background:rgba(95,224,239,.05);color:#aeeaf1;
+  font:800 8px/1 inherit;letter-spacing:.07em;white-space:nowrap
+}
+.tool-head .panel-action:hover{
+  border-color:rgba(95,224,239,.38);background:rgba(95,224,239,.1);color:#e8fdff
+}
+
+.timeline-dock.mode-hidden{display:none}
+.map-mode-dock{bottom:16px}
+.zoom-hint{bottom:66px}
+body.timeline-visible .map-mode-dock{bottom:154px}
+body.timeline-visible .zoom-hint{bottom:122px}
+
+@media(max-width:900px){
+  .topbar{top:8px;left:8px}
+  .status{top:62px;left:8px}
+  .tool-panel{top:104px}
+  .map-mode-dock{bottom:8px}
+  .zoom-hint{bottom:58px}
+  body.timeline-visible .map-mode-dock{bottom:172px}
+  body.timeline-visible .zoom-hint{bottom:214px}
+}
+@media(max-width:560px){
+  .brand{padding:0 7px}
+  .search.open,.search:focus-within{
+    position:fixed;top:60px;left:8px;width:calc(100vw - 16px)
+  }
+  .search-results{top:42px}
+  .status{top:108px}
+  .tool-panel{top:142px;max-height:calc(100vh - 205px)}
+  .map-mode-dock{width:calc(100vw - 20px);bottom:8px}
+  .zoom-hint{bottom:58px}
+  body.timeline-visible .map-mode-dock{bottom:212px}
+  body.timeline-visible .zoom-hint{bottom:254px}
+}
