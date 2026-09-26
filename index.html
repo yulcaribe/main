@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="YulCaribe aviation tools: METAR, TAF, NOTAM, navigation map, WAFS and live aircraft.">
+  <title>YulCaribe</title>
+  <link rel="stylesheet" href="/main/app.css?v=1">
+</head>
+<body data-page="home">
+  <header class="app-header">
+    <a class="app-brand" href="/main/">YulCaribe</a>
+  </header>
+
+  <main class="app-main home-main">
+    <section class="page-section weather-tool" aria-labelledby="weather-title">
+      <div class="section-title-row">
+        <h1 id="weather-title">METAR / TAF</h1>
+        <div class="segmented" role="group" aria-label="Yorum dili">
+          <button type="button" data-weather-language="tr" aria-pressed="true">TR</button>
+          <button type="button" data-weather-language="en" aria-pressed="false">EN</button>
+        </div>
+      </div>
+
+      <form id="weather-search-form" class="search-row" autocomplete="off">
+        <input id="weather-icao" name="icao" type="text" inputmode="text" maxlength="4" minlength="4" pattern="[A-Za-z0-9]{4}" placeholder="ICAO" aria-label="ICAO kodu" spellcheck="false" required>
+        <button type="submit">Sorgula</button>
+      </form>
+
+      <div class="quick-row" aria-label="Hızlı havalimanı seçimi">
+        <button type="button" data-weather-icao="LTAI">LTAI</button>
+        <button type="button" data-weather-icao="LTFM">LTFM</button>
+        <button type="button" data-weather-icao="LTAC">LTAC</button>
+        <button type="button" data-weather-icao="LTBJ">LTBJ</button>
+      </div>
+
+      <div id="weather-feedback" class="status-line" aria-live="polite"></div>
+
+      <div id="weather-results" class="weather-results" hidden>
+        <section class="plain-block">
+          <div class="plain-block-head"><strong>METAR</strong><button type="button" data-copy-weather="metar">Kopyala</button></div>
+          <pre id="weather-metar">—</pre>
+          <div id="weather-metar-decode" class="decode-list" hidden></div>
+        </section>
+
+        <section class="plain-block">
+          <div class="plain-block-head"><strong>TAF</strong><button type="button" data-copy-weather="taf">Kopyala</button></div>
+          <pre id="weather-taf">—</pre>
+          <div id="weather-taf-decode" class="decode-list" hidden></div>
+        </section>
+
+        <section id="weather-interpretation" class="plain-block" hidden>
+          <div class="plain-block-head"><strong id="weather-interpretation-title">Hava Durumu Yorumu</strong></div>
+          <div id="weather-interpretation-content"></div>
+        </section>
+
+        <div id="weather-source-line" class="source-line"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Ana navigasyon">
+    <a href="/main/" data-nav="home" aria-current="page">HOME</a>
+    <a href="/main/map/" data-nav="map">MAP</a>
+    <a href="/main/notam/" data-nav="notam">NOTAM</a>
+  </nav>
+
+  <script src="/main/app.js?v=1" defer></script>
+</body>
+</html>
