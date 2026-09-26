@@ -1,0 +1,21 @@
+/* WAFS CB visual polish: cloud-like legend colors and clearer controls. */
+.swatch-cbextent{
+  height:4px!important;
+  background:linear-gradient(90deg,#f7fcff 0%,#cdeff7 45%,#79d7e8 100%)!important;
+  box-shadow:0 0 0 1px rgba(205,239,247,.24),0 0 7px rgba(121,215,232,.32);
+}
+.swatch-cbtop{
+  height:4px!important;
+  background:linear-gradient(90deg,#f4f8ff 0%,#c8dcff 45%,#b99cff 100%)!important;
+  box-shadow:0 0 0 1px rgba(200,220,255,.22),0 0 7px rgba(185,156,255,.3);
+}
+.wafs2-product-row:has([data-wafs2-product="cbextent"]){
+  border-color:rgba(121,215,232,.17);
+  background:linear-gradient(180deg,rgba(121,215,232,.035),rgba(255,255,255,.02));
+}
+.wafs2-product-row:has([data-wafs2-product="cbtop"]){
+  border-color:rgba(185,156,255,.16);
+  background:linear-gradient(180deg,rgba(185,156,255,.03),rgba(255,255,255,.02));
+}
+.wafs2-product-row:has([data-wafs2-product="cbextent"]) input[type="range"]{accent-color:#8fe2ef}
+.wafs2-product-row:has([data-wafs2-product="cbtop"]) input[type="range"]{accent-color:#bda7ff}
