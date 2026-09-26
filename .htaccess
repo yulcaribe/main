@@ -1,6 +1,9 @@
 Options -Indexes
 
 RewriteEngine On
-# Keep the public Briefing URL stable for web and Android while running the
+# Serve the enhanced Pilot Briefing shell without changing the public URL.
+RewriteRule ^briefing/?$ briefing/index-v2.php [L]
+
+# Keep the public Briefing API stable for web and Android while running the
 # estimated navdata auto-router first, then local FAA NMS NOTAM enrichment.
 RewriteRule ^api/v1/briefing\.php$ api/v1/briefing-auto.php [L,QSA]
