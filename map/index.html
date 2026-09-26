@@ -8,7 +8,7 @@
   <title>Aviation Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/map/map.css?v=6">
+  <link rel="stylesheet" href="/main/map/map.css?v=7">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -223,7 +223,7 @@
 
         try {
           detail.textContent = "Harita istemcisi yükleniyor…";
-          await loadScript("/main/map/map.js?v=6");
+          await loadScript("/main/map/map.js?v=7");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/map/map.js yüklenemedi.";
