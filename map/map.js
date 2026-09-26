@@ -1618,6 +1618,36 @@
     };
   }
 
+  function extrapolateAircraft(sample, seconds) {
+    const data = sample?.data || {};
+    const gs = Number(data.gs);
+    const track = Number.isFinite(data.track)
+      ? Number(data.track)
+      : Number.isFinite(sample?.heading)
+        ? Number(sample.heading)
+        : Number(data.heading);
+
+    const limitedSeconds = Math.max(0, Math.min(7, Number(seconds) || 0));
+    if (!Number.isFinite(gs) || gs < 15 || !Number.isFinite(track) || limitedSeconds <= 0) {
+      return { ...data, lon: sample.lon, lat: sample.lat, heading: sample.heading };
+    }
+
+    const distanceNm = gs * limitedSeconds / 3600;
+    const radians = track * Math.PI / 180;
+    const northNm = Math.cos(radians) * distanceNm;
+    const eastNm = Math.sin(radians) * distanceNm;
+    const lat = sample.lat + northNm / 60;
+    const cosLat = Math.max(0.15, Math.cos(lat * Math.PI / 180));
+    const lon = sample.lon + eastNm / (60 * cosLat);
+
+    return {
+      ...data,
+      lon,
+      lat,
+      heading: sample.heading
+    };
+  }
+
   function ensureAircraftMarker(ac) {
     let item = aircraftMarkers.get(ac.hex);
     if (item) return item;
@@ -1727,7 +1757,8 @@
         const b = { ...after.data, lon: after.lon, lat: after.lat, heading: after.heading };
         shown = interpolateAircraft(a, b, t);
       } else {
-        shown = { ...before.data, lon: before.lon, lat: before.lat, heading: before.heading };
+        const secondsPastSample = Math.max(0, (targetSourceTime - before.t) / 1000);
+        shown = extrapolateAircraft(before, secondsPastSample);
       }
 
       item.rendered = shown;
