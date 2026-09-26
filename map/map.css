@@ -565,3 +565,56 @@ body.timeline-visible .zoom-hint{bottom:122px}
     left:50%;width:calc(100vw - 16px)
   }
 }
+
+
+/* v7 compact floating aircraft card */
+.aircraft-info{
+  position:fixed;z-index:1250;left:14px;top:84px;bottom:auto;
+  width:300px;max-width:calc(100vw - 28px);max-height:min(66vh,640px);
+  overflow:auto;border:1px solid rgba(150,205,226,.18);border-radius:18px;
+  background:rgba(5,13,21,.965);box-shadow:0 18px 50px rgba(0,0,0,.42);
+  backdrop-filter:blur(18px);
+  opacity:0;transform:translateY(8px) scale(.985);pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease
+}
+.aircraft-info.open{
+  opacity:1;transform:none;pointer-events:auto
+}
+.aircraft-info-head{
+  position:sticky;top:0;z-index:2;
+  padding:13px 13px 11px;border-bottom:1px solid rgba(150,205,226,.12);
+  background:rgba(5,13,21,.985);border-radius:18px 18px 0 0
+}
+.aircraft-info-title strong{font-size:18px}
+.aircraft-info-title span{margin-top:4px;font-size:10px}
+.aircraft-close{
+  width:30px;height:30px;border-radius:9px;font-size:20px;line-height:26px
+}
+.aircraft-info .info-section{
+  padding:10px 13px;border-bottom:1px solid rgba(150,205,226,.09)
+}
+.aircraft-info .info-section:last-child{border-bottom:0}
+.aircraft-info .info-section h3{
+  margin:0 0 7px;font-size:8px;letter-spacing:.14em
+}
+.aircraft-info .info-row{
+  grid-template-columns:1fr auto;gap:10px;padding:2.5px 0;font-size:10.5px
+}
+.aircraft-info .info-coords{font-size:9.5px}
+
+/* Floating card must not displace or cover global controls. */
+body:has(.aircraft-info.open) .topbar{
+  left:50%;right:auto;transform:translateX(-50%);
+  width:min(560px,calc(100vw - 32px))
+}
+.maplibregl-ctrl-bottom-left{
+  left:8px;bottom:8px
+}
+
+@media(max-width:560px){
+  .aircraft-info{
+    left:8px;top:68px;width:min(286px,calc(100vw - 16px));
+    max-height:58vh;border-radius:16px
+  }
+  .aircraft-info-head{border-radius:16px 16px 0 0}
+}
