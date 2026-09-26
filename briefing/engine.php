@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/internal/quality.php';
 
 header('X-YC-API-Version: 1');
 header('X-YC-API-Resource: briefing');
@@ -46,48 +47,50 @@ function cachePut(string $key, array $payload): void {
 }
 
 function awcGet(string $path, array $query = [], int $timeout = 15): array {
-    $url = AWC_BASE . ltrim($path, '/');
-    if ($query) $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    return awcGetMany([['path'=>$path,'query'=>$query]],$timeout)[0];
+}
 
-    $attempt = function(bool $verifyPeer) use ($url, $timeout): array {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 2,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_USERAGENT => USER_AGENT,
-            CURLOPT_HTTPHEADER => ['Accept: application/json, application/geo+json;q=0.9, */*;q=0.5'],
-            CURLOPT_ENCODING => '',
-            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-            CURLOPT_SSL_VERIFYPEER => $verifyPeer,
-            CURLOPT_SSL_VERIFYHOST => 2,
-        ]);
-        $body = curl_exec($ch);
-        $errno = curl_errno($ch);
-        $error = curl_error($ch);
-        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        return compact('body', 'errno', 'error', 'status');
-    };
-
-    $r = $attempt(true);
-    if ($r['errno'] !== 0 && stripos((string)$r['error'], 'certificate has expired') !== false) {
-        $r = $attempt(false);
+/** At most four simultaneous requests; bounded wall time and source-specific cache. */
+function awcGetMany(array $requests,int $budget=22): array {
+    $results=[];$pending=[];$ttl=['airport'=>86400,'stationinfo'=>21600,'metar'=>60,'taf'=>180,'isigmet'=>60];
+    foreach($requests as $i=>$r){
+        $query=$r['query']??[];ksort($query);
+        $url=AWC_BASE.$r['path'].'?'.http_build_query($query,'','&',PHP_QUERY_RFC3986);
+        $key='awc|'.$url;$cached=ycBriefCacheRead($key,$ttl[$r['path']]??60);
+        if($cached!==null){$results[$i]=$cached;continue;}
+        $pending[]=['index'=>$i,'url'=>$url,'key'=>$key];
     }
-
-    if ($r['status'] === 204) return ['ok' => true, 'status' => 204, 'data' => []];
-    if ($r['errno'] !== 0 || $r['body'] === false || $r['status'] < 200 || $r['status'] >= 300) {
-        return ['ok' => false, 'status' => $r['status'], 'error' => $r['error'] ?: ('HTTP ' . $r['status']), 'url' => $url];
-    }
-
-    $data = json_decode((string)$r['body'], true);
-    if ($data === null && trim((string)$r['body']) !== 'null') {
-        return ['ok' => false, 'status' => $r['status'], 'error' => 'AWC JSON yanıtı çözülemedi.', 'url' => $url];
-    }
-
-    return ['ok' => true, 'status' => $r['status'], 'data' => $data];
+    if(!$pending){ksort($results);return $results;}
+    $multi=curl_multi_init();$active=[];
+    $GLOBALS['ycBriefDeadline']=$GLOBALS['ycBriefDeadline']??microtime(true)+40;
+    $deadline=min(microtime(true)+$budget,$GLOBALS['ycBriefDeadline']);
+    try{
+        do{
+            while($pending&&count($active)<4&&microtime(true)<$deadline){
+                $job=array_shift($pending);$ch=curl_init($job['url']);
+                curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>2,
+                    CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT_MS=>max(1,(int)(min(12,$deadline-microtime(true))*1000)),
+                    CURLOPT_USERAGENT=>USER_AGENT,CURLOPT_HTTPHEADER=>['Accept: application/json, application/geo+json'],
+                    CURLOPT_ENCODING=>'',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2]);
+                $active[spl_object_id($ch)]=[$ch,$job];curl_multi_add_handle($multi,$ch);
+            }
+            curl_multi_exec($multi,$running);
+            while($info=curl_multi_info_read($multi)){
+                $ch=$info['handle'];[$unused,$job]=$active[spl_object_id($ch)];
+                $body=curl_multi_getcontent($ch);$status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
+                $decoded=$status===204?[]:json_decode((string)$body,true);
+                $ok=$info['result']===CURLE_OK&&$status>=200&&$status<300&&is_array($decoded);
+                $result=['ok'=>$ok,'status'=>$status];
+                if($ok){$result['data']=$decoded;$result['retrievedAt']=gmdate('c');ycBriefCacheWrite($job['key'],$result);}
+                else $result['error']=curl_error($ch)?:($status>=200&&$status<300?'AWC JSON yanıtı geçersiz.':'HTTP '.$status);
+                $results[$job['index']]=$result;curl_multi_remove_handle($multi,$ch);unset($active[spl_object_id($ch)]);curl_close($ch);
+            }
+            if($active&&microtime(true)<$deadline){if(curl_multi_select($multi,0.15)===-1)usleep(10000);}
+        }while(($pending||$active)&&microtime(true)<$deadline);
+        foreach($active as [$ch,$job]){$results[$job['index']]=['ok'=>false,'status'=>0,'error'=>'Kaynak zaman bütçesi aşıldı.'];curl_multi_remove_handle($multi,$ch);curl_close($ch);}
+        foreach($pending as $job)$results[$job['index']]=['ok'=>false,'status'=>0,'error'=>'Kaynak zaman bütçesi aşıldı.'];
+    }finally{curl_multi_close($multi);}
+    ksort($results);return $results;
 }
 
 function rad(float $d): float { return $d * M_PI / 180.0; }
@@ -127,7 +130,8 @@ function nearestRoute(array $route, float $lat, float $lon): array {
         $d = haversineNm($lat, $lon, (float)$p[0], (float)$p[1]);
         if ($d < $best) { $best = $d; $idx = $i; }
     }
-    $progress = count($route) > 1 ? $idx / (count($route) - 1) : 0.0;
+    $cum=ycBriefCumulative($route); $total=end($cum);
+    $progress=$total>0?$cum[$idx]/$total:0.0;
     return [$best, $progress];
 }
 
@@ -147,14 +151,7 @@ function buildRoute(array $points): array {
 }
 
 function sampleRoute(array $route, int $count): array {
-    $n = count($route);
-    if ($n <= $count) return $route;
-    $out = [];
-    for ($i = 0; $i < $count; $i++) {
-        $idx = (int)round(($i / max(1, $count - 1)) * ($n - 1));
-        $out[] = $route[$idx];
-    }
-    return $out;
+    return ycBriefResample($route,$count);
 }
 
 function parseCoordinateToken(string $token): ?array {
@@ -430,34 +427,11 @@ function chooseNavCandidate(array $rows, array $directRoute, float $lastProgress
 }
 
 function navDb(): ?PDO {
-    static $pdo = false;
-    if ($pdo instanceof PDO) return $pdo;
-    if ($pdo === null) return null;
-    if (!extension_loaded('pdo_mysql')) { $pdo=null; return null; }
-
-    $homeRoot=dirname(__DIR__,4);
-    $configPath=$homeRoot.'/data.php';
-    if (!is_file($configPath)) { $pdo=null; return null; }
-
-    $cfg=require $configPath;
-    if (!is_array($cfg)) { $pdo=null; return null; }
-    foreach (['host','port','database','user','password'] as $key) {
-        if (!array_key_exists($key,$cfg)) { $pdo=null; return null; }
-    }
-
     try {
-        $dsn=sprintf(
-            'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
-            $cfg['host'],(int)$cfg['port'],$cfg['database']
-        );
-        $pdo=new PDO($dsn,$cfg['user'],$cfg['password'],[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES=>false
-        ]);
-        return $pdo;
+        require_once dirname(__DIR__).'/notam/core.php';
+        return nmsDb();
     } catch (Throwable $e) {
-        $pdo=null;
+        error_log('[briefing-navdata] '.$e->getMessage());
         return null;
     }
 }
@@ -471,7 +445,7 @@ function navFetchPointCandidates(PDO $pdo,array $idents): array {
 
     $placeholders=implode(',',array_fill(0,count($idents),'?'));
     $stmt=$pdo->prepare(
-        "SELECT id,source_id,kind,ident,name,lat,lon,type_code,frequency_text,channel,provider_status
+        "SELECT id,source_id,kind,ident,name,lat,lon,type_code,frequency_text,channel,provider_status,extra_json
          FROM nav_points
          WHERE ident IN ($placeholders)"
     );
@@ -526,11 +500,11 @@ function navBestGeometryLine(array $lines): array {
     return $best;
 }
 
-function navLoadRoute(PDO $pdo,string $ident,string $type): ?array {
+function navLoadRoute(PDO $pdo,string $ident,string $type,int $fl=360): ?array {
     static $cache=[];
     $ident=strtoupper(trim($ident));
     $type=strtolower(trim($type));
-    $key=$type.'|'.$ident;
+    $key=spl_object_id($pdo).'|'.$type.'|'.$ident.'|'.$fl;
     if (array_key_exists($key,$cache)) return $cache[$key];
 
     $stmt=$pdo->prepare(
@@ -584,6 +558,7 @@ function navLoadRoute(PDO $pdo,string $ident,string $type): ?array {
         return null;
     }
 
+    $availability=$type==='airway'?ycBriefAvailability($pdo,array_column($segments,'membershipId')):[];
     $nodes=[]; $adj=[]; $undirected=[]; $indegree=[]; $outdegree=[];
     foreach ($segments as &$seg) {
         $seg['geometry']=navBestGeometryLine($seg['geometryLines']);
@@ -601,23 +576,27 @@ function navLoadRoute(PDO $pdo,string $ident,string $type): ?array {
             if (is_array($last)&&count($last)>=2) $nodes[$to]=['lat'=>(float)$last[1],'lon'=>(float)$last[0]];
         }
 
+        if($type==='airway'&&!ycArLevelAllowed(['lower_text'=>$seg['lowerText'],'upper_text'=>$seg['upperText'],'upper_unlimited'=>$seg['upperUnlimited']],$fl))continue;
+        $stateF=ycBriefDirectionState($availability[$seg['membershipId']]??[],$fl,true);
+        $stateB=ycBriefDirectionState($availability[$seg['membershipId']]??[],$fl,false);
         $f=$seg['forward']; $b=$seg['backward'];
         $allowForward=$f===null&&$b===null ? true : $f===1;
         $allowBackward=$f===null&&$b===null ? true : $b===1;
 
+        $allowForward=$allowForward&&$stateF!=='closed';$allowBackward=$allowBackward&&$stateB!=='closed';
         if ($allowForward) {
-            $adj[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false]);
+            $adj[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false,'availabilityState'=>$stateF]);
             $outdegree[$from]=($outdegree[$from]??0)+1;
             $indegree[$to]=($indegree[$to]??0)+1;
         }
         if ($allowBackward) {
-            $adj[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true]);
+            $adj[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true,'availabilityState'=>$stateB]);
             $outdegree[$to]=($outdegree[$to]??0)+1;
             $indegree[$from]=($indegree[$from]??0)+1;
         }
 
-        $undirected[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false]);
-        $undirected[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true]);
+        $undirected[$from][]=array_merge($seg,['next'=>$to,'reverse'=>false,'availabilityState'=>$stateF]);
+        $undirected[$to][]=array_merge($seg,['next'=>$from,'reverse'=>true,'availabilityState'=>$stateB]);
         $indegree[$from]=$indegree[$from]??0; $indegree[$to]=$indegree[$to]??0;
         $outdegree[$from]=$outdegree[$from]??0; $outdegree[$to]=$outdegree[$to]??0;
     }
@@ -700,6 +679,7 @@ function navFindRoutePath(
     $start=$startIdent!==null?strtoupper($startIdent):null;
     $end=$endIdent!==null?strtoupper($endIdent):null;
 
+    if(($route['type']??'')==='airway'&&(!$start||!$end||!navRouteHasNode($route,$start)||!navRouteHasNode($route,$end)))return null;
     if (!$start || !navRouteHasNode($route,$start)) {
         if (!$startCoord) return null;
         $start=navNearestRouteNode($route,$startCoord,$preferSource?'source':'any');
@@ -712,10 +692,6 @@ function navFindRoutePath(
 
     $path=navGraphPath($route['adj'],$start,$end);
     $directionFallback=false;
-    if ($path===null) {
-        $path=navGraphPath($route['undirected'],$start,$end);
-        $directionFallback=$path!==null;
-    }
     if ($path===null) return null;
 
     return [
@@ -813,7 +789,8 @@ function navChoosePoint(
                 'lat'=>$lat,'lon'=>$lon,
                 'progress'=>$progress,
                 'sourceId'=>(int)$row['id'],
-                'kind'=>$row['kind']??null
+                'kind'=>$row['kind']??null,
+                'details'=>ycBriefNavDetails($row)
             ];
         }
     }
@@ -832,10 +809,10 @@ function navRouteTypeForItem(array $item,int $index,int $count): ?string {
     return null;
 }
 
-function resolveUserRoute(string $raw,string $from,string $to,array $departure,array $arrival): array {
+function resolveUserRoute(string $raw,string $from,string $to,array $departure,array $arrival,?PDO $database=null,int $cruiseFL=360): array {
     $parsed=parseRouteTokens($raw,$from,$to);
     $items=$parsed['parsed'];
-    $pdo=navDb();
+    $pdo=$database??navDb();
 
     // If navdata DB is unavailable, retain the previous AWC point-only resolver.
     if (!$pdo) {
@@ -898,10 +875,10 @@ function resolveUserRoute(string $raw,string $from,string $to,array $departure,a
         $type=navRouteTypeForItem($item,$i,count($items));
         if (!$type) continue;
         $ident=strtoupper((string)($item['token']??''));
-        $def=navLoadRoute($pdo,$ident,$type);
+        $def=navLoadRoute($pdo,$ident,$type,$cruiseFL);
         if (!$def && ($item['kind']??'')==='procedure') {
             $alt=$type==='sid'?'star':'sid';
-            $def=navLoadRoute($pdo,$ident,$alt);
+            $def=navLoadRoute($pdo,$ident,$alt,$cruiseFL);
             if ($def) $type=$alt;
         }
         if ($def) $routeDefs[$i]=$def;
@@ -986,6 +963,14 @@ function resolveUserRoute(string $raw,string $from,string $to,array $departure,a
                 continue;
             }
 
+            $nodeIds=[$path['start'],$path['end']];
+            foreach($path['edges'] as $edge){$nodeIds[]=$edge['from'];$nodeIds[]=$edge['to'];}
+            $nodeRows=navFetchPointCandidates($pdo,$nodeIds);
+            foreach(array_unique($nodeIds) as $nodeId){
+                $coord=$def['nodes'][$nodeId]??null;if(!$coord)continue;
+                $node=navChoosePoint($nodeId,$nodeRows[$nodeId]??[],$directRoute,0,$coord,[$def]);
+                $resolved[]=$node??['id'=>$nodeId,'type'=>'fix','lat'=>$coord['lat'],'lon'=>$coord['lon']];
+            }
             $last=navAppendPath($route,$path,$def);
             $currentIdent=$path['end'];
             if ($last) $currentCoord=$last;
@@ -998,7 +983,10 @@ function resolveUserRoute(string $raw,string $from,string $to,array $departure,a
                 'start'=>$path['start'],
                 'end'=>$path['end'],
                 'segments'=>count($path['edges']),
-                'directionFallback'=>$path['directionFallback']
+                'availabilityUnknownCount'=>count(array_filter($path['edges'],static fn($e)=>($e['availabilityState']??'unknown')==='unknown')),
+                'availabilityConditionalCount'=>count(array_filter($path['edges'],static fn($e)=>($e['availabilityState']??'unknown')==='conditional')),
+                'directionFallback'=>$path['directionFallback'],
+                'geometry'=>array_map(static fn($e)=>['from'=>!empty($e['reverse'])?$e['to']:$e['from'],'to'=>!empty($e['reverse'])?$e['from']:$e['to'],'coordinates'=>$e['geometry']??[]],$path['edges'])
             ];
             if ($path['directionFallback']) $warnings[]="$type $id yön bilgisiyle doğrudan çözülemedi; topoloji üzerinden ters-yön fallback kullanıldı.";
             continue;
@@ -1343,6 +1331,7 @@ function pointGeometryDistanceNm(float $lat,float $lon,?array $geometry): float 
 }
 
 function routeEncounterWindow(array $route,?array $geometry,int $etdEpoch,int $flightEndEpoch,float $thresholdNm=100.0): ?array {
+    $route=ycBriefResample($route,max(2,min(1600,(int)ceil(navPolylineDistance($route)/10)+1)));
     $n=count($route);
     if ($n<2 || !$geometry) return null;
     $first=null; $last=null; $closestIdx=null; $closest=INF;
@@ -1359,8 +1348,9 @@ function routeEncounterWindow(array $route,?array $geometry,int $etdEpoch,int $f
 
     $span=max(1,$n-1);
     $duration=max(0,$flightEndEpoch-$etdEpoch);
-    $progressStart=$first/$span;
-    $progressEnd=$last/$span;
+    // Include neighbouring samples so a narrow boundary is not declared time-irrelevant.
+    $progressStart=max(0,$first-1)/$span;
+    $progressEnd=min($span,$last+1)/$span;
     $progressClosest=($closestIdx??$first)/$span;
 
     return [
@@ -1443,6 +1433,8 @@ function analyzeSigmets(array $sigmets,array $route,int $cruiseFL,int $etdEpoch,
     return $out;
 }
 
+if (defined('YC_BRIEFING_TEST_MODE')) return;
+
 $from=strtoupper(trim((string)($_GET['from'] ?? '')));
 $to=strtoupper(trim((string)($_GET['to'] ?? '')));
 $routeRaw=strtoupper(normalizeRouteWhitespace((string)($_GET['route'] ?? '')));
@@ -1452,14 +1444,14 @@ $cruiseFL=max(50,min(600,$cruiseFL));
 
 $etdRaw=trim((string)($_GET['etd'] ?? ''));
 $etdEpoch=$etdRaw!=='' ? strtotime($etdRaw.' UTC') : time();
-if ($etdEpoch===false) $etdEpoch=time();
+if ($etdEpoch===false) respond(400,['ok'=>false,'error'=>'Geçerli ETD UTC girin.']);
 
 if (!preg_match('/^[A-Z0-9]{4}$/',$from) || !preg_match('/^[A-Z0-9]{4}$/',$to) || $from===$to) {
     respond(400,['ok'=>false,'error'=>'Geçerli ve farklı iki ICAO kodu girin. Örnek: LTAI → EDDB.']);
 }
 if (!function_exists('curl_init')) respond(500,['ok'=>false,'error'=>'PHP cURL aktif değil.']);
 
-$cacheKey="{$from}|{$to}|{$cruiseFL}|".gmdate('YmdHi',$etdEpoch).'|'.sha1($routeRaw);
+$cacheKey=YC_BRIEF_REVISION."|".(!empty($GLOBALS['ycBriefAutoRoute'])?'auto':'user')."|{$from}|{$to}|{$cruiseFL}|".gmdate('YmdHi',$etdEpoch).'|'.sha1($routeRaw);
 if ($cached=cacheGet($cacheKey,180)) respond(200,$cached);
 
 $airportRes=awcGet('airport',['ids'=>$from.','.$to,'format'=>'json']);
@@ -1479,8 +1471,9 @@ $resolvedRoute=[];
 $routeInput=['raw'=>$routeRaw!==''?$routeRaw:null,'parserVersion'=>'3.0','resolved'=>[],'unresolved'=>[],'pendingNavdata'=>[],'ignored'=>[],'unknown'=>[],'structure'=>null,'verticalProfile'=>null,'alternates'=>[],'recognized'=>[],'engine'=>null,'navdataResolved'=>[],'warnings'=>[]];
 
 if ($routeRaw!=='') {
-    $resolvedRoute=resolveUserRoute($routeRaw,$from,$to,$a,$b);
-    $routeInput['resolved']=$resolvedRoute['resolved'];
+    $resolvedRoute=resolveUserRoute($routeRaw,$from,$to,$a,$b,null,$cruiseFL);
+    $unique=[];foreach($resolvedRoute['resolved'] as $point){$key=$point['id'].'|'.round($point['lat'],4).'|'.round($point['lon'],4);$unique[$key]=$point;}
+    $routeInput['resolved']=array_values($unique);
     $routeInput['unresolved']=$resolvedRoute['unresolved'];
     $routeInput['pendingNavdata']=$resolvedRoute['pendingNavdata'];
     $routeInput['ignored']=$resolvedRoute['ignored'];
@@ -1512,6 +1505,8 @@ if ($routeMode==='great_circle') {
     ];
 }
 
+// Dense, distance-spaced geometry keeps station and hazard sampling independent of navdata vertex density.
+$route=ycBriefDensify($route);
 $estimatedEetMinutes=max(30,(int)round(($distanceNm/450.0)*60+20));
 $flightEndEpoch=$etdEpoch+$estimatedEetMinutes*60;
 
@@ -1519,13 +1514,18 @@ $probeCount=max(6,min(16,(int)ceil($distanceNm/120)+1));
 $probeRoute=sampleRoute($route,$probeCount);
 $stationPool=[]; $searchNm=105.0;
 
+$stationRequests=[['path'=>'stationinfo','query'=>['ids'=>$from.','.$to,'format'=>'json']]];
 foreach ($probeRoute as $p) {
     $lat=(float)$p[0]; $lon=(float)$p[1];
     $latDelta=$searchNm/60.0;
     $cos=max(0.18,abs(cos(rad($lat))));
     $lonDelta=$searchNm/(60.0*$cos);
     $bbox=sprintf('%.3f,%.3f,%.3f,%.3f',max(-90,$lat-$latDelta),max(-180,$lon-$lonDelta),min(90,$lat+$latDelta),min(180,$lon+$lonDelta));
-    $res=awcGet('stationinfo',['bbox'=>$bbox,'format'=>'json']);
+    $stationRequests[]=['path'=>'stationinfo','query'=>['bbox'=>$bbox,'format'=>'json']];
+}
+$stationResults=awcGetMany($stationRequests);
+$endpointStationsRes=array_shift($stationResults);
+foreach($stationResults as $res){
     if (!$res['ok'] || !is_array($res['data'])) continue;
     foreach ($res['data'] as $row) {
         if (!is_array($row)) continue;
@@ -1536,7 +1536,6 @@ foreach ($probeRoute as $p) {
 }
 
 $intermediate=selectStations(array_values($stationPool),$distanceNm,12,75.0);
-$endpointStationsRes=awcGet('stationinfo',['ids'=>$from.','.$to,'format'=>'json']);
 $endpointMap=$endpointStationsRes['ok'] && is_array($endpointStationsRes['data']) ? mapByIcao($endpointStationsRes['data']) : [];
 $fromStation=isset($endpointMap[$from])?normalizeStation($endpointMap[$from],$route):null;
 $toStation=isset($endpointMap[$to])?normalizeStation($endpointMap[$to],$route):null;
@@ -1557,8 +1556,11 @@ foreach ($intermediate as &$s) $s['role']='enroute'; unset($s);
 $stations=array_merge([$fromBase],$intermediate,[$toBase]);
 
 $ids=implode(',',array_values(array_unique(array_column($stations,'icao'))));
-$metarRes=awcGet('metar',['ids'=>$ids,'format'=>'json']);
-$tafRes=awcGet('taf',['ids'=>$ids,'format'=>'json']);
+[$metarRes,$tafRes,$sigmetRes]=awcGetMany([
+    ['path'=>'metar','query'=>['ids'=>$ids,'format'=>'json']],
+    ['path'=>'taf','query'=>['ids'=>$ids,'format'=>'json']],
+    ['path'=>'isigmet','query'=>['format'=>'geojson']]
+],15);
 $metarMap=$metarRes['ok'] && is_array($metarRes['data']) ? mapByIcao($metarRes['data']) : [];
 $tafMap=$tafRes['ok'] && is_array($tafRes['data']) ? mapByIcao($tafRes['data']) : [];
 
@@ -1581,7 +1583,8 @@ foreach ($stations as &$s) {
 
     $tafFrom=is_array($t)?firstTimestamp($t,['validTimeFrom']):null;
     $tafTo=is_array($t)?firstTimestamp($t,['validTimeTo']):null;
-    $tafFresh=$tafFrom!==null && $tafTo!==null && $tafFrom <= $flightEndEpoch && $tafTo >= $etdEpoch;
+    $stationEpoch=$s['role']==='departure'?$etdEpoch:($s['role']==='arrival'?$flightEndEpoch:$etdEpoch+(int)round(($flightEndEpoch-$etdEpoch)*(float)$s['progress']));
+    $tafFresh=$tafFrom!==null && $tafTo!==null && $tafFrom <= $stationEpoch && $tafTo >= $stationEpoch;
     $s['taf']=$tafFresh?[
         'raw'=>$t['rawTAF']??null,
         'issueTime'=>$t['issueTime']??null,
@@ -1589,6 +1592,7 @@ foreach ($stations as &$s) {
         'validTo'=>$t['validTimeTo']??null,
     ]:null;
     $s['tafStale']=is_array($t) && !$tafFresh;
+    $s['tafRelevantAtUtc']=gmdate('c',$stationEpoch);
     $s['hasMetar']=$s['metar']!==null;
     $s['hasTaf']=$s['taf']!==null;
 }
@@ -1609,7 +1613,7 @@ $stations=array_values(array_filter(array_merge(
     $arrStation?[$arrStation]:[]
 )));
 
-$sigmetRes=awcGet('isigmet',['format'=>'geojson'],15);
+
 $sigmetAvailable=$sigmetRes['ok'] && (
     ($sigmetRes['status']??0)===204 ||
     (is_array($sigmetRes['data']??null) && ($sigmetRes['data']['type']??'')==='FeatureCollection' && is_array($sigmetRes['data']['features']??null))
@@ -1626,7 +1630,11 @@ $payload=[
     'ok'=>true,
     'source'=>'NOAA/NWS Aviation Weather Center',
     'fetchedAt'=>gmdate('c'),
+    'revision'=>YC_BRIEF_REVISION,
     'routeMode'=>$routeMode,
+    'navdataContext'=>ycBriefNavContext(navDb(),$from,$to),
+    'routeQuality'=>ycBriefQuality($routeMode,$routeInput,!empty($GLOBALS['ycBriefAutoRoute'])),
+    'autoRoute'=>$GLOBALS['ycBriefAutoRoute']??null,
     'operationalRoute'=>false,
     'distanceNm'=>round($distanceNm,0),
     'from'=>$fromBase,
@@ -1647,9 +1655,10 @@ $payload=[
         'eetIsEstimate'=>true
     ],
     'sourceStatus'=>[
-        'metar'=>['ok'=>$metarRes['ok'],'httpStatus'=>$metarRes['status'],'error'=>$metarRes['error']??null],
-        'taf'=>['ok'=>$tafRes['ok'],'httpStatus'=>$tafRes['status'],'error'=>$tafRes['error']??null],
-        'sigmet'=>['ok'=>$sigmetAvailable,'httpStatus'=>$sigmetRes['status'],'error'=>$sigmetAvailable?null:($sigmetRes['error']??'Beklenmeyen SIGMET yanıtı.')]
+        'stations'=>['ok'=>count(array_filter($stationResults,static fn($r)=>!$r['ok']))===0,'requested'=>count($stationResults),'successful'=>count(array_filter($stationResults,static fn($r)=>$r['ok']))],
+        'metar'=>['ok'=>$metarRes['ok'],'httpStatus'=>$metarRes['status'],'error'=>$metarRes['error']??null,'retrievedAt'=>$metarRes['retrievedAt']??null],
+        'taf'=>['ok'=>$tafRes['ok'],'httpStatus'=>$tafRes['status'],'error'=>$tafRes['error']??null,'retrievedAt'=>$tafRes['retrievedAt']??null],
+        'sigmet'=>['retrievedAt'=>$sigmetRes['retrievedAt']??null,'ok'=>$sigmetAvailable,'httpStatus'=>$sigmetRes['status'],'error'=>$sigmetAvailable?null:($sigmetRes['error']??'Beklenmeyen SIGMET yanıtı.')]
     ],
     'hazards'=>$hazards,
     'hazardSummary'=>[

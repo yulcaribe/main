@@ -32,10 +32,5 @@ $html = str_replace(
     '<span>Data: NOAA / NWS Aviation Weather Center + NOAA/NCEP GFS + FAA NMS + YulCaribe navdata</span>',
     $html
 );
-$html = str_replace(
-    'await load("/main/briefing/briefing.js?v=15");',
-    "await load(\"/main/briefing/notam-ui-v2.js?v=2\");\n          await load(\"/main/briefing/briefing.js?v=16\");",
-    $html
-);
 
 echo $html;

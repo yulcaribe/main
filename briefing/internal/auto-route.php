@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/quality.php';
 
 /**
  * Estimated Pilot Briefing auto-router.
@@ -253,7 +254,7 @@ function ycArBuild(PDO $pdo,array $dep,array $arr,int $fl): ?array {
     $west=max(-179.5,min($dep['lon'],$arr['lon'])-$pad); $east=min(179.5,max($dep['lon'],$arr['lon'])+$pad);
     $bbox=sprintf('POLYGON((%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F))',$west,$south,$east,$south,$east,$north,$west,$north,$west,$south);
 
-    $stmt=$pdo->prepare("SELECT COALESCE(NULLIF(TRIM(s.from_ident),''),NULLIF(TRIM(rg.from_ident),'')) AS from_ident,COALESCE(NULLIF(TRIM(s.to_ident),''),NULLIF(TRIM(rg.to_ident),'')) AS to_ident,COALESCE(NULLIF(rg.geometry_json,''),ST_AsGeoJSON(rg.geom,6)) AS geometry,r.ident,rm.forward,rm.backward,COALESCE(NULLIF(TRIM(rm.lower_text),''),s.lower_text) AS lower_text,COALESCE(NULLIF(TRIM(rm.upper_text),''),s.upper_text) AS upper_text,CASE WHEN COALESCE(rm.upper_unlimited,0)=1 OR COALESCE(s.upper_unlimited,0)=1 THEN 1 ELSE 0 END AS upper_unlimited FROM nav_route_geometry rg JOIN nav_route_memberships rm ON rm.segment_id=rg.segment_id JOIN nav_route_segments s ON s.id=rm.segment_id JOIN nav_routes r ON r.id=rm.route_id WHERE r.type='airway' AND rg.geom IS NOT NULL AND MBRIntersects(rg.geom,ST_GeomFromText(:bbox)) LIMIT 60000");
+    $stmt=$pdo->prepare("SELECT COALESCE(NULLIF(TRIM(s.from_ident),''),NULLIF(TRIM(rg.from_ident),'')) AS from_ident,COALESCE(NULLIF(TRIM(s.to_ident),''),NULLIF(TRIM(rg.to_ident),'')) AS to_ident,COALESCE(NULLIF(rg.geometry_json,''),ST_AsGeoJSON(rg.geom,6)) AS geometry,rm.id AS membership_id,r.ident,rm.forward,rm.backward,COALESCE(NULLIF(TRIM(rm.lower_text),''),s.lower_text) AS lower_text,COALESCE(NULLIF(TRIM(rm.upper_text),''),s.upper_text) AS upper_text,CASE WHEN COALESCE(rm.upper_unlimited,0)=1 OR COALESCE(s.upper_unlimited,0)=1 THEN 1 ELSE 0 END AS upper_unlimited FROM nav_route_geometry rg JOIN nav_route_memberships rm ON rm.segment_id=rg.segment_id JOIN nav_route_segments s ON s.id=rm.segment_id JOIN nav_routes r ON r.id=rm.route_id WHERE r.type='airway' AND rg.geom IS NOT NULL AND MBRIntersects(rg.geom,ST_GeomFromText(:bbox)) LIMIT 60000");
     $stmt->execute(['bbox'=>$bbox]);
 
     $corridor=max(230.0,min(460.0,$direct*0.22));
@@ -270,7 +271,7 @@ function ycArBuild(PDO $pdo,array $dep,array $arr,int $fl): ?array {
         for($i=0;$i<count($line)-1;$i++)$len+=ycArNm((float)$line[$i][1],(float)$line[$i][0],(float)$line[$i+1][1],(float)$line[$i+1][0]);
         if($len<=0.0||$len>700.0) continue;
         $first=$line[0];$last=$line[count($line)-1];
-        $segments[]=['from'=>$a,'to'=>$b,'airway'=>$aw,'len'=>$len,'off'=>$gm['off'],'forward'=>$r['forward'],'backward'=>$r['backward'],'first'=>$first,'last'=>$last];
+        $segments[]=['membership_id'=>(int)$r['membership_id'],'from'=>$a,'to'=>$b,'airway'=>$aw,'len'=>$len,'off'=>$gm['off'],'forward'=>$r['forward'],'backward'=>$r['backward'],'first'=>$first,'last'=>$last];
         ycArRememberCoord($coords,$metrics,$a,$first,$guide);
         ycArRememberCoord($coords,$metrics,$b,$last,$guide);
     }
@@ -278,17 +279,19 @@ function ycArBuild(PDO $pdo,array $dep,array $arr,int $fl): ?array {
     $GLOBALS['ycArStats']=['loaded'=>$loaded,'eligible'=>count($segments),'levelRejected'=>$levelRejected];
     if(count($segments)<2) return ycArFail('no-eligible-airway-segments');
 
+    $availability=ycBriefAvailability($pdo,array_column($segments,'membership_id'));
     $graph=[];
     foreach($coords as $id=>$unused)$graph[$id]=[];
     foreach($segments as $s){
         $allowF=$s['forward']===null&&$s['backward']===null?true:(int)$s['forward']===1;
         $allowB=$s['forward']===null&&$s['backward']===null?true:(int)$s['backward']===1;
+        $stateF=ycBriefDirectionState($availability[$s['membership_id']]??[],$fl,true);
+        $stateB=ycBriefDirectionState($availability[$s['membership_id']]??[],$fl,false);
+        $allowF=$allowF&&$stateF!=='closed';$allowB=$allowB&&$stateB!=='closed';
         $w=$s['len']+3.0+$s['len']*(min(1.5,$s['off']/max(1.0,$corridor))*0.18);
         $base=['kind'=>'airway','airway'=>$s['airway'],'distanceNm'=>$s['len']];
         if($allowF)$graph[$s['from']][]=array_merge($base,['from'=>$s['from'],'to'=>$s['to'],'weight'=>$w,'directionFallback'=>false]);
-        else $graph[$s['from']][]=array_merge($base,['from'=>$s['from'],'to'=>$s['to'],'weight'=>$w+1500.0,'directionFallback'=>true]);
         if($allowB)$graph[$s['to']][]=array_merge($base,['from'=>$s['to'],'to'=>$s['from'],'weight'=>$w,'directionFallback'=>false]);
-        else $graph[$s['to']][]=array_merge($base,['from'=>$s['to'],'to'=>$s['from'],'weight'=>$w+1500.0,'directionFallback'=>true]);
     }
 
     $bridgeCandidates=ycArAddDctBridges($graph,$coords,$metrics,$direct);
@@ -348,11 +351,14 @@ function ycArBuild(PDO $pdo,array $dep,array $arr,int $fl): ?array {
     ];
 }
 
+if(defined('YC_BRIEFING_TEST_MODE'))return;
+
 $routeSupplied=trim((string)($_GET['route']??''))!=='';
 if(!$routeSupplied){
     $from=strtoupper(trim((string)($_GET['from']??'')));
     $to=strtoupper(trim((string)($_GET['to']??'')));
     $fl=max(50,min(600,(int)($_GET['fl']??360)));
+    $GLOBALS['ycBriefAutoRoute']=['attempted'=>true,'candidate'=>null,'reason'=>null];
     if(preg_match('/^[A-Z0-9]{4}$/',$from)&&preg_match('/^[A-Z0-9]{4}$/',$to)&&$from!==$to){
         try{
             $pdo=nmsDb();
@@ -361,9 +367,12 @@ if(!$routeSupplied){
                 $GLOBALS['ycArLastReason']='airport-not-found';
                 $auto=null;
             }else{
-                $auto=ycArBuild($pdo,$airports[$from],$airports[$to],$fl);
+                $key='auto|'.$from.'|'.$to.'|'.$fl;
+                $auto=ycBriefCacheRead($key,180);
+                if(!$auto){$auto=ycArBuild($pdo,$airports[$from],$airports[$to],$fl);if($auto)ycBriefCacheWrite($key,$auto);}
             }
             if($auto&&trim((string)$auto['route'])!==''){
+                $GLOBALS['ycBriefAutoRoute']['candidate']=$auto;
                 $_GET['route']=$auto['route'];
                 $_GET['_yc_auto_navdata']='1';
                 $mode=((int)$auto['bridges']>0||(int)$auto['directionFallbacks']>0)?'navdata-hybrid':'navdata';
@@ -374,6 +383,7 @@ if(!$routeSupplied){
                 header('X-YC-Auto-Route-Bridge-NM: '.(float)$auto['bridgeNm']);
                 header('X-YC-Auto-Route-Direction-Fallbacks: '.(int)$auto['directionFallbacks']);
             }else{
+                $GLOBALS['ycBriefAutoRoute']['reason']=$GLOBALS['ycArLastReason']??'unknown';
                 header('X-YC-Auto-Route: great-circle');
                 header('X-YC-Auto-Route-Reason: '.preg_replace('/[^a-z0-9-]/','',(string)($GLOBALS['ycArLastReason']??'unknown')));
                 $stats=$GLOBALS['ycArStats']??[];
@@ -386,6 +396,7 @@ if(!$routeSupplied){
                 if(isset($stats['visited']))header('X-YC-Auto-Route-Visited: '.(int)$stats['visited']);
             }
         }catch(Throwable $e){
+            $GLOBALS['ycBriefAutoRoute']['reason']='engine-error';
             error_log('[briefing-auto-route] '.$e->getMessage());
             header('X-YC-Auto-Route: great-circle');
             header('X-YC-Auto-Route-Reason: engine-error');

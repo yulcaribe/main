@@ -226,9 +226,10 @@
         try{await load("/main/briefing/vendor/grib2utils.js?v=7");}catch(e){console.warn("Vendor GRIB utils yüklenemedi",e);}
         try{await load("/main/briefing/grib2-browser.js?v=7");}catch(e){console.warn("GRIB decoder wrapper yüklenemedi",e);}
         try{await load("/main/briefing/modelwx.js?v=10");}catch(e){console.warn("Model WX yüklenemedi",e);}
-        try{await load("/main/briefing/wafs.js?v=11");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
+        try{await load("/main/briefing/wafs.js?v=12");}catch(e){console.warn("WAFS görsel forecast modülü yüklenemedi",e);}
         try{
-          await load("/main/briefing/briefing.js?v=15");
+          await load("/main/briefing/notam-ui-v2.js?v=3");
+          await load("/main/briefing/briefing.js?v=17");
           boot.classList.add("hide");setTimeout(()=>boot.remove(),350);
         }catch(e){
           console.error(e);

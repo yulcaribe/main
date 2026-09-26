@@ -50,6 +50,8 @@
     return priority === "high" ? "bad" : priority === "medium" ? "warn" : "info";
   }
 
+  function matchedStatus(impact){return `${Number(impact.matchedCount||0)} MATCH · EKSİK KAPSAM`;}
+
   function patchNotamSummary(data) {
     const host = document.getElementById("simple-brief");
     if (!host) return;
@@ -75,6 +77,10 @@
         text = `${matched} aktif/potansiyel eşleşme: ${high} yüksek, ${medium} orta öncelik. ${Number(impact.endpointCount || 0)} DEP/ARR, ${Number(impact.routeIntersectionCount || 0)} route hit, ${Number(impact.referenceMatchCount || 0)} route ref. ${excluded} schedule-dışı kayıt elendi.${unknown ? ` ${unknown} schedule ifadesi kesin çözülemedi.` : ""}`;
       }
     }
+    if(impact?.available&&impact.coverageComplete!==true){
+      status=matchedStatus(impact);cls="warn";
+      text+=" Kapsam eksik/belirsiz: "+(impact.candidatesTruncated?"aday sınırına ulaşıldı. ":"")+(impact.sourceFreshness!=="fresh"?"kaynak senkronizasyonu eski veya bilinmiyor. ":"");
+    }
     row.innerHTML = `<div class="top"><strong>NOTAM</strong><span class="${cls}">${esc(status)}</span></div><p>${esc(text)}</p>`;
     const rows = [...host.querySelectorAll(".brief-line")];
     const arrival = rows.find(r => r.querySelector("strong")?.textContent?.trim() === "VARIŞ");
@@ -94,6 +100,7 @@
     }
 
     const count = Number(impact.matchedCount ?? impact.relevantCount ?? 0);
+    const qualityNote=impact.coverageComplete===true?"":`Kapsam eksik/belirsiz. Son senkronizasyon: ${impact.lastSuccessfulSyncUtc||"bilinmiyor"}. ${impact.candidatesTruncated?"Aday kayıt sınırına ulaşıldı.":""}`;
     const candidate = Number(impact.candidateCount || 0);
     const corridor = Number(impact.routeCorridorNm || 50);
     const high = Number(impact.highPriorityCount || 0);
@@ -106,7 +113,7 @@
     if (!count) {
       list.innerHTML = `
         <article class="hazard-card">
-          <div class="head"><strong>ROUTE NOTAM CHECK</strong><span class="tag info">NO ACTIVE MATCH</span></div>
+          <div class="head"><strong>ROUTE NOTAM CHECK</strong><span class="tag ${qualityNote?"warn":"info"}">${qualityNote?"EKSİK KAPSAM":"NO ACTIVE MATCH"}</span></div>
           <div class="hazard-meta">
             <span>${candidate} aday kayıt tarandı</span>
             <span>${excluded} schedule-dışı elendi</span>
@@ -114,13 +121,14 @@
             <span>FL${esc(impact.cruiseFL ?? "—")}</span>
             <span>${esc(impact.source || "FAA NMS")}</span>
           </div>
-          <pre>Otomatik kontrolde rota / meydan / uçuş penceresi / seviye açısından aktif eşleşme tespit edilmedi.${unknown ? ` ${unknown} schedule ifadesi manuel kontrol gerektiriyor.` : ""} Bu sonuç resmi briefing veya dispatch doğrulaması değildir.</pre>
+          <pre>${esc(qualityNote)} Otomatik kontrolde rota / meydan / uçuş penceresi / seviye açısından aktif eşleşme tespit edilmedi.${unknown ? ` ${unknown} schedule ifadesi manuel kontrol gerektiriyor.` : ""} Bu sonuç resmi briefing veya dispatch doğrulaması değildir.</pre>
         </article>`;
       return;
     }
 
     const summaryClass = high ? "bad" : medium ? "warn" : "info";
     const summary = `
+      ${qualityNote?`<div class="empty">${esc(qualityNote)}</div>`:""}
       <article class="hazard-card">
         <div class="head"><strong>ROUTE NOTAM CHECK</strong><span class="tag ${summaryClass}">${count} MATCHED</span></div>
         <div class="hazard-meta">
@@ -130,7 +138,7 @@
           <span>${Number(impact.nearRouteCount || 0)} NEAR ROUTE</span>
           <span>${Number(impact.referenceMatchCount || 0)} ROUTE REF</span>
           <span>${excluded} SCHEDULE-OUT</span>
-          <span>${unknown} SCHEDULE MANUAL</span>
+          <span>${unknown} SCHEDULE MANUAL</span><span>${Number(impact.atCruiseLevelCount||0)} CRUISE CONFIRMED</span><span>${Number(impact.unknownLevelCount||0)} LEVEL UNKNOWN</span>
         </div>
         <pre>“MATCHED” otomatik briefing filtresine eşleşen kaydı ifade eder; resmi operational acceptance değildir. Ortak DAILY / weekday saat kalıpları uygulanır, çözülemeyen schedule metinleri ayrıca işaretlenir.</pre>
       </article>`;
@@ -156,38 +164,8 @@
           <pre>${esc(item.text || "NOTAM text unavailable")}</pre>
         </article>`;
     }).join("");
-    const tail = items.length > 30 ? `<div class="empty">İlk 30 eşleşme gösteriliyor; toplam ${items.length} kayıt.</div>` : "";
+    const tail = items.length > 30 ? `<div class="empty">İlk 30 eşleşme gösteriliyor; toplam ${count} eşleşme${impact.itemsTruncated?"; API sonuç listesi kısaltıldı":""}.</div>` : "";
     list.innerHTML = summary + cards + tail;
-  }
-
-  function patchAutoRoute(autoMode, segments, airways, bridges, bridgeNm) {
-    if (!autoMode) return;
-    const type = document.getElementById("route-type");
-    const parsed = document.getElementById("resolved-route");
-    const rows = [...document.querySelectorAll("#simple-brief .brief-line")];
-    const routeRow = rows.find(row => row.querySelector("strong")?.textContent?.trim() === "ROTA");
-
-    if (autoMode === "navdata" || autoMode === "navdata-hybrid") {
-      const hybrid = autoMode === "navdata-hybrid";
-      if (type) type.textContent = hybrid ? "AUTO NAVDATA + DCT" : "AUTO NAVDATA";
-      if (parsed && !parsed.textContent.startsWith("AUTO ESTIMATED NAVDATA")) parsed.textContent = `AUTO ESTIMATED NAVDATA${hybrid ? " + SHORT DCT BRIDGES" : ""}\n${parsed.textContent}`;
-      if (routeRow) {
-        const status = routeRow.querySelector(".top span");
-        const text = routeRow.querySelector("p");
-        if (status) { status.textContent = hybrid ? "EST. NAVDATA + DCT" : "ESTIMATED NAVDATA"; status.className = "warn"; }
-        if (text) text.textContent = hybrid
-          ? `OFP girilmedi. Great-circle yalnızca arama rehberi oldu; MariaDB airway graph üzerinde ${airways || "—"} airway / ${segments || "—"} segment kullanıldı ve kopuk/FRA kısımları ${bridges || "—"} kısa DCT köprü (${bridgeNm || "—"} NM) ile bağlandı. IFPS/Eurocontrol onayı değildir.`
-          : `OFP girilmedi. Great-circle yalnızca arama rehberi oldu; MariaDB airway graph üzerinden ${airways || "—"} airway / ${segments || "—"} segmentlik tahmini rota üretildi. IFPS/Eurocontrol onayı değildir.`;
-      }
-    } else if (autoMode === "great-circle") {
-      if (type) type.textContent = "GREAT CIRCLE FALLBACK";
-      if (routeRow) {
-        const status = routeRow.querySelector(".top span");
-        const text = routeRow.querySelector("p");
-        if (status) { status.textContent = "ESTIMATED"; status.className = "warn"; }
-        if (text) text.textContent = "OFP girilmedi ve yeterli airway/DCT bağlantılı navdata rotası üretilemedi; great-circle fallback kullanılıyor.";
-      }
-    }
   }
 
   function updateFooter(data) {
@@ -200,33 +178,6 @@
     el.textContent = el.textContent.replace(/ · NOTAM .*$/, "") + suffix;
   }
 
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (...args) => {
-    const response = await nativeFetch(...args);
-    try {
-      const source = args[0] instanceof Request ? args[0].url : String(args[0] || "");
-      const url = new URL(source, location.href);
-      if (url.pathname.endsWith("/main/api/v1/briefing.php")) {
-        const clone = response.clone();
-        const autoMode = response.headers.get("X-YC-Auto-Route");
-        const segments = response.headers.get("X-YC-Auto-Route-Segments");
-        const airways = response.headers.get("X-YC-Auto-Route-Airways");
-        const bridges = response.headers.get("X-YC-Auto-Route-Bridges");
-        const bridgeNm = response.headers.get("X-YC-Auto-Route-Bridge-NM");
-        clone.json().then(data => {
-          const apply = () => {
-            patchNotamSummary(data);
-            renderNotam(data);
-            patchAutoRoute(autoMode, segments, airways, bridges, bridgeNm);
-            updateFooter(data);
-          };
-          setTimeout(apply, 40);
-          setTimeout(apply, 220);
-        }).catch(() => {});
-      }
-    } catch (_) {}
-    return response;
-  };
-
+  window.YCNotam={render(data){patchNotamSummary(data);renderNotam(data);updateFooter(data);}};
   ensureSection();
 })();

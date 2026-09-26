@@ -35,7 +35,8 @@ function ycBn2PolygonDistance(array $route,array $rings): float{$outer=$rings[0]
 function ycBn2GeometryDistance(array $route,?array $geometry): float{
     if(!$geometry||count($route)<2)return INF;$t=(string)($geometry['type']??'');$c=$geometry['coordinates']??null;if(!is_array($c))return INF;
     if($t==='Point')return ycBn2LineDistance($route,[$c]);
-    if($t==='MultiPoint'||$t==='LineString')return ycBn2LineDistance($route,$c);
+    if($t==='MultiPoint'){$best=INF;foreach($c as $point)$best=min($best,ycBn2LineDistance($route,[$point]));return $best;}
+    if($t==='LineString')return ycBn2LineDistance($route,$c);
     if($t==='Polygon')return ycBn2PolygonDistance($route,$c);
     $best=INF;
     if($t==='MultiLineString'){foreach($c as $line)if(is_array($line))$best=min($best,ycBn2LineDistance($route,$line));}
@@ -52,13 +53,17 @@ function ycBn2Priority(string $semantic,string $text): string{
     if(in_array($semantic,['TAXIWAY','APRON','OBSTACLE','MILITARY_ACTIVITY','UAV_ACTIVITY'],true)||preg_match('/\b(TWY|APRON|PAPI|LIGHT|LIGHTS|BARRIER|HELIPAD|FUEL|CRANE|OBSTACLE|CLSD|CLOSED|U\/S|UNSERVICEABLE|SUSPENDED|NOT AVBL)\b/',$u))return 'medium';
     return 'info';
 }
-function ycBn2RouteRefs(array $payload,array $query): array{
-    $refs=[];$add=static function(mixed $v)use(&$refs):void{$v=strtoupper(trim((string)$v));if($v!==''&&preg_match('/^[A-Z0-9]{2,12}$/',$v))$refs[$v]=true;};
-    foreach(($payload['routeEngine']['navdataResolved']??[])as $r)if(is_array($r))$add($r['id']??null);
-    $s=$payload['routeInput']['structure']??null;if(is_array($s)){$add($s['departure']['sid']??null);$add($s['arrival']['star']??null);foreach(($s['enroute']??[])as $r)if(is_array($r)&&in_array($r['type']??'',['airway','procedure'],true))$add($r['id']??null);}
-    $raw=strtoupper((string)($query['route']??''));if($raw!==''){preg_match_all('/\b(?:[UKS]?[ABGRLMNPHJVWQTYZ]\d{1,4}[A-Z]?|[A-Z]{3,6}\d[A-Z])\b/',$raw,$m);foreach(($m[0]??[])as $t)$add($t);}return array_slice(array_keys($refs),0,24);
+function ycBn2RouteRefs(array $payload,array $query): array {
+    if(($payload['routeMode']??'')==='great_circle')return [];
+    $refs=[];
+    foreach(($payload['routeEngine']['navdataResolved']??[]) as $r){
+        $id=strtoupper(trim((string)($r['id']??'')));
+        if(preg_match('/^[A-Z0-9]{2,12}$/',$id))$refs[$id]=true;
+    }
+    return array_keys($refs);
 }
-function ycBn2Bbox(array $route,float $pad=1.5): array{$lats=[];$lons=[];foreach($route as $p){if(!is_array($p)||count($p)<2)continue;$lats[]=(float)$p[0];$lons[]=(float)$p[1];}if(!$lats||!$lons)return[-180,-90,180,90];$s=max(-90,min($lats)-$pad);$n=min(90,max($lats)+$pad);$w=min($lons)-$pad;$e=max($lons)+$pad;if(($e-$w)>180)return[-180,$s,180,$n];return[max(-180,$w),$s,min(180,$e),$n];}
+
+function ycBn2Bbox(array $route,float $pad=1.5): array{$lats=[];$lons=[];foreach($route as $p){if(!is_array($p)||count($p)<2)continue;$lats[]=(float)$p[0];$lons[]=(float)$p[1];}if(!$lats||!$lons)return[-180,-90,180,90];$s=max(-90,min($lats)-$pad);$n=min(90,max($lats)+$pad);$lonPad=max($pad,50/(60*max(.05,cos(deg2rad(max(abs($s),abs($n)))))));$w=min($lons)-$lonPad;$e=max($lons)+$lonPad;if(($e-$w)>180)return[-180,$s,180,$n];return[max(-180,$w),$s,min(180,$e),$n];}
 function ycBn2Vertical(array $row,int $fl): array{$min=isset($row['minimum_fl'])&&$row['minimum_fl']!==null?(int)$row['minimum_fl']:null;$max=isset($row['maximum_fl'])&&$row['maximum_fl']!==null?(int)$row['maximum_fl']:null;if($min===null&&$max===null)return['relation'=>'unknown','overlap'=>true];if($min!==null&&$fl<$min)return['relation'=>'below_notam','overlap'=>false];if($max!==null&&$fl>$max)return['relation'=>'above_notam','overlap'=>false];return['relation'=>'at_cruise_level','overlap'=>true];}
 function ycBn2Ident(array $row): string{return ycNotamIdent($row)?:(string)($row['nms_id']??'NOTAM');}
 
@@ -73,47 +78,73 @@ function ycBn2DaySet(string $s): ?array{
 function ycBn2Clock(DateTimeImmutable $date,string $hhmm): DateTimeImmutable{
     $h=(int)substr($hhmm,0,2);$m=(int)substr($hhmm,2,2);$base=$date->setTime(0,0,0);if($h===24&&$m===0)return$base->modify('+1 day');return$base->setTime(min(23,$h),min(59,$m),0);
 }
-function ycBn2Schedule(string $schedule,DateTimeImmutable $from,DateTimeImmutable $to): array{
-    $u=strtoupper(trim(preg_replace('/\s+/',' ',$schedule)??$schedule));if($u==='')return['relation'=>'not_provided','parsed'=>true];
-    if(preg_match('/\b(SR|SS|HJ|HN|EXC|EXCEPT|H24 EXC)\b/',$u))return['relation'=>'unknown','parsed'=>false];
-    preg_match_all('/\b([0-2][0-9][0-5][0-9])-([0-2][0-9][0-5][0-9])\b/',$u,$m,PREG_SET_ORDER);if(!$m)return['relation'=>'unknown','parsed'=>false];
-    $daySet=ycBn2DaySet($u);$cursor=$from->setTime(0,0)->modify('-1 day');$endDate=$to->setTime(0,0)->modify('+1 day');$loops=0;
-    while($cursor<=$endDate&&$loops++<18){$dow=(int)$cursor->format('N');if($daySet===null||in_array($dow,$daySet,true)){foreach($m as $r){$a=ycBn2Clock($cursor,$r[1]);$b=ycBn2Clock($cursor,$r[2]);if($b<=$a)$b=$b->modify('+1 day');if($a<=$to&&$b>=$from)return['relation'=>'active','parsed'=>true];}}$cursor=$cursor->modify('+1 day');}
-    return['relation'=>'inactive','parsed'=>true];
+function ycBn2Schedule(string $schedule,DateTimeImmutable $from,DateTimeImmutable $to): array {
+    $u=strtoupper(trim(preg_replace('/\s+/',' ',$schedule)??$schedule));
+    if($u==='')return ['relation'=>'not_provided','parsed'=>true];
+    if($u==='H24')return ['relation'=>'active','parsed'=>true];
+    // Only a complete supported expression may exclude a record. Dates, exceptions,
+    // solar times and multiple day/time groups remain visible for manual checking.
+    $day='(?:MON|TUE|WED|THU|FRI|SAT|SUN)';
+    $prefix='(?:DAILY|'.$day.'(?:-'.$day.')?(?:[ ,]+'.$day.'(?:-'.$day.')?)*)';
+    $clock='(?:[01][0-9]|2[0-3])[0-5][0-9]';
+    $range=$clock.'-(?:'.$clock.'|2400)';
+    if(!preg_match('/^(?:('.$prefix.') )?('.$range.'(?:[ ,]+'.$range.')*)$/',$u,$parts))return ['relation'=>'unknown','parsed'=>false];
+    preg_match_all('/(\d{4})-(\d{4})/',$parts[2],$m,PREG_SET_ORDER);
+    $daySet=ycBn2DaySet($parts[1]??'');$cursor=$from->setTime(0,0)->modify('-1 day');$end=$to->setTime(0,0);$loops=0;
+    while($cursor<=$end&&$loops++<18){
+        if($daySet===null||in_array((int)$cursor->format('N'),$daySet,true))foreach($m as $r){
+            $a=ycBn2Clock($cursor,$r[1]);$b=ycBn2Clock($cursor,$r[2]);if($b<=$a)$b=$b->modify('+1 day');
+            if($a<=$to&&$b>=$from)return ['relation'=>'active','parsed'=>true];
+        }
+        $cursor=$cursor->modify('+1 day');
+    }
+    return $cursor<=$end?['relation'=>'unknown','parsed'=>false]:['relation'=>'inactive','parsed'=>true];
 }
 
-function ycBn2Enrich(array $payload,array $query): array{
+function ycBn2Enrich(array $payload,array $query,?PDO $database=null): array{
     $route=array_values(array_filter($payload['route']??[],static fn($p)=>is_array($p)&&count($p)>=2&&is_numeric($p[0])&&is_numeric($p[1])));if(count($route)<2)return$payload;
     $from=strtoupper(trim((string)($query['from']??($payload['routeInput']['structure']['departure']['airport']??''))));$to=strtoupper(trim((string)($query['to']??($payload['routeInput']['structure']['arrival']['airport']??''))));
     $flight=is_array($payload['flight']??null)?$payload['flight']:[];$fl=max(0,min(600,(int)($flight['cruiseFL']??($query['fl']??0))));$etd=ycBn2Utc($flight['etdUtc']??($query['etd']??null));$eta=ycBn2Utc($flight['estimatedArrivalUtc']??null,$etd->modify('+12 hours'));if($eta<$etd)$eta=$etd->modify('+12 hours');
     [$w,$s,$e,$n]=ycBn2Bbox($route);$bbox=sprintf('POLYGON((%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F,%.6F %.6F))',$w,$s,$e,$s,$e,$n,$w,$n,$w,$s);$refs=ycBn2RouteRefs($payload,$query);
     $regex='';if($refs){$escaped=array_map(static fn($v)=>preg_quote($v,'/'),$refs);$regex='(^|[^A-Z0-9])('.implode('|',$escaped).')([^A-Z0-9]|$)';}
-    $pdo=nmsDb();$parts=["(n.geometry IS NOT NULL AND MBRIntersects(n.geometry, ST_GeomFromText(:bbox)))","UPPER(COALESCE(n.icao_location,'')) IN (:dep,:arr)","UPPER(COALESCE(n.location,'')) IN (:dep2,:arr2)"];
-    $params=['source'=>YC_NOTAM_SOURCE,'environment'=>YC_NOTAM_ENVIRONMENT,'window_start'=>$etd->format('Y-m-d H:i:s'),'window_end'=>$eta->format('Y-m-d H:i:s'),'bbox'=>$bbox,'dep'=>$from,'arr'=>$to,'dep2'=>$from,'arr2'=>$to];if($regex!==''){$parts[]="UPPER(COALESCE(n.notam_text,'')) REGEXP :rr";$params['rr']=$regex;}
-    $sql="SELECT n.nms_id,n.series,n.number,n.year,n.notam_type,n.classification,n.affected_fir,n.location,n.icao_location,n.selection_code,n.traffic,n.purpose,n.scope,n.minimum_fl,n.maximum_fl,n.effective_start,n.effective_end,n.effective_end_raw,n.schedule,n.lower_limit,n.upper_limit,n.radius_nm,n.status,n.last_updated,n.notam_text,ST_AsGeoJSON(n.geometry,6) geometry_json FROM notams n WHERE n.source=:source AND n.environment=:environment AND n.status<>'cancelled' AND (n.effective_start IS NULL OR n.effective_start<=:window_end) AND (UPPER(COALESCE(n.effective_end_raw,''))='PERM' OR n.effective_end IS NULL OR n.effective_end>=:window_start) AND (".implode(' OR ',$parts).") ORDER BY n.last_updated DESC LIMIT 700";
+    $pdo=$database??nmsDb();$parts=["(n.geometry IS NOT NULL AND MBRIntersects(n.geometry, ST_GeomFromText(:bbox)))","UPPER(COALESCE(n.icao_location,'')) IN (:dep,:arr)","UPPER(COALESCE(n.location,'')) IN (:dep2,:arr2)"];
+    $params=['source'=>YC_NOTAM_SOURCE,'environment'=>YC_NOTAM_ENVIRONMENT,'window_start'=>$etd->modify('-90 minutes')->format('Y-m-d H:i:s'),'window_end'=>$eta->modify('+90 minutes')->format('Y-m-d H:i:s'),'bbox'=>$bbox,'dep'=>$from,'arr'=>$to,'dep2'=>$from,'arr2'=>$to];if($regex!==''){$parts[]="UPPER(COALESCE(n.notam_text,'')) REGEXP :rr";$params['rr']=$regex;}
+    $sql="SELECT n.nms_id,n.series,n.number,n.year,n.notam_type,n.classification,n.affected_fir,n.location,n.icao_location,n.selection_code,n.traffic,n.purpose,n.scope,n.minimum_fl,n.maximum_fl,n.effective_start,n.effective_end,n.effective_end_raw,n.schedule,n.lower_limit,n.upper_limit,n.radius_nm,n.status,n.last_updated,n.notam_text,ST_AsGeoJSON(n.geometry,6) geometry_json FROM notams n WHERE n.source=:source AND n.environment=:environment AND n.status<>'cancelled' AND (n.effective_start IS NULL OR n.effective_start<=:window_end) AND (UPPER(COALESCE(n.effective_end_raw,''))='PERM' OR n.effective_end IS NULL OR n.effective_end>=:window_start) AND (".implode(' OR ',$parts).") ORDER BY CASE WHEN UPPER(COALESCE(NULLIF(n.icao_location,''),n.location,'')) IN (:order_dep,:order_arr) THEN 0 ELSE 1 END,n.last_updated DESC LIMIT 2001";
+    $params['order_dep']=$from;$params['order_arr']=$to;
     $stmt=$pdo->prepare($sql);$stmt->execute($params);$rows=$stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    $candidateTruncated=count($rows)>2000;$rows=array_slice($rows,0,2000);
+    $lastSync=null;try{$sync=$pdo->prepare('SELECT last_successful_sync FROM notam_sync_state WHERE source=? AND environment=?');$sync->execute([YC_NOTAM_SOURCE,YC_NOTAM_ENVIRONMENT]);$lastSync=$sync->fetchColumn()?:null;}catch(Throwable $e){error_log('[briefing-notam-sync] status unavailable');}
+    $syncEpoch=$lastSync?strtotime($lastSync.' UTC'):false;$syncAge=$syncEpoch===false?null:max(0,time()-$syncEpoch);
+    $freshness=$syncAge===null?'unknown':($syncAge>900?'stale':'fresh');
     $items=[];$scheduleExcluded=0;$scheduleUnknown=0;$scheduleParsed=0;
     foreach($rows as $row){
         $geometry=json_decode((string)($row['geometry_json']??''),true);$geometry=is_array($geometry)?$geometry:null;$distance=ycBn2GeometryDistance($route,$geometry);$distanceNm=is_finite($distance)?round($distance,1):null;
-        $loc=strtoupper(trim((string)($row['icao_location']??$row['location']??'')));$endpointRole=$loc===$from?'departure':($loc===$to?'arrival':null);$endpoint=$endpointRole!==null;$text=(string)($row['notam_text']??'');$upper=strtoupper($text);$matched=[];foreach($refs as $ref)if(preg_match('/(^|[^A-Z0-9])'.preg_quote($ref,'/').'([^A-Z0-9]|$)/',$upper))$matched[]=$ref;
-        $vertical=ycBn2Vertical($row,$fl);$intersects=$distanceNm!==null&&$distanceNm<=5.0;$near=$distanceNm!==null&&$distanceNm<=50.0;$refMatch=!empty($matched);$relevant=$endpoint||$refMatch||($near&&$vertical['overlap']);if(!$relevant)continue;
+        $loc=strtoupper(trim((string)($row['icao_location']?:($row['location']??''))));$endpointRole=$loc===$from?'departure':($loc===$to?'arrival':null);$endpoint=$endpointRole!==null;$text=(string)($row['notam_text']??'');$upper=strtoupper($text);$matched=[];foreach($refs as $ref)if(preg_match('/(^|[^A-Z0-9])'.preg_quote($ref,'/').'([^A-Z0-9]|$)/',$upper))$matched[]=$ref;
+        $vertical=ycBn2Vertical($row,$fl);$intersects=$distanceNm!==null&&$distanceNm<=0.5;$near=$distanceNm!==null&&$distanceNm<=50.0;$refMatch=!empty($matched);$relevant=$endpoint||$refMatch||($near&&$vertical['overlap']);if(!$relevant)continue;
         $basis=$endpoint?'endpoint':($refMatch?'route_reference':($intersects?'route_intersection':'near_route'));
         $schedFrom=$endpointRole==='departure'?$etd->modify('-90 minutes'):($endpointRole==='arrival'?$eta->modify('-90 minutes'):$etd);$schedTo=$endpointRole==='departure'?$etd->modify('+90 minutes'):($endpointRole==='arrival'?$eta->modify('+90 minutes'):$eta);
+        $validFrom=!empty($row['effective_start'])?ycBn2Utc($row['effective_start']):null;
+        $validTo=!empty($row['effective_end'])?ycBn2Utc($row['effective_end']):null;
+        if(($validFrom&&$validFrom>$schedTo)||($validTo&&strtoupper((string)$row['effective_end_raw'])!=='PERM'&&$validTo<$schedFrom))continue;
+        if($validFrom&&$validFrom>$schedFrom)$schedFrom=$validFrom;
+        if($validTo&&strtoupper((string)$row['effective_end_raw'])!=='PERM'&&$validTo<$schedTo)$schedTo=$validTo;
         $schedule=ycBn2Schedule((string)($row['schedule']??''),$schedFrom,$schedTo);if($schedule['parsed'])$scheduleParsed++;if($schedule['relation']==='inactive'){$scheduleExcluded++;continue;}if($schedule['relation']==='unknown')$scheduleUnknown++;
         $semantic=ycBn2Semantic($row['selection_code']??null);$priority=ycBn2Priority($semantic,$text);$priorityPenalty=$priority==='high'?-18.0:($priority==='medium'?0.0:18.0);$score=($endpoint?0.0:($refMatch?8.0:20.0+(float)($distanceNm??100)))+$priorityPenalty;if(!$vertical['overlap']&&!$endpoint)$score+=35.0;if($schedule['relation']==='unknown')$score+=6.0;
         $items[]=['_score'=>$score,'id'=>(string)($row['nms_id']??''),'ident'=>ycBn2Ident($row),'location'=>$row['icao_location']?:($row['location']??null),'fir'=>$row['affected_fir']??null,'semantic'=>$semantic,'priority'=>$priority,'basis'=>$basis,'endpointRole'=>$endpointRole,'distanceNm'=>$distanceNm,'matchedRouteRefs'=>$matched,'verticalRelation'=>$vertical['relation'],'cruiseLevelOverlap'=>(bool)$vertical['overlap'],'minimumFl'=>isset($row['minimum_fl'])&&$row['minimum_fl']!==null?(int)$row['minimum_fl']:null,'maximumFl'=>isset($row['maximum_fl'])&&$row['maximum_fl']!==null?(int)$row['maximum_fl']:null,'effectiveStart'=>$row['effective_start']??null,'effectiveEnd'=>$row['effective_end']??null,'effectiveEndRaw'=>$row['effective_end_raw']??null,'schedule'=>$row['schedule']??null,'scheduleRelation'=>$schedule['relation'],'text'=>$text];
     }
-    usort($items,static fn($a,$b)=>($a['_score']<=>$b['_score'])?:strcmp((string)$a['ident'],(string)$b['ident']));$items=array_slice($items,0,80);foreach($items as &$i)unset($i['_score']);unset($i);
-    $countBy=static fn(string $k,string $v)=>count(array_filter($items,static fn($i)=>($i[$k]??null)===$v));
-    $high=$countBy('priority','high');$medium=$countBy('priority','medium');$info=$countBy('priority','info');$endpoint=$countBy('basis','endpoint');$hit=$countBy('basis','route_intersection');$near=$countBy('basis','near_route');$ref=$countBy('basis','route_reference');$cruise=count(array_filter($items,static fn($i)=>!empty($i['cruiseLevelOverlap'])));
-    $impact=['available'=>true,'source'=>'FAA NMS local MariaDB','checkedAt'=>gmdate('c'),'flightWindow'=>['from'=>$etd->format(DATE_ATOM),'to'=>$eta->format(DATE_ATOM)],'cruiseFL'=>$fl,'routeCorridorNm'=>50,'routeReferences'=>$refs,'candidateCount'=>count($rows),'matchedCount'=>count($items),'relevantCount'=>count($items),'highPriorityCount'=>$high,'mediumPriorityCount'=>$medium,'infoCount'=>$info,'operationalCount'=>$high+$medium,'endpointCount'=>$endpoint,'routeIntersectionCount'=>$hit,'nearRouteCount'=>$near,'referenceMatchCount'=>$ref,'atCruiseLevelCount'=>$cruise,'scheduleEvaluated'=>$scheduleUnknown===0,'scheduleParsedCount'=>$scheduleParsed,'scheduleExcludedCount'=>$scheduleExcluded,'scheduleUnknownCount'=>$scheduleUnknown,'items'=>$items];$payload['notamImpact']=$impact;
-    if(!isset($payload['sourceStatus'])||!is_array($payload['sourceStatus']))$payload['sourceStatus']=[];$payload['sourceStatus']['notam']=['ok'=>true,'source'=>'FAA NMS local MariaDB','candidateCount'=>count($rows),'matchedCount'=>count($items),'highPriorityCount'=>$high,'scheduleExcludedCount'=>$scheduleExcluded,'scheduleUnknownCount'=>$scheduleUnknown];
+    usort($items,static fn($a,$b)=>($a['_score']<=>$b['_score'])?:strcmp((string)$a['ident'],(string)$b['ident']));$totalMatched=count($items);$allItems=$items;$items=array_slice($items,0,80);foreach($items as &$i)unset($i['_score']);unset($i);
+    $countBy=static fn(string $k,string $v)=>count(array_filter($allItems,static fn($i)=>($i[$k]??null)===$v));
+    $high=$countBy('priority','high');$medium=$countBy('priority','medium');$info=$countBy('priority','info');$endpoint=$countBy('basis','endpoint');$hit=$countBy('basis','route_intersection');$near=$countBy('basis','near_route');$ref=$countBy('basis','route_reference');$cruise=$countBy('verticalRelation','at_cruise_level');$unknownLevel=$countBy('verticalRelation','unknown');
+    $impact=['available'=>true,'source'=>'FAA NMS local MariaDB','checkedAt'=>gmdate('c'),'flightWindow'=>['from'=>$etd->format(DATE_ATOM),'to'=>$eta->format(DATE_ATOM)],'cruiseFL'=>$fl,'routeCorridorNm'=>50,'routeReferences'=>$refs,'candidateCount'=>count($rows),'matchedCount'=>$totalMatched,'relevantCount'=>$totalMatched,'shownCount'=>count($items),'itemsTruncated'=>$totalMatched>count($items),'candidatesTruncated'=>$candidateTruncated,'sourceFreshness'=>$freshness,'lastSuccessfulSyncUtc'=>$syncEpoch===false?null:gmdate('c',$syncEpoch),'syncAgeSeconds'=>$syncAge,'coverageComplete'=>!$candidateTruncated&&$freshness==='fresh','unknownLevelCount'=>$unknownLevel,'highPriorityCount'=>$high,'mediumPriorityCount'=>$medium,'infoCount'=>$info,'operationalCount'=>$high+$medium,'endpointCount'=>$endpoint,'routeIntersectionCount'=>$hit,'nearRouteCount'=>$near,'referenceMatchCount'=>$ref,'atCruiseLevelCount'=>$cruise,'scheduleEvaluated'=>$scheduleUnknown===0,'scheduleParsedCount'=>$scheduleParsed,'scheduleExcludedCount'=>$scheduleExcluded,'scheduleUnknownCount'=>$scheduleUnknown,'items'=>$items];$payload['notamImpact']=$impact;
+    if(!isset($payload['sourceStatus'])||!is_array($payload['sourceStatus']))$payload['sourceStatus']=[];$payload['sourceStatus']['notam']=['ok'=>true,'source'=>'FAA NMS local MariaDB','candidateCount'=>count($rows),'matchedCount'=>$totalMatched,'sourceFreshness'=>$freshness,'highPriorityCount'=>$high,'scheduleExcludedCount'=>$scheduleExcluded,'scheduleUnknownCount'=>$scheduleUnknown];
     if(!isset($payload['routeEngine'])||!is_array($payload['routeEngine']))$payload['routeEngine']=[];$warnings=is_array($payload['routeEngine']['warnings']??null)?$payload['routeEngine']['warnings']:[];
-    if($items){$warnings[]=sprintf('NOTAM check: %d active/potential match(es), %d high priority; %d schedule-inactive record(s) excluded.',count($items),$high,$scheduleExcluded);foreach(array_slice($items,0,3)as$i){$where=$i['location']?:($i['fir']?:'route');$warnings[]=sprintf('NOTAM %s · %s · %s · %s · %s',$i['ident'],$where,strtoupper($i['priority']),$i['semantic'],strtoupper($i['basis']));}}else{$warnings[]='NOTAM check: no active route/airport match detected for the evaluated window.';}
+    if($items){$warnings[]=sprintf('NOTAM check: %d active/potential match(es), %d high priority; %d schedule-inactive record(s) excluded.',$totalMatched,$high,$scheduleExcluded);foreach(array_slice($items,0,3)as$i){$where=$i['location']?:($i['fir']?:'route');$warnings[]=sprintf('NOTAM %s · %s · %s · %s · %s',$i['ident'],$where,strtoupper($i['priority']),$i['semantic'],strtoupper($i['basis']));}}else{$warnings[]=$candidateTruncated||$freshness!=='fresh'?'NOTAM check incomplete: no match in available subset; source coverage is uncertain.':'NOTAM check: no active route/airport match detected for the evaluated window.';}
     $payload['routeEngine']['warnings']=array_values(array_unique(array_filter(array_map('strval',$warnings))));return$payload;
 }
 function ycBn2Failure(array $payload): array{$payload['notamImpact']=['available'=>false,'source'=>'FAA NMS local MariaDB','checkedAt'=>gmdate('c'),'error'=>'NOTAM relevance check unavailable.'];if(!isset($payload['sourceStatus'])||!is_array($payload['sourceStatus']))$payload['sourceStatus']=[];$payload['sourceStatus']['notam']=['ok'=>false,'error'=>'NOTAM relevance check unavailable.'];return$payload;}
+
+if(defined('YC_BRIEFING_TEST_MODE'))return;
 
 ob_start();
 register_shutdown_function(static function():void{

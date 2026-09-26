@@ -218,6 +218,8 @@ function snapshotCandidates(int $requested): array {
     return array_slice($unique, 0, 8);
 }
 
+if(defined('YC_BRIEFING_TEST_MODE'))return;
+
 $action = strtolower(trim((string)($_GET['action'] ?? 'status')));
 $flRaw = trim((string)($_GET['fl'] ?? '360'));
 if ($flRaw === '' || !preg_match('/^\d{1,3}$/', $flRaw)) {
@@ -232,11 +234,15 @@ if ($action === 'status') {
     $products = [];
     foreach (['edr','icing','wind','cbextent','cbtop'] as $id) {
         $cfg = productConfig($id);
-        $layerFL = is_array($cfg['levels']) ? nearestLevel($fl, $cfg['levels']) : null;
+        $within=!is_array($cfg['levels'])||($fl>=min($cfg['levels'])&&$fl<=max($cfg['levels']));
+        $layerFL = $within&&is_array($cfg['levels']) ? nearestLevel($fl, $cfg['levels']) : null;
         $products[] = [
             'id'=>$id,
             'label'=>$cfg['label'],
             'requestedFL'=>$fl,
+            'supportedLevels'=>$cfg['levels'],
+            'withinCoverage'=>$within,
+            'levelMatch'=>!$within?'outside_coverage':($layerFL===null?'whole_atmosphere':($layerFL===$fl?'exact':'nearest')),
             'layerFL'=>$layerFL,
             'pressureMb'=>$layerFL === null ? null : pressureFromFL($layerFL),
             'visualThreshold'=>$cfg['visualThreshold'],

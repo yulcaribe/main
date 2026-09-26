@@ -132,9 +132,17 @@
     const line=L.polyline(data.route,{color:"#31e4ff",weight:3.5,opacity:.95}).addTo(groups.route);
     L.polyline(data.route,{color:"#31e4ff",weight:15,opacity:.05}).addTo(groups.route);
 
+    for(const leg of data.routeInput?.navdataResolved||[]){
+      for(const segment of leg.geometry||[]){
+        const points=(segment.coordinates||[]).map(c=>[c[1],c[0]]);if(points.length<2)continue;
+        L.polyline(points,{color:leg.type==="sid"?"#70e8a7":leg.type==="star"?"#bc9cff":"#31e4ff",weight:4}).bindTooltip(esc(`${leg.id} · ${segment.from} → ${segment.to}`),{sticky:true}).addTo(groups.route);
+      }
+    }
     for(const p of data.routeInput?.resolved||[]){
       if(p.type==="departure"||p.type==="arrival") continue;
-      L.marker([p.lat,p.lon],{icon:fixIcon()}).bindTooltip(esc(p.id),{direction:"top",opacity:.85}).addTo(groups.route);
+      const components=(p.details?.components||[]).map(c=>`${esc(String(c.type).toUpperCase())} · ${esc(c.frequencyText||"—")} · ${esc(c.channel||"—")} · kaynak durumu: ${esc(c.sourceStatus||"bilinmiyor")}`).join("<br>");
+      const marker=p.type==="navaid"?L.circleMarker([p.lat,p.lon],{radius:6,color:"#ffd67b",weight:2,fillOpacity:.5}):L.marker([p.lat,p.lon],{icon:fixIcon()});
+      marker.bindTooltip(esc(p.id),{direction:"top",opacity:.85}).bindPopup(`<strong>${esc(p.id)}</strong> · ${esc(p.type)}<br>${esc(p.details?.name||"")}<br>${components||"Frekans/kanal kaydı yok"}<br><small>Kaynak kaydı; güncel NOTAM ayrıca değerlendirilir.</small>`).addTo(groups.route);
     }
     for(const s of data.stations||[]){
       L.marker([s.lat,s.lon],{icon:stationIcon(s)})
@@ -162,7 +170,7 @@
       const fc=s.metar?.flightCategory||"NA";
       const meta=s.role==="enroute"?`${s.routeDistanceNm} NM from route · ${Math.round(s.progress*100)}%`:s.role==="departure"?"Route origin":"Route destination";
       const metarText=s.metar?.raw||(s.metarStale?"Eski METAR gösterilmedi.":"METAR mevcut değil");
-      const tafText=s.taf?.raw||(s.tafStale?"Uçuş zamanını kapsamayan eski TAF gösterilmedi.":"TAF mevcut değil");
+      const tafText=s.taf?.raw||(s.tafStale?"Meydanın tahmini kullanım saatini kapsamayan TAF gösterilmedi.":"TAF mevcut değil");
       const a=document.createElement("article"); a.className="station-card";
       a.innerHTML=`
         <div class="station-main">
@@ -227,14 +235,11 @@
     const pending=data.routeInput?.pendingNavdata||[];
     const navSolved=data.routeInput?.navdataResolved||[];
     const navEngine=data.routeInput?.engine==="mariadb_navdata";
-    rows.push(briefLine(
-      "ROTA",
-      data.routeMode==="user_route"?(navEngine?"NAVDATA OFP":"OFP ROUTE"):"ESTIMATED",
-      data.routeMode==="user_route"?"ok":"warn",
-      data.routeMode==="user_route"
-        ? `${resolved} plan noktası çözüldü${navSolved.length?`; ${navSolved.length} airway/SID/STAR MariaDB navdata üzerinden açıldı`:""}${pending.length?`; ${pending.length} navdata bölümü çözülemedi`:""}${unresolved.length?"; çözülemeyen: "+esc(unresolved.join(", ")):""}.`
-        : "OFP girilmedi. Great-circle tahmini kullanılıyor."
-    ));
+    const quality=data.routeQuality||{state:"fallback",origin:"direct"};
+    const state=quality.state;
+    const availabilityUnknown=navSolved.reduce((n,r)=>n+(r.availabilityUnknownCount||0),0),availabilityConditional=navSolved.reduce((n,r)=>n+(r.availabilityConditionalCount||0),0);
+    rows.push(briefLine("ROTA",state==="resolved"?(quality.origin==="automatic"?"ESTIMATED NAVDATA":"PARSED ROUTE"):state==="partial"?"PARTIAL ROUTE":"GREAT CIRCLE FALLBACK",state==="resolved"?"info":"warn",
+      `${resolved} rota noktası; ${navSolved.length} airway/prosedür çözüldü. ${quality.missingCount||0} bölüm çözülemedi. ${availabilityUnknown?`${availabilityUnknown} segmentin kullanılabilirlik kaydı belirsiz. `:""}${availabilityConditional?`${availabilityConditional} segment koşullu; kullanım ayrıca doğrulanmalı. `:""}${state==="fallback"?"Analiz great-circle geometrisi üzerinden yapılıyor. ":""}${!quality.terminalProceduresComplete?"SID/STAR ve pist bağlantısı tamamlanmadı. ":"Pist ilişkisi doğrulanmadı. "}Rota uygunluğu operasyonel olarak doğrulanmadı.`));
     const available=sigmetAvailable(data),summary=data.hazardSummary||{},relevant=summary.within100nm||0;
     rows.push(briefLine("SIGMET",!available?"VERİ YOK":hit?hit+" KESİŞİM":relevant?relevant+" İLGİLİ":"KAYIT YOK",!available?"warn":hit?"bad":"info",!available?"SIGMET servisi alınamadı; durum bilinmiyor.":`${relevant} rota/100 NM kaydı tahmini rota geçiş saatiyle ilgili veya zamanı belirsiz. ${summary.outsideRouteEta||0} kayıt uçuş sırasında geçerli olsa da ilgili bölgedeki tahmini geçiş saatine uymuyor. ${summary.outsideFlightWindow||0} kayıt tüm uçuş penceresi dışında. ${summary.unknownTime||0} kaydın zamanı kesin eşleştirilemedi. Kayıt yokluğu, tehlike olmadığı anlamına gelmez.`));
     rows.push(briefLine("CRUISE",`FL${data.flight.cruiseFL}`,cruise?"warn":"info",!available?"SIGMET kaynağı alınamadığı için seviye karşılaştırması yapılamadı.":cruise?`${cruise} SIGMET'in bildirilen dikey bandı cruise seviyesini kapsıyor.`:"Gösterilen SIGMET'lerde cruise seviyesini açıkça kapsayan dikey bant tespit edilmedi. Bilinmeyen seviye alanları ayrıca kontrol edilmeli."));
@@ -254,7 +259,7 @@
       if(p.type==="airway") label=`AIRWAY ${label}`;
       else if(p.type==="procedure") label=`PROC ${label}`;
       else if(p.type==="dct") label="DCT";
-      if(Number.isFinite(Number(p.levelFL))) label+=` / FL${String(Number(p.levelFL)).padStart(3,"0")}`;
+      if(p.levelFL!=null&&Number.isFinite(Number(p.levelFL))) label+=` / FL${String(Number(p.levelFL)).padStart(3,"0")}`;
       return label;
     }).filter(Boolean);
     if(enroute.length) lines.push("ENROUTE: "+enroute.join(" → "));
@@ -293,19 +298,25 @@
     $("#route-label").textContent=label; $("#brief-route").textContent=label;
     $("#distance").textContent=`${Math.round(data.distanceNm)} NM`;
     $("#fl-out").textContent=`FL${data.flight.cruiseFL}`;
-    $("#route-type").textContent=data.routeMode==="user_route"?"PARSED OFP":"GREAT CIRCLE";
+    $("#route-type").textContent=data.routeQuality?.state==="resolved"?(data.routeQuality.origin==="automatic"?"ESTIMATED NAVDATA":"PARSED ROUTE"):data.routeQuality?.state==="partial"?"PARTIAL ROUTE":"GREAT CIRCLE FALLBACK";
     $("#etd-out").textContent=new Date(data.flight.etdUtc).toLocaleTimeString("en-GB",{timeZone:"UTC",hour:"2-digit",minute:"2-digit"})+"Z";
     $("#station-count").textContent=data.stations.length;
     $("#hit-count").textContent=sigmetAvailable(data)?data.hazardSummary.intersects:"—";
     $("#near-count").textContent=sigmetAvailable(data)?data.hazardSummary.nearRoute:"—";
     const m=data.flight.estimatedEetMinutes; $("#eet").textContent=`${Math.floor(m/60)}h ${m%60}m*`;
     $("#resolved-route").textContent=formatRouteParser(data.routeInput);
+    let terminal=document.getElementById("terminal-navdata");
+    if(!terminal){terminal=document.createElement("details");terminal.id="terminal-navdata";$("#resolved-route").after(terminal);}
+    const context=data.navdataContext;
+    terminal.innerHTML=`<summary>SID / STAR kaynak kayıtları</summary><p>AIRAC/geçerlilik dönemi ve pist ilişkisi doğrulanmadı. Aşağıdakiler otomatik seçilmiş prosedürler değildir. Chart belgeleri bu kaynakta bulunmuyor.</p>${(context?.terminals||[]).map(t=>`<p><strong>${esc(t.airport)} · ${esc(t.type.toUpperCase())}</strong> (${t.procedures.length}${t.truncated?"+":""})<br>${t.procedures.map(p=>esc(p.ident)).join(" · ")||"Kayıt yok"}</p>`).join("")||"Kaynak kayıtları alınamadı."}`;
+
   }
 
   function render(data){
     current=data; $("#data-status").textContent=`AWC alındı: ${utc(data.fetchedAt)} · METAR ${data.sourceStatus?.metar?.ok?"OK":"VERİ YOK"} · TAF ${data.sourceStatus?.taf?.ok?"OK":"VERİ YOK"} · SIGMET ${sigmetAvailable(data)?"OK":"VERİ YOK"}`; workspace.hidden=false; hazardSection.hidden=false; stationSection.hidden=false;
-    renderRouteMeta(data); renderSimpleBrief(data); renderHazards(data.hazards||[],data); renderStations(data.stations||[]);
+    renderRouteMeta(data); renderSimpleBrief(data); renderHazards(data.hazards||[],data); renderStations(data.stations||[]); window.YCNotam?.render(data);
     requestAnimationFrame(()=>{
+      if(current!==data)return;
       try{
         map.invalidateSize({pan:false});
         renderMap(data);
@@ -324,19 +335,23 @@
     const fl=$("#fl").value, etd=$("#etd").value, route=$("#route-text").value.trim().toUpperCase();
     if(!/^[A-Z0-9]{4}$/.test(from)||!/^[A-Z0-9]{4}$/.test(to)||from===to){setFeedback("Geçerli ve farklı iki ICAO kodu gir.","error");return;}
     if(!etd){setFeedback("ETD UTC gir.","error");return;}
-    if(controller) controller.abort(); window.YCModelWX?.cancel(); window.YCWAFS?.cancel(); controller=new AbortController(); submit.disabled=true;
+    if(controller) controller.abort(); window.YCModelWX?.cancel(); window.YCWAFS?.cancel(); controller=new AbortController(); const request=controller; const timer=setTimeout(()=>request.abort(),60000); submit.disabled=true;
+    current=null;workspace.hidden=true;hazardSection.hidden=true;stationSection.hidden=true;
+    for(const id of ["notam-section","modelwx-section","wafs-section"]){const section=document.getElementById(id);if(section)section.hidden=true;}
     setFeedback(`${from} → ${to} pilot briefing hazırlanıyor…`,"loading");
     try{
       const q=new URLSearchParams({from,to,fl,etd}); if(route) q.set("route",route);
       const res=await fetch(`/main/api/v1/briefing.php?${q.toString()}`,{cache:"no-store",signal:controller.signal});
       const data=await res.json().catch(()=>null);
       if(!res.ok||!data?.ok) throw new Error(data?.error||`HTTP ${res.status}`);
+      if(request!==controller)return;
       render(data);
       setFeedback(`${from} → ${to}: ${data.stations.length} temsilci istasyon. ${sigmetAvailable(data)?`${data.hazardSummary.within100nm||0} uçuş aralığıyla ilişkili / zamanı belirsiz SIGMET.`:"SIGMET verisi alınamadı."}`);
     }catch(err){
-      if(err?.name==="AbortError") return;
+      if(err?.name==="AbortError"){if(request===controller)setFeedback("Briefing zaman aşımına uğradı. Yeniden deneyin.","error");return;}
+      if(request!==controller)return;
       console.error(err); setFeedback(err?.message||"Briefing alınamadı.","error");
-    }finally{submit.disabled=false;}
+    }finally{clearTimeout(timer);if(request===controller)submit.disabled=false;}
   }
 
   form.addEventListener("submit",e=>{e.preventDefault();load();});

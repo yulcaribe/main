@@ -32,6 +32,7 @@
   let analysis=null,hitLayer=null,controlsBound=false;
   let overlays=new Map(),objectUrls=[],frameCache=new Map(),displayCache=new Map();
 
+  let capabilityCache=new Map();
   const esc=v=>String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
   const utc=v=>{const d=new Date(v);return Number.isFinite(d.getTime())?d.toISOString().slice(0,16).replace("T"," ")+"Z":"—";};
   const bucket3h=ms=>Math.round(ms/(3*3600000))*(3*3600000);
@@ -60,6 +61,7 @@
     clearVisuals();
     revokeUrls();
     frameCache=new Map();
+    capabilityCache=new Map();
     displayCache=new Map();
     analysis=null;
   }
@@ -136,16 +138,31 @@
     });
   }
 
+  async function productCapability(product,fl,signal){
+    if(!capabilityCache.has(fl)){
+      capabilityCache.set(fl,(async()=>{
+        const r=await fetch(`/main/api/v1/wafs.php?action=status&fl=${encodeURIComponent(fl)}`,{signal,cache:"no-store"});
+        if(!r.ok)throw new Error(`WAFS ürün listesi: HTTP ${r.status}`);
+        const data=await r.json();if(!data.ok||!Array.isArray(data.products))throw new Error("WAFS ürün listesi geçersiz.");
+        return data.products;
+      })());
+    }
+    const config=(await capabilityCache.get(fl)).find(p=>p.id===product);
+    if(!config||config.withinCoverage!==true)throw new Error(`${PRODUCTS[product]?.short||product}: FL${fl} ürün kapsamı dışında; bu seviye için veri yok.`);
+    return config;
+  }
+
   async function fetchFrame(product,bucketMs,fl,signal){
     const key=`${product}|${bucketMs}|${fl}`;
     if(frameCache.has(key))return frameCache.get(key);
 
     const promise=(async()=>{
+      const capability=await productCapability(product,fl,signal);
       const requested=new Date(bucketMs).toISOString();
       const q=new URLSearchParams({
         action:"image",
         product,
-        fl:String(fl),
+        fl:String(capability.layerFL??fl),
         valid:requested.slice(0,16).replace("T"," ")
       });
       const r=await fetch(`/main/api/v1/wafs.php?${q}`,{cache:"no-store",signal});
@@ -172,6 +189,7 @@
         product,bucketMs,img,url,canvas,ctx,
         width:canvas.width,height:canvas.height,
         meta:{
+          requestedFL:fl,levelMatch:capability.levelMatch,
           runUtc:r.headers.get("x-yc-wafs-run"),
           forecastHour:Number(r.headers.get("x-yc-wafs-forecast-hour")),
           validUtc:r.headers.get("x-yc-wafs-valid-utc"),
@@ -184,7 +202,7 @@
 
     frameCache.set(key,promise);
     try{return await promise;}
-    catch(e){frameCache.delete(key);throw e;}
+    catch(e){throw e;} // Keep failures for this briefing; do not repeat identical 400/404 requests.
   }
 
   async function displayUrl(frame,product){
@@ -246,7 +264,7 @@
   function samplePixel(frame,lat,lon){
     const {yMax,maxLat}=mercatorExtent(frame);
     if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<=-maxLat||lat>=maxLat){
-      return {hit:false,rgba:[0,0,0,0],outside:true};
+      return {hit:null,rgba:[0,0,0,0],outside:true};
     }
     const wrapped=((lon+540)%360)-180;
     const y=Math.log(Math.tan(Math.PI/4+(lat*Math.PI/180)/2));
@@ -299,11 +317,11 @@
     const byProduct={};
     for(const product of ANALYSIS_PRODUCTS){
       const rows=[];let available=0,hits=0,unknown=0;
-      const frames=new Map();
+      const frames=new Map();let error=null;
 
       for(const bucket of buckets){
         try{frames.set(bucket,await fetchFrame(product,bucket,data.flight.cruiseFL,signal));}
-        catch(e){frames.set(bucket,null);}
+        catch(e){frames.set(bucket,null);error=e.message;}
       }
 
       for(const p of samples){
@@ -314,15 +332,16 @@
           rows.push({...p,bucket,hit:null,frame:null});
           continue;
         }
-        available++;
         const px=samplePixel(frame,p.lat,p.lon);
+        if(px.outside){unknown++;rows.push({...p,bucket,hit:null,frame:null});continue;}
+        available++;
         if(px.hit)hits++;
         rows.push({...p,bucket,hit:px.hit,rgba:px.rgba,frame});
       }
 
       const goodFrames=[...frames.values()].filter(Boolean);
       byProduct[product]={
-        product,rows,hits,unknown,available,total:samples.length,
+        product,rows,hits,unknown,available,error,total:samples.length,
         frames:goodFrames,
         layerFL:goodFrames[0]?.meta.layerFL??null,
         pressureMb:goodFrames[0]?.meta.pressureMb??null
@@ -333,13 +352,15 @@
   }
 
   function summaryText(item){
-    if(!item||item.available===0)return ["N/A","Public PNG alınamadı"];
+    if(!item||item.available===0)return ["N/A",item?.error||"Public PNG alınamadı veya rota görüntü kapsamı dışında"];
     const known=item.total-item.unknown;
-    if(item.hits===0)return ["0 hit",`${known}/${item.total} rota örneğinde render edilmiş piksel saptanmadı`];
+    const level=item.frames?.[0]?.meta;
+    const context=level?.levelMatch==="nearest"?` · istenen FL${level.requestedFL}, gösterilen FL${level.layerFL}`:"";
+    if(item.hits===0)return ["0 hit",`${known}/${item.total} rota örneğinde render edilmiş piksel saptanmadı${context}`];
     const first=item.rows.find(r=>r.hit);
     const last=[...item.rows].reverse().find(r=>r.hit);
     const span=first&&last?`${utc(first.etaUtc).slice(11)}–${utc(last.etaUtc).slice(11)}`:"";
-    return [`${item.hits} hit`,`${known}/${item.total} örnek değerlendirildi · ${span}`];
+    return [`${item.hits} hit`,`${known}/${item.total} örnek değerlendirildi · ${span}${context}`];
   }
 
   function setPublicStatus(state,cls="info",detail=""){
