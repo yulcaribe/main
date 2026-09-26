@@ -9,8 +9,13 @@
   const NAVDATA_API = "/main/api/v1/navdata.php";
   const NOTAM_API = "/main/api/v1/notam.php";
   const WAFS_API = "/main/api/v1/wafs.php";
-  const FLIGHTS_API = "/main/api/v1/flights.php";
-  const FLIGHT_SOURCE_ID = "live-flights";
+  const ADSB_API = "/main/api/v1/adsb.php";
+  const ADSB_REFRESH_MS = 2000;
+  const ADSB_MIN_FETCH_ZOOM = 4.2;
+  const ADSB_RENDER_DELAY_MS = 4200;
+  const ADSB_SAMPLE_KEEP_MS = 20000;
+  const ADSB_ANIMATION_FRAME_MS = 32;
+  const ADSB_FETCH_BOX_PADDING = 0.35;
   const CHART_SOURCE_ID = "navdata-charts";
   const NOTAM_SOURCE_ID = "navdata-notams";
   const CHART_LAYER_NAMES = new Set(["airport", "navaid", "waypoint", "airway", "sid", "star", "airspace"]);
@@ -60,6 +65,13 @@
   const wafsOpacityInputs = [...document.querySelectorAll("[data-wafs-opacity]")];
   const flightsEnabledInput = document.getElementById("flights-enabled");
   const flightsStatus = document.getElementById("flights-status");
+  const flightsUpdated = document.getElementById("flights-updated");
+  const flightsPayload = document.getElementById("flights-payload");
+  const aircraftInfoPanel = document.getElementById("aircraft-info");
+  const aircraftInfoTitle = document.getElementById("aircraft-info-title");
+  const aircraftInfoSubtitle = document.getElementById("aircraft-info-subtitle");
+  const aircraftInfoBody = document.getElementById("aircraft-info-body");
+  const aircraftInfoClose = document.getElementById("aircraft-info-close");
 
   const layerInputs = [...document.querySelectorAll("[data-nav-layer]")];
   const countKeys = [...new Set(
@@ -105,6 +117,19 @@
   let flightController = null;
   let flightFeatures = [];
   let flightCountsState = { flight: 0 };
+  let adsbDecoder = null;
+  let adsbDecoderReady = false;
+  let adsbRequestSeq = 0;
+  let adsbSourceClockOffsetMs = 0;
+  let adsbHaveSourceClock = false;
+  let adsbLastAnimationFrame = 0;
+  let adsbAnimationStarted = false;
+  let adsbFetchBox = null;
+  let adsbLastMoveZoom = null;
+  let adsbLastMoveCenter = null;
+  let selectedAircraftHex = null;
+  let aircraftInfoLastRenderAt = 0;
+  const aircraftMarkers = new Map();
   const weatherOverlays = new Map();
 
   const emptyGeojson = () => ({ type: "FeatureCollection", features: [] });
@@ -491,65 +516,7 @@
     });
 
 
-    map.addSource(FLIGHT_SOURCE_ID, {
-      type: "geojson",
-      data: emptyGeojson()
-    });
-
-    map.addLayer({
-      id: "flight-hit",
-      type: "circle",
-      source: FLIGHT_SOURCE_ID,
-      paint: {
-        "circle-radius": 4,
-        "circle-opacity": 1,
-        "circle-color": ["case", ["==", ["get", "emergency"], true], "#ff5f6d", "#8cf2ff"],
-        "circle-stroke-color": "#06111a",
-        "circle-stroke-width": 1.5
-      },
-      layout: { visibility: flightsEnabledInput?.checked ? "visible" : "none" }
-    });
-
-    map.addLayer({
-      id: "flight-symbol",
-      type: "symbol",
-      source: FLIGHT_SOURCE_ID,
-      layout: {
-        "text-field": "▲",
-        "text-size": ["interpolate", ["linear"], ["zoom"], 3, 12, 10, 18],
-        "text-rotate": ["coalesce", ["to-number", ["get", "track"]], 0],
-        "text-rotation-alignment": "map",
-        "text-allow-overlap": true,
-        "visibility": "none"
-      },
-      paint: {
-        "text-color": ["case", ["==", ["get", "emergency"], true], "#ff5f6d", "#8cf2ff"],
-        "text-halo-color": "#06111a",
-        "text-halo-width": 1.2
-      }
-    });
-
-    map.addLayer({
-      id: "flight-label",
-      type: "symbol",
-      source: FLIGHT_SOURCE_ID,
-      minzoom: 6,
-      layout: {
-        "text-field": ["get", "flight"],
-        "text-size": 10,
-        "text-offset": [0, 1.4],
-        "text-anchor": "top",
-        "visibility": flightsEnabledInput?.checked ? "visible" : "none"
-      },
-      paint: {
-        "text-color": "#e3fbff",
-        "text-halo-color": "#06111a",
-        "text-halo-width": 1.2
-      }
-    });
-
     const interactiveLayerIds = [
-      "flight-hit", "flight-symbol", "flight-label",
       "nav-airport-hit",
       "nav-navaid-hit",
       "nav-waypoint-hit",
@@ -1291,31 +1258,483 @@
     return Boolean(flightsEnabledInput?.checked);
   }
 
-  function setFlightVisibility() {
-    const visibility = flightsEnabled() ? "visible" : "none";
-    for (const id of ["flight-hit", "flight-label"]) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+  function sourceType(code) {
+    switch (code) {
+      case 0: return "adsb_icao";
+      case 1: return "adsb_icao_nt";
+      case 2: return "adsr_icao";
+      case 3: return "tisb_icao";
+      case 4: return "adsc";
+      case 5: return "mlat";
+      case 6: return "other";
+      case 7: return "mode_s";
+      case 8: return "adsb_other";
+      case 9: return "adsr_other";
+      case 10: return "tisb_trackfile";
+      case 11: return "tisb_other";
+      case 12: return "mode_ac";
+      default: return "unknown";
     }
   }
 
-  function flightRadiusNm() {
-    const center = map.getCenter();
-    const edge = map.getBounds().getNorthEast();
-    const R = 3440.065;
-    const p1 = center.lat * Math.PI / 180;
-    const p2 = edge.lat * Math.PI / 180;
-    const dp = (edge.lat - center.lat) * Math.PI / 180;
-    const dl = (edge.lng - center.lng) * Math.PI / 180;
-    const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
-    return Math.max(10, Math.min(235, Math.ceil(2 * R * Math.asin(Math.min(1, Math.sqrt(a))))));
+  function readAscii(u8, start, end) {
+    let out = "";
+    for (let i = start; i < end && u8[i]; i++) out += String.fromCharCode(u8[i]);
+    return out.trim();
+  }
+
+  function parseBinCraft(uint8) {
+    const buffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+    if (buffer.byteLength < 52) throw new Error("binCraft header too short");
+
+    const header = new Uint32Array(buffer, 0, 13);
+    const stride = header[2];
+    const version = header[10];
+    if (!stride || stride < 108 || stride > 256 || buffer.byteLength < stride) {
+      throw new Error("Unexpected binCraft stride: " + stride);
+    }
+
+    const aircraft = [];
+    for (let off = stride; off + stride <= buffer.byteLength; off += stride) {
+      const s32 = new Int32Array(buffer, off, stride / 4);
+      const u16 = new Uint16Array(buffer, off, stride / 2);
+      const s16 = new Int16Array(buffer, off, stride / 2);
+      const u8 = new Uint8Array(buffer, off, stride);
+
+      const nonIcao = !!(s32[0] & (1 << 24));
+      let hex = (s32[0] & ((1 << 24) - 1)).toString(16).padStart(6, "0");
+      if (nonIcao) hex = "~" + hex;
+
+      let seen;
+      let seenPos;
+      if (version >= 20240218) {
+        seen = s32[1] / 10;
+        seenPos = s32[27] / 10;
+      } else {
+        seenPos = u16[2] / 10;
+        seen = u16[3] / 10;
+      }
+
+      let lon = s32[2] / 1e6;
+      let lat = s32[3] / 1e6;
+      let baroRate = s16[8] * 8;
+      let geomRate = s16[9] * 8;
+      let alt = s16[10] * 25;
+      let altGeom = s16[11] * 25;
+      let navAltitudeMcp = u16[12] * 4;
+      let navAltitudeFms = u16[13] * 4;
+      let navQnh = s16[14] / 10;
+      let navHeading = s16[15] / 90;
+
+      const squawkHex = u16[16].toString(16).padStart(4, "0");
+      let squawk = squawkHex[0] > "9"
+        ? String(parseInt(squawkHex[0], 16)) + squawkHex.slice(1)
+        : squawkHex;
+
+      let gs = s16[17] / 10;
+      let mach = s16[18] / 1000;
+      let roll = s16[19] / 100;
+      let track = s16[20] / 90;
+      let trackRate = s16[21] / 100;
+      let magHeading = s16[22] / 90;
+      let trueHeading = s16[23] / 90;
+      let windDir = s16[24];
+      let windSpeed = s16[25];
+      let oat = s16[26];
+      let tat = s16[27];
+      let tas = u16[28];
+      let ias = u16[29];
+
+      const category = u8[64] ? u8[64].toString(16).toUpperCase() : "";
+      const receiverCount = u8[104];
+      let rssi;
+      if (version >= 20250403) {
+        rssi = (u8[105] * (50 / 255)) - 50;
+      } else {
+        const level = u8[105] * u8[105] / 65025 + 1.125e-5;
+        rssi = 10 * Math.log(level) / Math.log(10);
+      }
+
+      const validity1 = u8[73];
+      const validity2 = u8[74];
+      const validity3 = u8[75];
+      const validity4 = u8[76];
+      const validity5 = u8[77];
+
+      const flight = (validity1 & 8) ? readAscii(u8, 78, 86) : "";
+      const typeCode = readAscii(u8, 88, 92);
+      const registration = readAscii(u8, 92, 104);
+
+      if (!(validity1 & 16)) alt = null;
+      if (!(validity1 & 32)) altGeom = null;
+      if (!(validity1 & 64)) {
+        lat = null;
+        lon = null;
+        seenPos = null;
+      }
+      if (!(validity1 & 128)) gs = null;
+
+      if (!(validity2 & 1)) ias = null;
+      if (!(validity2 & 2)) tas = null;
+      if (!(validity2 & 4)) mach = null;
+      if (!(validity2 & 8)) track = null;
+      if (!(validity2 & 16)) trackRate = null;
+      if (!(validity2 & 32)) roll = null;
+      if (!(validity2 & 64)) magHeading = null;
+      if (!(validity2 & 128)) trueHeading = null;
+
+      if (!(validity3 & 1)) baroRate = null;
+      if (!(validity3 & 2)) geomRate = null;
+
+      if (!(validity4 & 4)) squawk = null;
+      if (!(validity4 & 32)) navQnh = null;
+      if (!(validity4 & 64)) navAltitudeMcp = null;
+      if (!(validity4 & 128)) navAltitudeFms = null;
+
+      if (!(validity5 & 2)) navHeading = null;
+      if (!(validity5 & 16)) {
+        windSpeed = null;
+        windDir = null;
+      }
+      if (!(validity5 & 32)) {
+        oat = null;
+        tat = null;
+      }
+
+      const airground = u8[68] & 15;
+      if (airground === 1) alt = "ground";
+
+      const heading = track ?? trueHeading ?? magHeading ?? 0;
+      const type = sourceType((u8[67] & 240) >> 4);
+
+      if (
+        lat == null || lon == null ||
+        !Number.isFinite(lat) || !Number.isFinite(lon) ||
+        Math.abs(lat) > 90 || Math.abs(lon) > 180
+      ) continue;
+
+      aircraft.push({
+        hex, flight, registration, typeCode, type, category,
+        lat, lon, alt, altGeom,
+        gs, ias, tas, mach, roll,
+        track, trackRate, magHeading, trueHeading, heading,
+        baroRate, geomRate,
+        squawk, navQnh, navAltitudeMcp, navAltitudeFms, navHeading,
+        windDir, windSpeed, oat, tat,
+        receiverCount, rssi,
+        seen, seenPos
+      });
+    }
+
+    return {
+      now: header[0] / 1000 + header[1] * 4294967.296,
+      stride,
+      version,
+      globalCount: header[3],
+      aircraft
+    };
+  }
+
+  function aircraftFmt(value, digits = 0, suffix = "") {
+    return Number.isFinite(value) ? Number(value).toFixed(digits) + suffix : "—";
+  }
+
+  function aircraftFmtAlt(value) {
+    if (value === "ground") return "GND";
+    return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") + " ft" : "—";
+  }
+
+  function aircraftInfoRow(label, value, extraClass = "") {
+    return '<div class="info-row"><span>' + esc(label) + '</span><b class="' + extraClass + '">' + esc(value ?? "—") + '</b></div>';
+  }
+
+  function aircraftInfoSection(title, rows) {
+    return '<section class="info-section"><h3>' + esc(title) + '</h3>' + rows.join("") + '</section>';
+  }
+
+  function renderAircraftInfo(ac, shown) {
+    if (!ac || !shown || selectedAircraftHex !== ac.hex || !aircraftInfoPanel) return;
+
+    aircraftInfoTitle.textContent = ac.flight || ac.registration || ac.hex.toUpperCase();
+    aircraftInfoSubtitle.textContent = [ac.registration, ac.typeCode, ac.hex.toUpperCase()].filter(Boolean).join(" · ") || "—";
+
+    aircraftInfoBody.innerHTML =
+      aircraftInfoSection("Altitude", [
+        aircraftInfoRow("Baro altitude", aircraftFmtAlt(ac.alt)),
+        aircraftInfoRow("Geom altitude", aircraftFmtAlt(ac.altGeom)),
+        aircraftInfoRow("Vertical rate", aircraftFmt(ac.baroRate, 0, " ft/min")),
+        aircraftInfoRow("Geom V/S", aircraftFmt(ac.geomRate, 0, " ft/min"))
+      ]) +
+      aircraftInfoSection("Speed & heading", [
+        aircraftInfoRow("Ground speed", aircraftFmt(ac.gs, 1, " kt")),
+        aircraftInfoRow("IAS", aircraftFmt(ac.ias, 0, " kt")),
+        aircraftInfoRow("TAS", aircraftFmt(ac.tas, 0, " kt")),
+        aircraftInfoRow("Mach", aircraftFmt(ac.mach, 3)),
+        aircraftInfoRow("Track", aircraftFmt(ac.track, 1, "°")),
+        aircraftInfoRow("True heading", aircraftFmt(ac.trueHeading, 1, "°")),
+        aircraftInfoRow("Mag heading", aircraftFmt(ac.magHeading, 1, "°")),
+        aircraftInfoRow("Roll", aircraftFmt(ac.roll, 1, "°"))
+      ]) +
+      aircraftInfoSection("Navigation", [
+        aircraftInfoRow("Squawk", ac.squawk || "—"),
+        aircraftInfoRow("Selected ALT (MCP)", aircraftFmt(ac.navAltitudeMcp, 0, " ft")),
+        aircraftInfoRow("Selected ALT (FMS)", aircraftFmt(ac.navAltitudeFms, 0, " ft")),
+        aircraftInfoRow("Selected heading", aircraftFmt(ac.navHeading, 1, "°")),
+        aircraftInfoRow("QNH", aircraftFmt(ac.navQnh, 1, " hPa"))
+      ]) +
+      aircraftInfoSection("Weather", [
+        aircraftInfoRow("Wind", Number.isFinite(ac.windDir) && Number.isFinite(ac.windSpeed) ? Math.round(ac.windDir) + "° / " + Math.round(ac.windSpeed) + " kt" : "—"),
+        aircraftInfoRow("OAT", aircraftFmt(ac.oat, 0, " °C")),
+        aircraftInfoRow("TAT", aircraftFmt(ac.tat, 0, " °C"))
+      ]) +
+      aircraftInfoSection("Signal & source", [
+        aircraftInfoRow("Source", ac.type || "—"),
+        aircraftInfoRow("Category", ac.category || "—"),
+        aircraftInfoRow("Receivers", Number.isFinite(ac.receiverCount) ? String(ac.receiverCount) : "—"),
+        aircraftInfoRow("RSSI", aircraftFmt(ac.rssi, 1, " dBFS")),
+        aircraftInfoRow("Seen", aircraftFmt(ac.seen, 1, " s")),
+        aircraftInfoRow("Seen position", aircraftFmt(ac.seenPos, 1, " s")),
+        aircraftInfoRow("Position", Number(shown.lat).toFixed(5) + ", " + Number(shown.lon).toFixed(5), "info-coords")
+      ]);
+  }
+
+  function closeAircraftInfo() {
+    if (selectedAircraftHex && aircraftMarkers.has(selectedAircraftHex)) {
+      aircraftMarkers.get(selectedAircraftHex).el.classList.remove("selected");
+    }
+    selectedAircraftHex = null;
+    aircraftInfoPanel?.classList.remove("open");
+    aircraftInfoPanel?.setAttribute("aria-hidden", "true");
+  }
+
+  function selectAircraft(hex) {
+    if (selectedAircraftHex && aircraftMarkers.has(selectedAircraftHex)) {
+      aircraftMarkers.get(selectedAircraftHex).el.classList.remove("selected");
+    }
+    selectedAircraftHex = hex;
+    const item = aircraftMarkers.get(hex);
+    if (!item) return;
+    item.el.classList.add("selected");
+    aircraftInfoPanel?.classList.add("open");
+    aircraftInfoPanel?.setAttribute("aria-hidden", "false");
+    renderAircraftInfo(item.data, item.rendered || item.data);
+  }
+
+  function createAircraftElement() {
+    const el = document.createElement("div");
+    el.className = "aircraft-marker";
+    el.innerHTML =
+      '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+      '<path d="M32 3 C29.8 3 28.7 5.4 28.4 8.4 L26.8 25.2 L7 34.4 L7 39 L27.8 34.4 L28.2 49.5 L20.2 55.5 L20.2 59 L32 56 L43.8 59 L43.8 55.5 L35.8 49.5 L36.2 34.4 L57 39 L57 34.4 L37.2 25.2 L35.6 8.4 C35.3 5.4 34.2 3 32 3 Z" fill="#f4f8fb" stroke="#071019" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    return el;
+  }
+
+  function shortestAngle(a, b) {
+    const delta = ((b - a + 540) % 360) - 180;
+    return a + delta;
+  }
+
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  function interpolateAircraft(a, b, t) {
+    const headingB = shortestAngle(a.heading ?? 0, b.heading ?? a.heading ?? 0);
+    return {
+      ...b,
+      lon: lerp(a.lon, b.lon, t),
+      lat: lerp(a.lat, b.lat, t),
+      heading: ((lerp(a.heading ?? 0, headingB, t) % 360) + 360) % 360
+    };
+  }
+
+  function ensureAircraftMarker(ac) {
+    let item = aircraftMarkers.get(ac.hex);
+    if (item) return item;
+
+    const el = createAircraftElement();
+    el.style.display = "none";
+    const marker = new maplibregl.Marker({
+      element: el,
+      rotationAlignment: "map",
+      pitchAlignment: "map"
+    })
+      .setLngLat([ac.lon, ac.lat])
+      .setRotation(Number.isFinite(ac.heading) ? ac.heading : 0)
+      .addTo(map);
+
+    item = { marker, el, data: ac, rendered: ac, samples: [], lastSeenAt: Date.now() };
+    el.addEventListener("click", event => {
+      event.stopPropagation();
+      selectAircraft(ac.hex);
+    });
+    aircraftMarkers.set(ac.hex, item);
+    return item;
+  }
+
+  function clearAircraftMarkers() {
+    for (const item of aircraftMarkers.values()) item.marker.remove();
+    aircraftMarkers.clear();
+    closeAircraftInfo();
+    adsbHaveSourceClock = false;
+  }
+
+  function ingestAircraftSnapshot(aircraft, sourceNowMs) {
+    const seenNow = new Set();
+    for (const ac of aircraft) {
+      seenNow.add(ac.hex);
+      const item = ensureAircraftMarker(ac);
+      item.data = ac;
+      item.lastSeenAt = Date.now();
+
+      const ageMs = Number.isFinite(ac.seenPos) ? Math.max(0, ac.seenPos * 1000) : 0;
+      const sampleTime = sourceNowMs - ageMs;
+      const last = item.samples[item.samples.length - 1];
+      const sameTimestamp = last && Math.abs(last.t - sampleTime) < 50;
+      const samePosition = last && Math.abs(last.lon - ac.lon) < 1e-9 && Math.abs(last.lat - ac.lat) < 1e-9;
+
+      if (!sameTimestamp && !samePosition) {
+        item.samples.push({
+          t: sampleTime,
+          lon: ac.lon,
+          lat: ac.lat,
+          heading: Number.isFinite(ac.heading) ? ac.heading : 0,
+          data: ac
+        });
+      } else if (last) {
+        last.data = ac;
+        last.heading = Number.isFinite(ac.heading) ? ac.heading : last.heading;
+      }
+
+      const cutoff = sourceNowMs - ADSB_SAMPLE_KEEP_MS;
+      while (item.samples.length > 2 && item.samples[1].t < cutoff) item.samples.shift();
+    }
+
+    const staleCutoff = Date.now() - 15000;
+    for (const [hex, item] of aircraftMarkers) {
+      if (!seenNow.has(hex) && item.lastSeenAt < staleCutoff) {
+        if (selectedAircraftHex === hex) closeAircraftInfo();
+        item.marker.remove();
+        aircraftMarkers.delete(hex);
+      }
+    }
+  }
+
+  function renderBufferedAircraft(nowClientMs) {
+    if (!flightsEnabled()) {
+      for (const item of aircraftMarkers.values()) item.el.style.display = "none";
+      return;
+    }
+    if (!adsbHaveSourceClock) return;
+
+    const targetSourceTime = nowClientMs - adsbSourceClockOffsetMs - ADSB_RENDER_DELAY_MS;
+    for (const item of aircraftMarkers.values()) {
+      const samples = item.samples;
+      if (!samples.length) {
+        item.el.style.display = "none";
+        continue;
+      }
+
+      let before = null;
+      let after = null;
+      for (const sample of samples) {
+        if (sample.t <= targetSourceTime) before = sample;
+        if (sample.t >= targetSourceTime) {
+          after = sample;
+          break;
+        }
+      }
+
+      if (!before) {
+        item.el.style.display = "none";
+        continue;
+      }
+
+      let shown;
+      if (after && after !== before && after.t > before.t) {
+        const t = Math.max(0, Math.min(1, (targetSourceTime - before.t) / (after.t - before.t)));
+        const a = { ...before.data, lon: before.lon, lat: before.lat, heading: before.heading };
+        const b = { ...after.data, lon: after.lon, lat: after.lat, heading: after.heading };
+        shown = interpolateAircraft(a, b, t);
+      } else {
+        shown = { ...before.data, lon: before.lon, lat: before.lat, heading: before.heading };
+      }
+
+      item.rendered = shown;
+      item.el.style.display = "";
+      item.marker.setLngLat([shown.lon, shown.lat]);
+      if (typeof item.marker.setRotation === "function") {
+        item.marker.setRotation(Number.isFinite(shown.heading) ? shown.heading : 0);
+      }
+
+      if (selectedAircraftHex === item.data.hex && nowClientMs - aircraftInfoLastRenderAt > 250) {
+        aircraftInfoLastRenderAt = nowClientMs;
+        renderAircraftInfo(item.data, shown);
+      }
+    }
+  }
+
+  function aircraftAnimationLoop(ts) {
+    if (ts - adsbLastAnimationFrame >= ADSB_ANIMATION_FRAME_MS) {
+      adsbLastAnimationFrame = ts;
+      renderBufferedAircraft(Date.now());
+    }
+    requestAnimationFrame(aircraftAnimationLoop);
+  }
+
+  function startAircraftAnimation() {
+    if (adsbAnimationStarted) return;
+    adsbAnimationStarted = true;
+    requestAnimationFrame(aircraftAnimationLoop);
+  }
+
+  function currentAdsbViewBox() {
+    const b = map.getBounds();
+    return { south:b.getSouth(), north:b.getNorth(), west:b.getWest(), east:b.getEast() };
+  }
+
+  function paddedAdsbFetchBox() {
+    const view = currentAdsbViewBox();
+    const latSpan = Math.max(0.05, view.north - view.south);
+    const lonSpan = Math.max(0.05, view.east - view.west);
+    return {
+      south: Math.max(-90, view.south - latSpan * ADSB_FETCH_BOX_PADDING),
+      north: Math.min(90, view.north + latSpan * ADSB_FETCH_BOX_PADDING),
+      west: Math.max(-180, view.west - lonSpan * ADSB_FETCH_BOX_PADDING),
+      east: Math.min(180, view.east + lonSpan * ADSB_FETCH_BOX_PADDING)
+    };
+  }
+
+  function adsbViewFitsFetchBox() {
+    if (!adsbFetchBox) return false;
+    const view = currentAdsbViewBox();
+    return view.south >= adsbFetchBox.south && view.north <= adsbFetchBox.north &&
+      view.west >= adsbFetchBox.west && view.east <= adsbFetchBox.east;
+  }
+
+  function ensureAdsbFetchBox(force = false) {
+    if (force || !adsbFetchBox || !adsbViewFitsFetchBox()) {
+      adsbFetchBox = paddedAdsbFetchBox();
+      return true;
+    }
+    return false;
+  }
+
+  function adsbBoxString() {
+    ensureAdsbFetchBox(false);
+    return [
+      adsbFetchBox.south.toFixed(6),
+      adsbFetchBox.north.toFixed(6),
+      adsbFetchBox.west.toFixed(6),
+      adsbFetchBox.east.toFixed(6)
+    ].join(",");
   }
 
   function aircraftFeature(ac) {
     const lat = Number(ac?.lat);
     const lon = Number(ac?.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    const flight = String(ac.flight || ac.r || ac.hex || "").trim();
-    const track = Number(ac.track ?? ac.true_heading ?? ac.mag_heading ?? 0);
+    const flight = String(ac.flight || ac.registration || ac.hex || "").trim();
     return {
       type: "Feature",
       geometry: { type: "Point", coordinates: [lon, lat] },
@@ -1323,11 +1742,11 @@
         layer: "flight",
         ident: flight || "AIRCRAFT",
         flight,
-        registration: String(ac.r || ""),
-        aircraft_type: String(ac.t || ac.desc || ""),
-        altitude: String(ac.alt_baro ?? ""),
+        registration: String(ac.registration || ""),
+        aircraft_type: String(ac.typeCode || ""),
+        altitude: ac.alt === "ground" ? "ground" : String(ac.alt ?? ""),
         groundspeed: Number(ac.gs || 0),
-        track: Number.isFinite(track) ? track : 0,
+        track: Number.isFinite(ac.heading) ? ac.heading : 0,
         squawk: String(ac.squawk || ""),
         hex: String(ac.hex || ""),
         emergency: ["7500", "7600", "7700"].includes(String(ac.squawk || ""))
@@ -1335,39 +1754,82 @@
     };
   }
 
-  async function loadFlights() {
-    if (!map.loaded() || !flightsEnabled()) return;
-    flightController?.abort();
-    flightController = new AbortController();
+  async function initAdsbDecoder() {
+    if (adsbDecoderReady) return;
+    if (!window.zstddec?.ZSTDDecoder) throw new Error("zstd decoder yüklenemedi");
+    adsbDecoder = new window.zstddec.ZSTDDecoder();
+    await adsbDecoder.init();
+    adsbDecoderReady = true;
+  }
 
-    const center = map.getCenter();
-    const query = new URLSearchParams({
-      lat: center.lat.toFixed(4),
-      lon: center.lng.toFixed(4),
-      radius: String(flightRadiusNm())
-    });
+  async function loadFlights() {
+    clearTimeout(flightLoadTimer);
+    if (!map.loaded() || !flightsEnabled()) return;
+
+    if (map.getZoom() < ADSB_MIN_FETCH_ZOOM) {
+      if (flightsStatus) flightsStatus.textContent = "Canlı ADS-B için biraz yaklaş · z" + ADSB_MIN_FETCH_ZOOM.toFixed(1) + "+";
+      flightLoadTimer = setTimeout(loadFlights, 1200);
+      return;
+    }
 
     try {
-      const response = await fetch(FLIGHTS_API + "?" + query.toString(), {
+      await initAdsbDecoder();
+    } catch (error) {
+      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+      return;
+    }
+
+    flightController?.abort();
+    flightController = new AbortController();
+    const seq = ++adsbRequestSeq;
+    const box = adsbBoxString();
+
+    if (flightsStatus) flightsStatus.textContent = "TheAirTraffic · veri alınıyor…";
+
+    try {
+      const response = await fetch(ADSB_API + "?action=feed&box=" + encodeURIComponent(box), {
         cache: "no-store",
         signal: flightController.signal
       });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(payload?.ac)) {
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
         throw new Error(payload?.error || ("HTTP " + response.status));
       }
 
-      flightFeatures = payload.ac.map(aircraftFeature).filter(Boolean);
-      map.getSource(FLIGHT_SOURCE_ID)?.setData({
-        type: "FeatureCollection",
-        features: flightFeatures
-      });
+      const compressed = new Uint8Array(await response.arrayBuffer());
+      if (seq !== adsbRequestSeq) return;
+      const decoded = adsbDecoder.decode(compressed);
+      const parsed = parseBinCraft(decoded);
+
+      const sourceNowMs = parsed.now * 1000;
+      const measuredOffset = Date.now() - sourceNowMs;
+      if (!adsbHaveSourceClock) {
+        adsbSourceClockOffsetMs = measuredOffset;
+        adsbHaveSourceClock = true;
+      } else {
+        adsbSourceClockOffsetMs = adsbSourceClockOffsetMs * 0.85 + measuredOffset * 0.15;
+      }
+
+      ingestAircraftSnapshot(parsed.aircraft, sourceNowMs);
+      flightFeatures = parsed.aircraft.map(aircraftFeature).filter(Boolean);
       flightCountsState = { flight: flightFeatures.length };
       updateCounts();
-      if (flightsStatus) flightsStatus.textContent = "ADSB.lol · " + flightFeatures.length + " uçak";
+
+      if (flightsUpdated) flightsUpdated.textContent = new Date().toLocaleTimeString("tr-TR");
+      if (flightsPayload) flightsPayload.textContent = compressed.byteLength.toLocaleString("tr-TR") + " B → " + decoded.byteLength.toLocaleString("tr-TR") + " B";
+      if (flightsStatus) {
+        flightsStatus.textContent =
+          "TheAirTraffic · " + flightFeatures.length.toLocaleString("tr-TR") +
+          " uçak · binCraft v" + parsed.version +
+          " · " + (ADSB_RENDER_DELAY_MS / 1000).toFixed(1) + " sn buffer";
+      }
     } catch (error) {
       if (error.name === "AbortError") return;
+      console.error("[ADS-B TheAirTraffic]", error);
       if (flightsStatus) flightsStatus.textContent = "ADS-B hata: " + error.message;
+    } finally {
+      if (flightsEnabled()) flightLoadTimer = setTimeout(loadFlights, ADSB_REFRESH_MS);
     }
   }
 
@@ -1375,6 +1837,45 @@
     clearTimeout(flightLoadTimer);
     if (flightsEnabled()) flightLoadTimer = setTimeout(loadFlights, delay);
   }
+
+  function handleAdsbMoveEnd() {
+    if (!flightsEnabled()) return;
+    const zoomNow = map.getZoom();
+    const centerNow = map.getCenter();
+
+    if (adsbLastMoveZoom == null) adsbLastMoveZoom = zoomNow;
+    if (adsbLastMoveCenter == null) adsbLastMoveCenter = centerNow;
+
+    const zoomChanged = Math.abs(zoomNow - adsbLastMoveZoom) > 0.01;
+    const centerChanged =
+      Math.abs(centerNow.lng - adsbLastMoveCenter.lng) > 0.00001 ||
+      Math.abs(centerNow.lat - adsbLastMoveCenter.lat) > 0.00001;
+    const zoomedOut = zoomNow < adsbLastMoveZoom - 0.01;
+
+    adsbLastMoveZoom = zoomNow;
+    adsbLastMoveCenter = centerNow;
+
+    if (zoomChanged) {
+      if (zoomedOut && !adsbViewFitsFetchBox()) {
+        ensureAdsbFetchBox(true);
+        scheduleFlightLoad(0);
+      }
+      return;
+    }
+
+    if (centerChanged) {
+      ensureAdsbFetchBox(true);
+      scheduleFlightLoad(0);
+    }
+  }
+
+  function setFlightVisibility() {
+    for (const item of aircraftMarkers.values()) {
+      item.el.style.display = flightsEnabled() ? "" : "none";
+    }
+  }
+
+  aircraftInfoClose?.addEventListener("click", closeAircraftInfo);
 
   function scheduleChartLoad(delay = 180, force = false) {
     clearTimeout(chartLoadTimer);
@@ -1402,7 +1903,7 @@
       if (hit) {
         const [lon, lat] = hit.geometry.coordinates;
         map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 9), essential: true });
-        showPopup(hit, new maplibregl.LngLat(lon, lat));
+        selectAircraft(String(hit.properties?.hex || ""));
         searchResults.classList.remove("open");
         return;
       }
@@ -1472,16 +1973,28 @@
 
   initializeTime();
 
-  map.on("load", () => {
+  map.on("load", async () => {
     addNavLayers();
     setFlightVisibility();
     boot.classList.add("hidden");
     scheduleViewportLoad(0, true);
-    scheduleFlightLoad(0);
+    startAircraftAnimation();
+    try {
+      await initAdsbDecoder();
+      if (flightsEnabled()) {
+        ensureAdsbFetchBox(true);
+        adsbLastMoveZoom = map.getZoom();
+        adsbLastMoveCenter = map.getCenter();
+        scheduleFlightLoad(0);
+      }
+    } catch (error) {
+      console.error("[ADS-B decoder]", error);
+      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+    }
     loadWeatherOverlays().catch(console.error);
   });
 
-  map.on("moveend", () => { scheduleViewportLoad(); scheduleFlightLoad(); });
+  map.on("moveend", () => { scheduleViewportLoad(); handleAdsbMoveEnd(); });
   map.on("zoomend", () => updateZoomHint(chartTruncated || notamTruncated));
 
   layerInputs.forEach(input => {
@@ -1497,22 +2010,31 @@
     });
   });
 
-  flightsEnabledInput?.addEventListener("change", () => {
+  flightsEnabledInput?.addEventListener("change", async () => {
     setFlightVisibility();
     if (!flightsEnabled()) {
+      flightController?.abort();
+      clearTimeout(flightLoadTimer);
+      clearAircraftMarkers();
       flightFeatures = [];
       flightCountsState = { flight: 0 };
-      map.getSource(FLIGHT_SOURCE_ID)?.setData(emptyGeojson());
       updateCounts();
+      if (flightsUpdated) flightsUpdated.textContent = "—";
+      if (flightsPayload) flightsPayload.textContent = "—";
       if (flightsStatus) flightsStatus.textContent = "ADS-B katmanı kapalı.";
       return;
     }
-    scheduleFlightLoad(0);
-  });
 
-  setInterval(() => {
-    if (map.loaded() && flightsEnabled()) scheduleFlightLoad(0);
-  }, 8000);
+    try {
+      await initAdsbDecoder();
+      ensureAdsbFetchBox(true);
+      adsbLastMoveZoom = map.getZoom();
+      adsbLastMoveCenter = map.getCenter();
+      scheduleFlightLoad(0);
+    } catch (error) {
+      if (flightsStatus) flightsStatus.textContent = "ADS-B decoder hatası: " + error.message;
+    }
+  });
 
   timeSlider?.addEventListener("input", () => {
     if (!timelineAnchor) return;
