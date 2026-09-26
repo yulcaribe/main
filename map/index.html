@@ -26,7 +26,7 @@
   </header>
 
   <section class="map-status" aria-live="polite">
-    <span class="dot" id="status-dot"></span><strong id="status-text">CHARTS</strong><span>·</span><span id="feature-count">0 obje</span>
+    <span class="dot" id="status-dot"></span><strong id="status-text">CHARTS</strong>
   </section>
 
   <aside class="tool-panel" id="flights-panel">
@@ -39,17 +39,17 @@
     <div class="tool-head"><div><strong>CHARTS</strong><small>Navdata</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
     <label class="master-row"><span>Tüm chart katmanları</span><input id="charts-toggle-all" type="checkbox" checked></label>
     <div class="layer-group"><span class="layer-group-title">Points</span>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airport"><i class="legend-dot" style="background:#7ee7ff"></i>Airports</label><span data-layer-count="airport">0</span></div>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="navaid"><i class="legend-dot" style="background:#ffc76b"></i>Navaids</label><span data-layer-count="navaid">0</span></div>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="waypoint"><i class="legend-dot" style="background:#d6e1e7"></i>Waypoints</label><span data-layer-count="waypoint">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airport"><i class="legend-dot" style="background:#7ee7ff"></i>Airports</label></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="navaid"><i class="legend-dot" style="background:#ffc76b"></i>Navaids</label></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="waypoint"><i class="legend-dot" style="background:#d6e1e7"></i>Waypoints</label></div>
     </div>
     <div class="layer-group"><span class="layer-group-title">Routes</span>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airway"><i class="legend-line" style="background:#5fdbe8"></i>Airways</label><span data-layer-count="airway">0</span></div>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="sid"><i class="legend-line" style="background:#70e8a7"></i>SID</label><span data-layer-count="sid">0</span></div>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="star"><i class="legend-line" style="background:#bc9cff"></i>STAR</label><span data-layer-count="star">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airway"><i class="legend-line" style="background:#5fdbe8"></i>Airways</label></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="sid"><i class="legend-line" style="background:#70e8a7"></i>SID</label></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="star"><i class="legend-line" style="background:#bc9cff"></i>STAR</label></div>
     </div>
     <div class="layer-group"><span class="layer-group-title">Airspace</span>
-      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airspace"><i class="legend-line" style="background:#ff7f94"></i>Airspace</label><span data-layer-count="airspace">0</span></div>
+      <div class="layer-row"><label><input type="checkbox" checked data-nav-layer="airspace"><i class="legend-line" style="background:#ff5f6d"></i>Airspace</label></div>
     </div>
   </aside>
 
@@ -59,7 +59,7 @@
     <div class="notam-legend" aria-label="NOTAM renkleri">
       <span><i data-notam-color="aerial"></i>AERIAL SPORT</span><span><i data-notam-color="restricted"></i>DANGER / RESTRICTED</span><span><i data-notam-color="survey"></i>PHOTO / SURVEY</span><span><i data-notam-color="training"></i>TRAINING / MIL</span><span><i data-notam-color="other"></i>OTHER</span>
     </div>
-    <small class="panel-note" id="notam-time-status">Seçilen UTC için açıkça tanımlanan NOTAM geometrileri gösterilir.</small>
+    <small class="panel-note" id="notam-time-status">Seçilen UTC için geçerli NOTAM geometrileri gösterilir.</small>
   </aside>
 
   <aside class="tool-panel" id="wafs-panel">
@@ -76,11 +76,9 @@
   </aside>
 
   <section class="timeline-dock mode-hidden is-collapsed" id="timeline-dock" aria-label="Zaman çizgisi">
-    <div class="timeline-bar"><strong id="selected-time-label">—</strong><span id="timeline-offset">0h</span><button id="timeline-toggle" type="button" aria-expanded="false">TIME</button></div>
+    <div class="timeline-bar"><strong id="selected-time-label">—</strong><button id="timeline-toggle" type="button" aria-expanded="false">TIME</button></div>
     <div class="timeline-body">
       <div class="timeline-actions"><button data-time-step="-6" type="button">-6h</button><button data-time-step="-1" type="button">-1h</button><button id="time-now" type="button">NOW</button><button data-time-step="1" type="button">+1h</button><button data-time-step="6" type="button">+6h</button></div>
-      <div class="timeline-scale" id="timeline-scale"><span>-24h</span><span>-12h</span><span>-6h</span><span>NOW</span><span>+6h</span><span>+12h</span><span>+24h</span></div>
-      <input id="map-time-slider" class="timeline-range" type="range" min="-24" max="24" step="1" value="0" aria-label="UTC zamanını değiştir">
       <input id="map-time" type="datetime-local" step="60" aria-label="UTC zamanı">
     </div>
   </section>
@@ -98,7 +96,7 @@
     <a href="/main/" data-nav="home">HOME</a><a href="/main/map/" data-nav="map" aria-current="page">MAP</a><a href="/main/notam/" data-nav="notam">NOTAM</a>
   </nav>
 
-  <script src="/main/app.js?v=1" defer></script>
+  <script src="/main/app.js?v=2" defer></script>
   <script>
     (() => {
       const detail=document.getElementById('boot-detail');
@@ -109,8 +107,15 @@
           try{await load('https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js')}catch(_){await load('https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js')}
           detail.textContent='ADS-B decoder hazırlanıyor…';
           try{await load('https://cdn.jsdelivr.net/gh/wiedehopf/tar1090@master/html/libs/zstddec-tar1090-0.0.5.js')}catch(_){}
+          detail.textContent='Katman motorları hazırlanıyor…';
+          await Promise.all([
+            load('/main/map/charts.js?v=1'),
+            load('/main/map/notam.js?v=1'),
+            load('/main/map/adsb.js?v=1'),
+            load('/main/map/wafs.js?v=1')
+          ]);
           detail.textContent='Harita hazırlanıyor…';
-          await load('/main/map/map.js?v=9');
+          await load('/main/map/map.js?v=10');
         }catch(error){console.error(error);detail.textContent='Harita yüklenemedi.'}
       })();
     })();
