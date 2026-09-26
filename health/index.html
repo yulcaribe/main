@@ -36,7 +36,6 @@
           <button id="health-probe" type="button">Test all connections</button>
           <button id="health-logout" type="button">Logout</button>
         </div>
-        <div id="health-overview" class="weather-results"></div>
 
         <details class="plain-block" open>
           <summary class="plain-block-head"><strong>API</strong><span id="health-api-badge" class="badge">UNKNOWN</span></summary>
@@ -196,12 +195,6 @@
 
     badge("health-api-badge", apiState); badge("health-db-badge", dbState); badge("health-map-badge", mapState);
     badge("health-weather-badge", weatherState); badge("health-adsb-badge", adsbState); badge("health-notam-badge", notamState); badge("health-jobs-badge", jobsState);
-
-    $("health-overview").innerHTML = [
-      ["API",apiState,Object.keys(files).length + " endpoints"],["MariaDB",dbState,db.latencyMs != null ? db.latencyMs + " ms" : ""],
-      ["Map",mapState,"MapLibre"],["Weather",weatherState,"METAR / TAF / WAFS"],["ADS-B",adsbState,api.adsb?.meta?.source || "TheAirTraffic"],
-      ["FAA NMS",notamState,local.syncHealth || ""],["Cron",jobsState,jobs.cron?.ageSeconds != null ? jobs.cron.ageSeconds + " s" : ""]
-    ].map(([name,state,sub]) => `<section class="plain-block"><div class="plain-block-head"><strong>${esc(name)}</strong><span class="badge ${state === "ok" ? "valid" : state === "error" ? "cancelled" : state === "warn" || state === "warning" ? "future" : ""}">${label(state)}</span></div><div class="source-line">${esc(sub)}</div></section>`).join("");
 
     $("health-api").innerHTML = Object.keys(files).map(name => row(name, `${files[name] ? "FILE OK" : "FILE MISSING"}${api[name] ? " · " + esc(probeLabel(api[name])) : ""}`)).join("");
     $("health-db").innerHTML = [row("Connection", label(dbState)),row("Server",esc(db.serverVersion || "—")),row("Host",esc(db.host || "—")),row("Port",esc(db.port || "—")),row("Database",esc(db.database || "—")),row("DB User",esc(db.user || "—")),row("Latency",db.latencyMs != null ? esc(db.latencyMs + " ms") : "—")].join("");
