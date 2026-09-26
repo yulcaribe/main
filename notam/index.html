@@ -24,7 +24,7 @@
         <label><span>Arama</span><input id="f-q" type="search" placeholder="NOTAM no, metin…"></label>
         <label><span>ICAO</span><input id="f-icao" maxlength="4" placeholder="LTAI"></label>
         <label><span>FIR</span><input id="f-fir" maxlength="4" placeholder="LTAA"></label>
-        <label><span>Zaman durumu</span><select id="f-state"><option value="valid">Geçerli</option><option value="future">Gelecek</option><option value="expired">Geçmiş</option><option value="cancelled">İptal</option><option value="all">Tümü</option></select></label>
+        <label><span>Zaman durumu</span><select id="f-state"><option value="valid">Geçerli</option><option value="future">Gelecek</option><option value="expired">Geçmiş</option><option value="cancelled">İptal</option><option value="replaced">Değiştirildi</option><option value="all">Tümü</option></select></label>
         <label><span>UTC</span><input id="f-at" type="datetime-local" step="60"></label>
         <label><span>Tip</span><select id="f-type"><option value="">Tümü</option></select></label>
         <label><span>Classification</span><select id="f-classification"><option value="">Tümü</option></select></label>
@@ -62,6 +62,6 @@
     <a href="/main/notam/" data-nav="notam" aria-current="page">NOTAM</a>
   </nav>
 
-  <script src="/main/app.js?v=1" defer></script>
+  <script src="/main/app.js?v=2" defer></script>
 </body>
 </html>
