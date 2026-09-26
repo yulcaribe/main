@@ -137,7 +137,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;p
 
   <details class="section" id="sec-flights">
     <summary>
-      <span class="summary-left"><span><span class="summary-title">Flights / ADS-B</span><span class="summary-sub">adsb.lol bağlantısı ve uçuş layeri</span></span></span>
+      <span class="summary-left"><span><span class="summary-title">Flights / ADS-B</span><span class="summary-sub">TheAirTraffic · binCraft + zstd · canlı uçuş layeri</span></span></span>
       <span class="summary-right"><span class="badge unknown" data-section-status="flights">UNKNOWN</span><span class="chev">›</span></span>
     </summary>
     <div class="content"><div class="kv" id="flights-kv"></div></div>
@@ -297,7 +297,7 @@ function render(d){
     probeState(apiProbes.navdata),
     probeState(apiProbes.notam),
     probeState(apiProbes.wafs),
-    probeState(apiProbes.flights)
+    probeState(apiProbes.adsb)
   ]);
   const weatherState=combine([
     probeState(apiProbes.metar),
@@ -306,7 +306,7 @@ function render(d){
     probeState(net.wafsFeed),
     probeState(net.leaflet)
   ]);
-  const flightsState=probeState(apiProbes.flights);
+  const flightsState=probeState(apiProbes.adsb);
 
   let notamState="ok";
   if(nmsCfg.credentialsConfigured===false)notamState="error";
@@ -331,13 +331,13 @@ function render(d){
     card("MariaDB",dbState,db.latencyMs!=null?db.latencyMs+" ms":""),
     card("Map",mapState,"MapLibre"),
     card("Weather",weatherState,"METAR / TAF / WAFS"),
-    card("ADS-B",flightsState,"adsb.lol"),
+    card("ADS-B",flightsState,"TheAirTraffic"),
     card("FAA NMS",notamState,local.syncHealth||""),
     card("Cron",cronState,jobs.cron?.ageSeconds!=null?jobs.cron.ageSeconds+" sn":""),
     card("Logs","ok","3 gün")
   ].join("");
 
-  const orderedApis=["index","navdata","notam","weather","metar","taf","wafs","flights","briefing","modelwx","health"];
+  const orderedApis=["index","navdata","notam","weather","metar","taf","wafs","adsb","briefing","modelwx","health"];
   $("api-table").innerHTML=orderedApis.map(name=>{
     const file=files[name];
     const p=apiProbes[name];
@@ -366,7 +366,7 @@ function render(d){
     row("Navdata layer",probeLabel(apiProbes.navdata)),
     row("NOTAM layer",probeLabel(apiProbes.notam)),
     row("WAFS layer",probeLabel(apiProbes.wafs)),
-    row("ADS-B layer",probeLabel(apiProbes.flights))
+    row("ADS-B layer",probeLabel(apiProbes.adsb))
   ].join("");
 
   $("weather-kv").innerHTML=[
@@ -379,11 +379,12 @@ function render(d){
   ].join("");
 
   $("flights-kv").innerHTML=[
-    row("Flights API",probeLabel(apiProbes.flights)),
-    row("Upstream",esc(apiProbes.flights?.meta?.source||"ADSB.lol")),
-    row("HTTP",esc(apiProbes.flights?.status??"—")),
-    row("Aircraft",esc(apiProbes.flights?.meta?.count??"—")),
-    row("Response",apiProbes.flights?.ms!=null?esc(apiProbes.flights.ms+" ms"):"—")
+    row("ADS-B API",probeLabel(apiProbes.adsb)),
+    row("Upstream",esc(apiProbes.adsb?.meta?.source||"TheAirTraffic")),
+    row("Mode",esc(apiProbes.adsb?.meta?.mode||"binCraft+zstd")),
+    row("HTTP",esc(apiProbes.adsb?.status??"—")),
+    row("Upstream HTTP",esc(apiProbes.adsb?.meta?.upstreamStatus??"—")),
+    row("Response",apiProbes.adsb?.ms!=null?esc(apiProbes.adsb.ms+" ms"):"—")
   ].join("");
 
   $("nms-kv").innerHTML=[
