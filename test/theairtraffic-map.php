@@ -106,7 +106,7 @@ if (isset($_GET['feed'])) {
     html,body,#map{width:100%;height:100%;margin:0}
     body{background:#071019;color:#eef6ff;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
     .panel{
-        position:absolute;z-index:3;top:14px;left:14px;min-width:245px;max-width:min(390px,calc(100vw - 28px));
+        position:absolute;z-index:3;top:14px;right:14px;left:auto;min-width:245px;max-width:min(390px,calc(100vw - 28px));
         padding:13px 15px;border:1px solid rgba(255,255,255,.15);border-radius:13px;
         background:rgba(5,13,21,.88);backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(0,0,0,.28)
     }
@@ -116,11 +116,32 @@ if (isset($_GET['feed'])) {
     .live{color:#77ef9a!important}
     .bad{color:#ff8585!important}
     .hint{margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:#8194a5}
-    .maplibregl-popup-content{
-        background:#08131d;color:#eaf4fb;border:1px solid #263a4b;border-radius:10px;padding:12px 14px;
-        box-shadow:0 12px 35px rgba(0,0,0,.35)
+    .aircraft-info{
+        position:absolute;z-index:5;left:0;top:0;bottom:0;width:330px;
+        max-width:88vw;background:rgba(5,13,21,.97);border-right:1px solid #253747;
+        box-shadow:12px 0 34px rgba(0,0,0,.35);transform:translateX(-102%);
+        transition:transform .18s ease;overflow:auto;
     }
-    .maplibregl-popup-tip{border-top-color:#08131d!important}
+    .aircraft-info.open{transform:translateX(0)}
+    .aircraft-info-head{
+        position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;justify-content:space-between;
+        gap:14px;padding:18px 16px 14px;background:rgba(5,13,21,.98);border-bottom:1px solid #253747;
+    }
+    .aircraft-info-title strong{display:block;font-size:22px;line-height:1.05;color:#fff}
+    .aircraft-info-title span{display:block;margin-top:5px;color:#8fa4b5;font-size:12px}
+    .aircraft-close{
+        flex:0 0 auto;width:34px;height:34px;border-radius:8px;border:1px solid #dbe8f0;
+        background:#edf6fb;color:#071019;font-size:24px;line-height:30px;font-weight:800;
+        cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35)
+    }
+    .aircraft-close:hover{background:#fff}
+    .info-section{padding:14px 16px;border-bottom:1px solid #1d2d3a}
+    .info-section h3{margin:0 0 9px;color:#6f8ba1;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+    .info-row{display:grid;grid-template-columns:1fr auto;gap:16px;padding:4px 0;font-size:12px}
+    .info-row span{color:#8ca0b1}
+    .info-row b{color:#eef6ff;font-weight:650;text-align:right}
+    .info-coords{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+    .aircraft-marker.selected svg path{fill:#7ee7ff}
     .ac-title{font-weight:800;font-size:15px;margin-bottom:6px}
     .aircraft-marker{
         width:18px;height:18px;display:flex;align-items:center;justify-content:center;
@@ -134,6 +155,17 @@ if (isset($_GET['feed'])) {
 </head>
 <body>
 <div id="map"></div>
+
+<aside class="aircraft-info" id="aircraft-info" aria-hidden="true">
+    <div class="aircraft-info-head">
+        <div class="aircraft-info-title">
+            <strong id="info-title">Aircraft</strong>
+            <span id="info-subtitle">—</span>
+        </div>
+        <button class="aircraft-close" id="aircraft-close" type="button" aria-label="Uçak bilgisini kapat">×</button>
+    </div>
+    <div id="aircraft-info-body"></div>
+</aside>
 
 <div class="panel">
     <strong>TheAirTraffic · MapLibre bind testi</strong>
@@ -155,6 +187,11 @@ if (isset($_GET['feed'])) {
     const updatedEl = document.getElementById("updated");
     const payloadEl = document.getElementById("payload");
     const hintEl = document.getElementById("hint");
+    const infoPanel = document.getElementById("aircraft-info");
+    const infoTitle = document.getElementById("info-title");
+    const infoSubtitle = document.getElementById("info-subtitle");
+    const infoBody = document.getElementById("aircraft-info-body");
+    const infoClose = document.getElementById("aircraft-close");
 
     const SOURCE = "tat-aircraft";
     const REFRESH_MS = 2000;
@@ -175,6 +212,8 @@ if (isset($_GET['feed'])) {
     let activeFetchBox = null;
     let lastMoveZoom = null;
     let lastMoveCenter = null;
+    let selectedAircraftHex = null;
+    let lastInfoRenderAt = 0;
     const aircraftMarkers = new Map();
 
     const map = new maplibregl.Map({
@@ -278,32 +317,89 @@ if (isset($_GET['feed'])) {
 
             let lon = s32[2] / 1e6;
             let lat = s32[3] / 1e6;
+            let baroRate = s16[8] * 8;
+            let geomRate = s16[9] * 8;
             let alt = s16[10] * 25;
+            let altGeom = s16[11] * 25;
+            let navAltitudeMcp = u16[12] * 4;
+            let navAltitudeFms = u16[13] * 4;
+            let navQnh = s16[14] / 10;
+            let navHeading = s16[15] / 90;
+
+            const squawkHex = u16[16].toString(16).padStart(4, "0");
+            let squawk = squawkHex[0] > "9"
+                ? String(parseInt(squawkHex[0], 16)) + squawkHex.slice(1)
+                : squawkHex;
+
             let gs = s16[17] / 10;
+            let mach = s16[18] / 1000;
+            let roll = s16[19] / 100;
             let track = s16[20] / 90;
+            let trackRate = s16[21] / 100;
             let magHeading = s16[22] / 90;
             let trueHeading = s16[23] / 90;
-            let baroRate = s16[8] * 8;
+            let windDir = s16[24];
+            let windSpeed = s16[25];
+            let oat = s16[26];
+            let tat = s16[27];
+            let tas = u16[28];
+            let ias = u16[29];
+
+            const category = u8[64] ? u8[64].toString(16).toUpperCase() : "";
+            const receiverCount = u8[104];
+            let rssi;
+            if (version >= 20250403) {
+                rssi = (u8[105] * (50 / 255)) - 50;
+            } else {
+                const level = u8[105] * u8[105] / 65025 + 1.125e-5;
+                rssi = 10 * Math.log(level) / Math.log(10);
+            }
 
             const validity1 = u8[73];
             const validity2 = u8[74];
             const validity3 = u8[75];
+            const validity4 = u8[76];
+            const validity5 = u8[77];
 
             const flight = (validity1 & 8) ? readAscii(u8, 78, 86) : "";
             const typeCode = readAscii(u8, 88, 92);
             const registration = readAscii(u8, 92, 104);
 
             if (!(validity1 & 16)) alt = null;
+            if (!(validity1 & 32)) altGeom = null;
             if (!(validity1 & 64)) {
                 lat = null;
                 lon = null;
                 seenPos = null;
             }
             if (!(validity1 & 128)) gs = null;
+
+            if (!(validity2 & 1)) ias = null;
+            if (!(validity2 & 2)) tas = null;
+            if (!(validity2 & 4)) mach = null;
             if (!(validity2 & 8)) track = null;
+            if (!(validity2 & 16)) trackRate = null;
+            if (!(validity2 & 32)) roll = null;
             if (!(validity2 & 64)) magHeading = null;
             if (!(validity2 & 128)) trueHeading = null;
+
             if (!(validity3 & 1)) baroRate = null;
+            if (!(validity3 & 2)) geomRate = null;
+
+            if (!(validity4 & 4)) squawk = null;
+            if (!(validity4 & 32)) navQnh = null;
+            if (!(validity4 & 64)) navAltitudeMcp = null;
+            if (!(validity4 & 128)) navAltitudeFms = null;
+
+            if (!(validity5 & 2)) navHeading = null;
+            if (!(validity5 & 16)) {
+                windSpeed = null;
+                windDir = null;
+            }
+            if (!(validity5 & 32)) {
+                oat = null;
+                tat = null;
+            }
 
             const airground = u8[68] & 15;
             if (airground === 1) alt = "ground";
@@ -318,8 +414,14 @@ if (isset($_GET['feed'])) {
             ) continue;
 
             aircraft.push({
-                hex, flight, registration, typeCode, type,
-                lat, lon, alt, gs, track, heading, baroRate,
+                hex, flight, registration, typeCode, type, category,
+                lat, lon, alt, altGeom,
+                gs, ias, tas, mach, roll,
+                track, trackRate, magHeading, trueHeading, heading,
+                baroRate, geomRate,
+                squawk, navQnh, navAltitudeMcp, navAltitudeFms, navHeading,
+                windDir, windSpeed, oat, tat,
+                receiverCount, rssi,
                 seen, seenPos
             });
         }
@@ -333,23 +435,102 @@ if (isset($_GET['feed'])) {
         };
     }
 
-    function aircraftPopupHtml(ac) {
-        const track = Number(ac.track);
-        const vr = Number(ac.baroRate);
-        const altLabel = ac.alt === "ground" ? "GND" : (Number.isFinite(ac.alt) ? Math.round(ac.alt) + " ft" : "—");
-        const gsLabel = Number.isFinite(ac.gs) ? Math.round(ac.gs) + " kt" : "—";
-        return `
-            <div class="ac-title">${escapeHtml(ac.flight || ac.registration || ac.hex || "Aircraft")}</div>
-            <div class="ac-grid">
-                <span>Hex</span><b>${escapeHtml((ac.hex || "").toUpperCase())}</b>
-                <span>Reg</span><b>${escapeHtml(ac.registration || "—")}</b>
-                <span>Type</span><b>${escapeHtml(ac.typeCode || "—")}</b>
-                <span>Altitude</span><b>${escapeHtml(altLabel)}</b>
-                <span>Speed</span><b>${escapeHtml(gsLabel)}</b>
-                <span>Track</span><b>${Number.isFinite(track) ? track.toFixed(0) + "°" : "—"}</b>
-                <span>V/S</span><b>${Number.isFinite(vr) ? Math.round(vr) + " ft/min" : "—"}</b>
-                <span>Source</span><b>${escapeHtml(ac.type || "—")}</b>
-            </div>`;
+    function fmt(value, digits = 0, suffix = "") {
+        return Number.isFinite(value) ? Number(value).toFixed(digits) + suffix : "—";
+    }
+
+    function fmtAlt(value) {
+        if (value === "ground") return "GND";
+        return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") + " ft" : "—";
+    }
+
+    function row(label, value, extraClass = "") {
+        return '<div class="info-row"><span>' + escapeHtml(label) + '</span><b class="' + extraClass + '">' + escapeHtml(value ?? "—") + '</b></div>';
+    }
+
+    function section(title, rows) {
+        return '<section class="info-section"><h3>' + escapeHtml(title) + '</h3>' + rows.join("") + '</section>';
+    }
+
+    function renderAircraftInfo(ac, shown) {
+        if (!ac || !shown || selectedAircraftHex !== ac.hex) return;
+
+        infoTitle.textContent = ac.flight || ac.registration || ac.hex.toUpperCase();
+        const sub = [ac.registration, ac.typeCode, ac.hex.toUpperCase()].filter(Boolean).join(" · ");
+        infoSubtitle.textContent = sub || "—";
+
+        const altitudeRows = [
+            row("Baro altitude", fmtAlt(ac.alt)),
+            row("Geom altitude", fmtAlt(ac.altGeom)),
+            row("Vertical rate", fmt(ac.baroRate, 0, " ft/min")),
+            row("Geom V/S", fmt(ac.geomRate, 0, " ft/min"))
+        ];
+
+        const speedRows = [
+            row("Ground speed", fmt(ac.gs, 1, " kt")),
+            row("IAS", fmt(ac.ias, 0, " kt")),
+            row("TAS", fmt(ac.tas, 0, " kt")),
+            row("Mach", fmt(ac.mach, 3, "")),
+            row("Track", fmt(ac.track, 1, "°")),
+            row("True heading", fmt(ac.trueHeading, 1, "°")),
+            row("Mag heading", fmt(ac.magHeading, 1, "°")),
+            row("Roll", fmt(ac.roll, 1, "°"))
+        ];
+
+        const navRows = [
+            row("Squawk", ac.squawk || "—"),
+            row("Selected ALT (MCP)", fmt(ac.navAltitudeMcp, 0, " ft")),
+            row("Selected ALT (FMS)", fmt(ac.navAltitudeFms, 0, " ft")),
+            row("Selected heading", fmt(ac.navHeading, 1, "°")),
+            row("QNH", fmt(ac.navQnh, 1, " hPa"))
+        ];
+
+        const weatherRows = [
+            row("Wind", Number.isFinite(ac.windDir) && Number.isFinite(ac.windSpeed) ? Math.round(ac.windDir) + "° / " + Math.round(ac.windSpeed) + " kt" : "—"),
+            row("OAT", fmt(ac.oat, 0, " °C")),
+            row("TAT", fmt(ac.tat, 0, " °C"))
+        ];
+
+        const sourceRows = [
+            row("Source", ac.type || "—"),
+            row("Category", ac.category || "—"),
+            row("Receivers", Number.isFinite(ac.receiverCount) ? String(ac.receiverCount) : "—"),
+            row("RSSI", fmt(ac.rssi, 1, " dBFS")),
+            row("Seen", fmt(ac.seen, 1, " s")),
+            row("Seen position", fmt(ac.seenPos, 1, " s")),
+            row("Position", Number(shown.lat).toFixed(5) + ", " + Number(shown.lon).toFixed(5), "info-coords")
+        ];
+
+        infoBody.innerHTML =
+            section("Altitude", altitudeRows) +
+            section("Speed & heading", speedRows) +
+            section("Navigation", navRows) +
+            section("Weather", weatherRows) +
+            section("Signal & source", sourceRows);
+    }
+
+    function selectAircraft(hex) {
+        if (selectedAircraftHex && aircraftMarkers.has(selectedAircraftHex)) {
+            aircraftMarkers.get(selectedAircraftHex).el.classList.remove("selected");
+        }
+
+        selectedAircraftHex = hex;
+        const item = aircraftMarkers.get(hex);
+        if (!item) return;
+
+        item.el.classList.add("selected");
+        infoPanel.classList.add("open");
+        infoPanel.setAttribute("aria-hidden", "false");
+        renderAircraftInfo(item.data, item.rendered || item.data);
+    }
+
+    function closeAircraftInfo() {
+        if (selectedAircraftHex && aircraftMarkers.has(selectedAircraftHex)) {
+            aircraftMarkers.get(selectedAircraftHex).el.classList.remove("selected");
+        }
+        selectedAircraftHex = null;
+        infoPanel.classList.remove("open");
+        infoPanel.setAttribute("aria-hidden", "true");
     }
 
     function createAircraftElement() {
@@ -407,7 +588,6 @@ if (isset($_GET['feed'])) {
         const el = createAircraftElement();
         el.style.display = "none";
 
-        const popup = new maplibregl.Popup({ closeButton: true, offset: 16 });
         const marker = new maplibregl.Marker({
             element: el,
             rotationAlignment: "map",
@@ -419,7 +599,6 @@ if (isset($_GET['feed'])) {
 
         item = {
             marker,
-            popup,
             el,
             data: ac,
             rendered: ac,
@@ -429,13 +608,7 @@ if (isset($_GET['feed'])) {
 
         el.addEventListener("click", (event) => {
             event.stopPropagation();
-            const current = aircraftMarkers.get(ac.hex);
-            if (!current) return;
-            const shown = current.rendered || current.data;
-            current.popup
-                .setLngLat([shown.lon, shown.lat])
-                .setHTML(aircraftPopupHtml(current.data))
-                .addTo(map);
+            selectAircraft(ac.hex);
         });
 
         aircraftMarkers.set(ac.hex, item);
@@ -482,7 +655,7 @@ if (isset($_GET['feed'])) {
         const staleClientCutoff = Date.now() - 15000;
         for (const [hex, item] of aircraftMarkers) {
             if (!seenNow.has(hex) && item.lastSeenAt < staleClientCutoff) {
-                item.popup.remove();
+                if (selectedAircraftHex === hex) closeAircraftInfo();
                 item.marker.remove();
                 aircraftMarkers.delete(hex);
             }
@@ -542,8 +715,9 @@ if (isset($_GET['feed'])) {
                 item.marker.setRotation(Number.isFinite(shown.heading) ? shown.heading : 0);
             }
 
-            if (item.popup.isOpen()) {
-                item.popup.setLngLat([shown.lon, shown.lat]);
+            if (selectedAircraftHex === item.data.hex && nowClientMs - lastInfoRenderAt > 250) {
+                lastInfoRenderAt = nowClientMs;
+                renderAircraftInfo(item.data, shown);
             }
         }
     }
@@ -682,6 +856,8 @@ if (isset($_GET['feed'])) {
         await decoder.init();
         decoderReady = true;
     }
+
+    infoClose.addEventListener("click", closeAircraftInfo);
 
     map.on("load", async () => {
         try {
