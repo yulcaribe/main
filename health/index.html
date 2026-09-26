@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="robots" content="noindex,nofollow">
+  <title>System Health | YulCaribe</title>
+  <link rel="stylesheet" href="/main/app.css?v=2">
+</head>
+<body data-page="health">
+  <header class="app-header">
+    <a class="app-brand" href="/main/">YulCaribe</a>
+  </header>
+
+  <main class="app-main">
+    <section class="page-section">
+      <div class="section-title-row">
+        <h1>System Health</h1>
+        <span id="health-time" class="source-line"></span>
+      </div>
+
+      <section id="health-login" class="plain-block" hidden>
+        <div class="plain-block-head"><strong>Maintenance Login</strong></div>
+        <p class="source-line">Protected system, database and integration console.</p>
+        <form id="health-login-form" class="search-row" autocomplete="off">
+          <input id="health-login-password" type="password" autocomplete="current-password" placeholder="Health password" required>
+          <button type="submit">Login</button>
+        </form>
+        <div id="health-login-status" class="status-line" aria-live="polite"></div>
+      </section>
+
+      <div id="health-dashboard" hidden>
+        <div class="filter-actions">
+          <button id="health-refresh" type="button">Refresh</button>
+          <button id="health-probe" type="button">Test all connections</button>
+          <button id="health-logout" type="button">Logout</button>
+        </div>
+        <div id="health-overview" class="weather-results"></div>
+
+        <details class="plain-block" open>
+          <summary class="plain-block-head"><strong>API</strong><span id="health-api-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-api" class="decode-list"></div>
+        </details>
+
+        <details class="plain-block">
+          <summary class="plain-block-head"><strong>MariaDB / Navdata</strong><span id="health-db-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-db" class="decode-list"></div>
+          <pre id="health-db-counts">Loading…</pre>
+        </details>
+
+        <details class="plain-block">
+          <summary class="plain-block-head"><strong>Map System</strong><span id="health-map-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-map" class="decode-list"></div>
+        </details>
+
+        <details class="plain-block">
+          <summary class="plain-block-head"><strong>Weather / WAFS</strong><span id="health-weather-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-weather" class="decode-list"></div>
+        </details>
+
+        <details class="plain-block">
+          <summary class="plain-block-head"><strong>Flights / ADS-B</strong><span id="health-adsb-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-adsb" class="decode-list"></div>
+        </details>
+
+        <details id="health-notam-section" class="plain-block">
+          <summary class="plain-block-head"><strong>FAA NMS / NOTAM</strong><span id="health-notam-badge" class="badge">UNKNOWN</span></summary>
+          <div class="filter-actions">
+            <button id="health-delta" type="button">Delta Sync</button>
+          </div>
+          <div id="health-nms" class="decode-list"></div>
+          <pre id="health-nms-detail">Loading…</pre>
+          <div class="plain-block-head"><strong>Latest NOTAMs</strong></div>
+          <div id="health-notam-list" class="results"></div>
+          <div class="weather-results">
+            <section class="plain-block"><div class="plain-block-head"><strong>Parsed</strong></div><pre id="health-notam-parsed">Select a NOTAM.</pre></section>
+            <section class="plain-block"><div class="plain-block-head"><strong>RAW FAA</strong></div><pre id="health-notam-raw">Select a NOTAM.</pre></section>
+          </div>
+        </details>
+
+        <details class="plain-block">
+          <summary class="plain-block-head"><strong>Cron &amp; Jobs</strong><span id="health-jobs-badge" class="badge">UNKNOWN</span></summary>
+          <pre id="health-jobs">Loading…</pre>
+        </details>
+
+        <details id="health-logs-section" class="plain-block">
+          <summary class="plain-block-head"><strong>Logs</strong><span class="badge valid">OK</span></summary>
+          <div class="filter-actions"><button id="health-logs-refresh" type="button">Refresh logs</button></div>
+          <pre id="health-logs">Open this section to load logs.</pre>
+        </details>
+
+        <details id="health-settings-section" class="plain-block">
+          <summary class="plain-block-head"><strong>Settings / Maintenance</strong><span class="badge valid">PROTECTED</span></summary>
+          <p class="source-line">DB and FAA secrets remain hidden unless explicitly revealed after password re-verification.</p>
+          <div class="filter-grid">
+            <label><span>New Health password</span><input id="health-new-password" type="password" autocomplete="new-password" placeholder="leave unchanged"></label>
+            <label><span>FAA Environment</span><select id="health-nms-env"><option value="production">production</option><option value="staging">staging</option></select></label>
+            <label><span>FAA Client ID</span><input id="health-nms-client" autocomplete="off"></label>
+            <label><span>FAA Client Secret</span><input id="health-nms-secret" type="password" autocomplete="off" placeholder="hidden"></label>
+            <label><span>DB Host</span><input id="health-db-host" autocomplete="off"></label>
+            <label><span>DB Port</span><input id="health-db-port" type="number" autocomplete="off"></label>
+            <label><span>DB Name</span><input id="health-db-name" autocomplete="off"></label>
+            <label><span>DB User</span><input id="health-db-user" autocomplete="off"></label>
+            <label><span>DB Password</span><input id="health-db-password" type="password" autocomplete="off" placeholder="hidden"></label>
+          </div>
+          <div class="filter-actions">
+            <button id="health-reveal-faa" type="button">Reveal FAA secret</button>
+            <button id="health-reveal-db" type="button">Reveal DB password</button>
+            <button id="health-save" type="button">Test &amp; save</button>
+          </div>
+          <div id="health-save-status" class="status-line" aria-live="polite"></div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <a href="/main/" data-nav="home">HOME</a>
+    <a href="/main/map/" data-nav="map">MAP</a>
+    <a href="/main/notam/" data-nav="notam">NOTAM</a>
+  </nav>
+
+<script>
+(() => {
+  "use strict";
+  const API = "/main/api/health.php";
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? "").replace(/[&<>\"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;"}[c]));
+  let snapshot = null;
+  let notamsLoaded = false;
+  let logsLoaded = false;
+  let settingsTouched = false;
+  let latestNotams = [];
+
+  async function req(action, options = {}) {
+    const response = await fetch(`${API}?action=${action}`, {cache:"no-store", credentials:"same-origin", ...options});
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+    return data;
+  }
+
+  const row = (label, value) => `<div class="decode-row"><span>${esc(label)}</span><strong>${value ?? "—"}</strong></div>`;
+  function probeState(probe) {
+    if (!probe) return "unknown";
+    if (probe.ok) return "ok";
+    if (Number(probe.status) === 429) return "warn";
+    return "error";
+  }
+  function combine(states) {
+    if (states.includes("error")) return "error";
+    if (states.includes("warn") || states.includes("warning")) return "warn";
+    if (states.includes("unknown")) return "unknown";
+    return "ok";
+  }
+  function label(state) { return state === "ok" ? "OK" : state === "warn" || state === "warning" ? "WARNING" : state === "error" ? "ERROR" : "UNKNOWN"; }
+  function badge(id, state) {
+    const el = $(id); if (!el) return;
+    el.textContent = label(state);
+    el.className = `badge ${state === "ok" ? "valid" : state === "error" ? "cancelled" : state === "warn" || state === "warning" ? "future" : ""}`;
+  }
+  function probeLabel(probe) {
+    if (!probe) return "Not tested";
+    return [label(probeState(probe)), probe.status ? `HTTP ${probe.status}` : "", probe.ms != null ? `${probe.ms} ms` : ""].filter(Boolean).join(" · ");
+  }
+
+  function showLogin(message = "") {
+    $("health-login").hidden = false;
+    $("health-dashboard").hidden = true;
+    $("health-login-status").textContent = message;
+  }
+  function showDashboard() {
+    $("health-login").hidden = true;
+    $("health-dashboard").hidden = false;
+  }
+
+  function render(data) {
+    snapshot = data;
+    $("health-time").textContent = data.generatedAt || "";
+    const net = data.network || {};
+    const api = net.api || {};
+    const files = data.apiFiles || {};
+    const db = data.database || {};
+    const local = data.nms || {};
+    const nmsConfig = data.nmsConfig || {};
+    const jobs = data.jobs || {};
+
+    const apiState = combine(Object.values(files).map(v => v ? "ok" : "error").concat(Object.values(api).map(probeState)));
+    const dbState = db.ok ? "ok" : "error";
+    const mapState = combine([probeState(net.mapPage), probeState(net.mapScript), probeState(net.maplibre), probeState(net.osm), probeState(api.navdata), probeState(api.notam)]);
+    const weatherState = combine([probeState(api.metartaf), probeState(api.wafs), probeState(net.wafsFeed)]);
+    const adsbState = probeState(api.adsb);
+    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : "ok";
+    if (net.faa) notamState = combine([notamState, probeState(net.faa)]);
+    const jobsState = jobs.cron?.status || "unknown";
+
+    badge("health-api-badge", apiState); badge("health-db-badge", dbState); badge("health-map-badge", mapState);
+    badge("health-weather-badge", weatherState); badge("health-adsb-badge", adsbState); badge("health-notam-badge", notamState); badge("health-jobs-badge", jobsState);
+
+    $("health-overview").innerHTML = [
+      ["API",apiState,Object.keys(files).length + " endpoints"],["MariaDB",dbState,db.latencyMs != null ? db.latencyMs + " ms" : ""],
+      ["Map",mapState,"MapLibre"],["Weather",weatherState,"METAR / TAF / WAFS"],["ADS-B",adsbState,api.adsb?.meta?.source || "TheAirTraffic"],
+      ["FAA NMS",notamState,local.syncHealth || ""],["Cron",jobsState,jobs.cron?.ageSeconds != null ? jobs.cron.ageSeconds + " s" : ""]
+    ].map(([name,state,sub]) => `<section class="plain-block"><div class="plain-block-head"><strong>${esc(name)}</strong><span class="badge ${state === "ok" ? "valid" : state === "error" ? "cancelled" : state === "warn" || state === "warning" ? "future" : ""}">${label(state)}</span></div><div class="source-line">${esc(sub)}</div></section>`).join("");
+
+    $("health-api").innerHTML = Object.keys(files).map(name => row(name, `${files[name] ? "FILE OK" : "FILE MISSING"}${api[name] ? " · " + esc(probeLabel(api[name])) : ""}`)).join("");
+    $("health-db").innerHTML = [row("Connection", label(dbState)),row("Server",esc(db.serverVersion || "—")),row("Host",esc(db.host || "—")),row("Port",esc(db.port || "—")),row("Database",esc(db.database || "—")),row("DB User",esc(db.user || "—")),row("Latency",db.latencyMs != null ? esc(db.latencyMs + " ms") : "—")].join("");
+    $("health-db-counts").textContent = JSON.stringify(db.counts || {}, null, 2);
+
+    $("health-map").innerHTML = [row("/main/map/",esc(probeLabel(net.mapPage))),row("map.js",esc(probeLabel(net.mapScript))),row("MapLibre",esc(probeLabel(net.maplibre))),row("OSM Tiles",esc(probeLabel(net.osm))),row("Navdata layer",esc(probeLabel(api.navdata))),row("NOTAM layer",esc(probeLabel(api.notam)))].join("");
+    $("health-weather").innerHTML = [row("METAR / TAF API",esc(probeLabel(api.metartaf))),row("WAFS API",esc(probeLabel(api.wafs))),row("AWC WAFS feed",esc(probeLabel(net.wafsFeed)))].join("");
+    $("health-adsb").innerHTML = [row("ADS-B API",esc(probeLabel(api.adsb))),row("Source",esc(api.adsb?.meta?.source || "TheAirTraffic")),row("Mode",esc(api.adsb?.meta?.mode || "binCraft+zstd")),row("Upstream HTTP",esc(api.adsb?.meta?.upstreamStatus ?? "—"))].join("");
+
+    $("health-nms").innerHTML = [
+      row("Environment",esc(nmsConfig.environment || "—")),row("FAA Credentials",nmsConfig.credentialsConfigured ? "Configured" : "Missing"),row("FAA Auth",esc(probeLabel(net.faa))),
+      row("Sync Health",esc(local.syncHealth || "—")),row("Sync Age",local.syncAgeSeconds != null ? esc(local.syncAgeSeconds + " s") : "—"),row("Latest NOTAM",esc(local.latestNotamUpdate || "—")),
+      row("Total",esc(local.counts?.total ?? "—")),row("Active",esc(local.counts?.active ?? "—")),row("Future",esc(local.counts?.future ?? "—")),row("Expired",esc(local.counts?.expired ?? "—")),row("Cancelled",esc(local.counts?.cancelled ?? "—")),row("PERM",esc(local.counts?.permanent ?? "—"))
+    ].join("");
+    $("health-nms-detail").textContent = JSON.stringify({state:local.state,cronState:local.cronState},null,2);
+    $("health-jobs").textContent = JSON.stringify(jobs,null,2);
+
+    const settings = data.settings || {};
+    if (!settingsTouched) {
+      const pairs = [
+        ["health-nms-env",settings.nms?.environment || "production"],["health-nms-client",settings.nms?.clientId || ""],
+        ["health-db-host",settings.db?.host || ""],["health-db-port",settings.db?.port || 3306],["health-db-name",settings.db?.database || ""],["health-db-user",settings.db?.user || ""]
+      ];
+      pairs.forEach(([id,value]) => { const el=$(id); el.value=value; el.dataset.original=String(value); });
+      $("health-nms-secret").value=""; $("health-nms-secret").dataset.original=""; $("health-nms-secret").placeholder=settings.nms?.clientSecretConfigured ? "secret configured" : "secret missing";
+      $("health-db-password").value=""; $("health-db-password").dataset.original=""; $("health-db-password").placeholder=settings.db?.passwordConfigured ? "password configured" : "password missing";
+    }
+  }
+
+  async function load(probe = false) {
+    $("health-refresh").disabled = $("health-probe").disabled = true;
+    try { render(await req(`snapshot${probe ? "&probe=1" : ""}`)); }
+    catch (error) {
+      if (String(error.message).includes("authentication")) { showLogin("Session expired."); return; }
+      alert(error.message);
+    } finally { $("health-refresh").disabled = $("health-probe").disabled = false; }
+  }
+
+  async function loadNotams() {
+    if (notamsLoaded) return;
+    const data = await req("notams&limit=20"); latestNotams=data.items || []; notamsLoaded=true;
+    $("health-notam-list").innerHTML = latestNotams.map((x,i) => `<button type="button" class="notam-card" data-health-notam="${i}"><strong>${esc(x.parsed.ident)}</strong><span class="notam-location">${esc(x.parsed.location || "")}</span><span class="source-line">${esc(x.parsed.status || "")} · ${esc(x.parsed.lastUpdated || "")}</span></button>`).join("") || '<div class="empty-box">No NOTAM records.</div>';
+    document.querySelectorAll("[data-health-notam]").forEach(button => button.addEventListener("click", () => {
+      const x=latestNotams[Number(button.dataset.healthNotam)];
+      $("health-notam-parsed").textContent=JSON.stringify(x.parsed,null,2);
+      $("health-notam-raw").textContent=typeof x.raw === "string" ? x.raw : JSON.stringify(x.raw,null,2);
+    }));
+  }
+
+  async function loadLogs() { const data=await req("logs&lines=300"); logsLoaded=true; $("health-logs").textContent=(data.lines || []).join("\n") || "No logs."; }
+  async function reveal(kind,target) {
+    const password=prompt("Enter Health password again:"); if(password===null)return;
+    const data=await req("secret-reveal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind,password})});
+    const input=$(target); input.value=data.secret || ""; input.dataset.original=input.value; input.type="text";
+    setTimeout(() => { input.type="password"; },30000);
+  }
+
+  $("health-login-form").addEventListener("submit",async event => {
+    event.preventDefault(); $("health-login-status").textContent="Checking…";
+    try { await req("login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("health-login-password").value})}); $("health-login-password").value=""; showDashboard(); await load(true); }
+    catch(error){ $("health-login-status").textContent=error.message; }
+  });
+  $("health-refresh").onclick=()=>load(false); $("health-probe").onclick=()=>load(true);
+  $("health-logout").onclick=async()=>{await req("logout",{method:"POST",body:"{}"});showLogin();};
+  $("health-logs-refresh").onclick=()=>loadLogs().catch(e=>alert(e.message));
+  $("health-delta").onclick=async()=>{const b=$("health-delta");b.disabled=true;try{await req("nms-delta",{method:"POST",body:"{}"});notamsLoaded=false;await load(true);await loadNotams();}catch(e){alert(e.message)}finally{b.disabled=false}};
+  $("health-reveal-faa").onclick=()=>reveal("faa-client-secret","health-nms-secret").catch(e=>alert(e.message));
+  $("health-reveal-db").onclick=()=>reveal("db-password","health-db-password").catch(e=>alert(e.message));
+
+  $("health-save").onclick=async()=>{
+    const changed=(id)=>$(id).dataset.original === $(id).value ? "" : $(id).value;
+    const body={
+      healthPassword:$("health-new-password").value,nmsEnvironment:changed("health-nms-env"),nmsClientId:changed("health-nms-client"),
+      nmsClientSecret:changed("health-nms-secret"),dbHost:changed("health-db-host"),dbPort:changed("health-db-port"),dbName:changed("health-db-name"),dbUser:changed("health-db-user"),dbPassword:changed("health-db-password")
+    };
+    $("health-save").disabled=true;$("health-save-status").textContent="Testing…";
+    try{const data=await req("settings-save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});$("health-save-status").textContent=data.changed?.length ? "Saved: "+data.changed.join(", ") : "No changes.";settingsTouched=false;$("health-new-password").value="";await load(false);}catch(e){$("health-save-status").textContent=e.message;}finally{$("health-save").disabled=false;}
+  };
+
+  document.querySelectorAll("#health-settings-section input,#health-settings-section select").forEach(el=>{el.addEventListener("input",()=>settingsTouched=true);el.addEventListener("change",()=>settingsTouched=true);});
+  $("health-notam-section").addEventListener("toggle",()=>{if($("health-notam-section").open)loadNotams().catch(e=>alert(e.message));});
+  $("health-logs-section").addEventListener("toggle",()=>{if($("health-logs-section").open&&!logsLoaded)loadLogs().catch(e=>alert(e.message));});
+
+  req("session").then(data=>{if(data.authenticated){showDashboard();load(true);}else showLogin();}).catch(()=>showLogin("Health API unavailable."));
+  setInterval(()=>{if(!document.hidden&&!$("health-dashboard").hidden)load(false);},30000);
+})();
+</script>
+</body>
+</html>
