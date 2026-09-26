@@ -1,1 +1,145 @@
-(()=>{"use strict";const $=x=>document.getElementById(x),A={n:"/main/api/navdata.php",o:"/main/api/notam.php",w:"/main/api/wafs.php",a:"/main/api/adsb.php"},C={airport:"#7ee7ff",navaid:"#ffc76b",waypoint:"#d6e1e7",airway:"#5fdbe8",sid:"#70e8a7",star:"#bc9cff",airspace:"#ff7f94"},N=["match",["get","display_group"],"AERIAL_SPORT","#00c5b9","RESTRICTED_AIRSPACE","#ff5f6d","AERIAL_SURVEY","#ff9b4a","TRAINING_MILITARY","#d9e1e5","OTHER","#4f8cff","#ffd35f"],S=new Set(Object.keys(C));if(!window.maplibregl){$("boot-detail").textContent="MapLibre yüklenemedi";return}let mode=new URLSearchParams(location.search).get("mode")||"charts",panel=mode==="flights"?"flights-panel":mode==="notam"?"notam-panel":mode==="wafs"?"wafs-panel":"chart-panel",cc={},nc={},ct,nt,st,fc,ft,dec,ready=false,fl=[],marks=new Map,wlay=new Map;const map=new maplibregl.Map({container:"map",center:[30.8,36.9],zoom:6,minZoom:2,maxZoom:15,hash:true,style:{version:8,glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",sources:{osm:{type:"raster",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],tileSize:256,attribution:"© OpenStreetMap contributors"}},layers:[{id:"osm",type:"raster",source:"osm",paint:{"raster-saturation":-.82,"raster-brightness-max":.45}}]}});window.__YC_MAP__=map;map.addControl(new maplibregl.NavigationControl,"bottom-left");const inputs=[...document.querySelectorAll("[data-nav-layer]")],buttons=[...document.querySelectorAll("[data-panel-target]")],empty=()=>({type:"FeatureCollection",features:[]}),sel=()=>inputs.filter(x=>x.checked).map(x=>x.dataset.navLayer),charts=()=>sel().filter(x=>S.has(x)),notam=()=>panel==="notam-panel"&&sel().includes("notam"),flights=()=>panel==="flights-panel"&&$("flights-enabled")?.checked,vis=x=>x==="notam"?(notam()?"visible":"none"):(S.has(x)?(panel==="chart-panel"&&sel().includes(x)?"visible":"none"):"visible");function show(x){["fill","line","hit","circle","label"].forEach(s=>{let id=`nav-${x}-${s}`;if(map.getLayer(id))map.setLayoutProperty(id,"visibility",vis(x))})}function layers(){map.addSource("c",{type:"geojson",data:empty()});map.addSource("n",{type:"geojson",data:empty()});map.addLayer({id:"nav-airspace-fill",type:"fill",source:"c",filter:["==",["get","layer"],"airspace"],paint:{"fill-color":C.airspace,"fill-opacity":.05},layout:{visibility:vis("airspace")}});["airway","sid","star"].forEach(x=>{map.addLayer({id:`nav-${x}-hit`,type:"line",source:"c",filter:["==",["get","layer"],x],paint:{"line-width":14,"line-opacity":.01},layout:{visibility:vis(x)}});map.addLayer({id:`nav-${x}-line`,type:"line",source:"c",filter:["==",["get","layer"],x],paint:{"line-color":C[x],"line-width":x==="airway"?1.5:2.8},layout:{visibility:vis(x)}})});["airport","navaid","waypoint"].forEach(x=>map.addLayer({id:`nav-${x}-circle`,type:"circle",source:"c",filter:["==",["get","layer"],x],paint:{"circle-radius":x==="waypoint"?4:6,"circle-color":C[x],"circle-stroke-color":"#000","circle-stroke-width":1},layout:{visibility:vis(x)}}));map.addLayer({id:"nav-notam-fill",type:"fill",source:"n",filter:["==",["get","layer"],"notam"],paint:{"fill-color":N,"fill-opacity":.12},layout:{visibility:vis("notam")}});map.addLayer({id:"nav-notam-line",type:"line",source:"n",filter:["==",["get","layer"],"notam"],paint:{"line-color":N,"line-width":1.6},layout:{visibility:vis("notam")}});map.addLayer({id:"nav-notam-circle",type:"circle",source:"n",filter:["==",["geometry-type"],"Point"],paint:{"circle-radius":5,"circle-color":N},layout:{visibility:vis("notam")}})}function box(p=.25){let b=map.getBounds(),w=b.getWest(),e=b.getEast(),s=b.getSouth(),n=b.getNorth(),x=(e-w)*p,y=(n-s)*p;return{west:Math.max(-180,w-x),east:Math.min(180,e+x),south:Math.max(-85,s-y),north:Math.min(85,n+y)}}function counts(){let n=panel==="flights-panel"?fl.length:panel==="notam-panel"?(nc.notam||0):charts().reduce((a,x)=>a+(cc[x]||0),0);$("feature-count").textContent=n.toLocaleString("tr-TR")+(panel==="flights-panel"?" aircraft":panel==="notam-panel"?" NOTAM":" obje")}async function loadC(){if(panel!=="chart-panel"||map.getZoom()<5)return;ct?.abort();ct=new AbortController;let b=box(),q=new URLSearchParams({action:"viewport",z:Math.floor(map.getZoom()),layers:charts().join(","),...b});try{let r=await fetch(A.n+"?"+q,{signal:ct.signal}),d=await r.json();if(!r.ok||!d.ok)throw 0;map.getSource("c").setData(d.data);cc=d.counts||{};counts();$("status-text").textContent="CHARTS"}catch(e){if(e?.name!=="AbortError")$("status-text").textContent="CHARTS ERROR"}}async function loadN(){if(!notam()||map.getZoom()<5)return;nt?.abort();nt=new AbortController;let b=box(),q=new URLSearchParams({action:"map",z:Math.floor(map.getZoom()),at:new Date().toISOString(),...b});try{let r=await fetch(A.o+"?"+q,{signal:nt.signal}),d=await r.json();if(!r.ok||!d.ok)throw 0;map.getSource("n").setData(d.data);nc=d.counts||{};counts();$("status-text").textContent="NOTAM"}catch(e){if(e?.name!=="AbortError")$("status-text").textContent="NOTAM ERROR"}}function modeSet(t){panel=t;document.querySelectorAll(".tool-panel").forEach(x=>x.classList.remove("open"));let p=$(t);p?.classList.add("open");buttons.forEach(b=>b.classList.toggle("active",b.dataset.panelTarget===t));if(t==="notam-panel"){let i=inputs.find(x=>x.dataset.navLayer==="notam");if(i)i.checked=true}if(t==="flights-panel")$("flights-enabled").checked=true;if(t==="wafs-panel")$("wafs-enabled").checked=true;S.forEach(show);show("notam");$("timeline-dock").classList.toggle("mode-hidden",!["notam-panel","wafs-panel"].includes(t));t==="chart-panel"?loadC():map.getSource("c")?.setData(empty());t==="notam-panel"?loadN():map.getSource("n")?.setData(empty());t==="wafs-panel"?loadW():clearW();t==="flights-panel"?loadF():hideF();counts()}buttons.forEach(b=>b.onclick=()=>{let p=$(b.dataset.panelTarget);if(panel===b.dataset.panelTarget&&p?.classList.contains("open")){p.classList.remove("open");return}modeSet(b.dataset.panelTarget)});document.querySelectorAll("[data-panel-close]").forEach(b=>b.onclick=()=>b.closest(".tool-panel")?.classList.remove("open"));inputs.forEach(i=>i.onchange=()=>{show(i.dataset.navLayer);i.dataset.navLayer==="notam"?loadN():loadC()});$("charts-toggle-all").onchange=e=>{inputs.filter(i=>S.has(i.dataset.navLayer)).forEach(i=>{i.checked=e.target.checked;show(i.dataset.navLayer)});loadC()};function time(){let v=$("map-time").value;return v?new Date(v+":00Z"):new Date}function initTime(){let now=new Date;now.setUTCSeconds(0,0);$("map-time").value=now.toISOString().slice(0,16);$("selected-time-label").textContent=now.toISOString().slice(0,16).replace("T"," ")+"Z";$("timeline-toggle").onclick=()=>$("timeline-dock").classList.toggle("is-collapsed");$("time-now").onclick=()=>{let n=new Date;n.setUTCSeconds(0,0);$("map-time").value=n.toISOString().slice(0,16);loadN();loadW()};document.querySelectorAll("[data-time-step]").forEach(b=>b.onclick=()=>{let d=time();d.setUTCHours(d.getUTCHours()+Number(b.dataset.timeStep));$("map-time").value=d.toISOString().slice(0,16);loadN();loadW()})}function wfl(p){let e=document.querySelector(`[data-wafs2-level="${p}"]`);return e?Number(e.value):300}function clearW(){for(let[p,x]of wlay){if(map.getLayer(p))map.removeLayer(p);if(map.getSource(p))map.removeSource(p);URL.revokeObjectURL(x)}wlay.clear()}async function oneW(p){let id="w"+p,fl=wfl(p),q=new URLSearchParams({action:"image",product:p,fl,valid:time().toISOString().slice(0,16).replace("T"," ")});let r=await fetch(A.w+"?"+q);if(!r.ok)return;let u=URL.createObjectURL(await r.blob()),im=new Image;await new Promise((a,z)=>{im.onload=a;im.onerror=z;im.src=u});let m=180/Math.PI*Math.atan(Math.sinh(Math.PI*im.naturalHeight/im.naturalWidth));map.addSource(id,{type:"image",url:u,coordinates:[[-180,m],[180,m],[180,-m],[-180,-m]]});map.addLayer({id,type:"raster",source:id,paint:{"raster-opacity":Number(document.querySelector(`[data-wafs2-opacity="${p}"]`)?.value||40)/100}});wlay.set(id,u)}async function loadW(){clearW();if(panel!=="wafs-panel"||!$("wafs-enabled").checked)return;let ps=[...document.querySelectorAll("[data-wafs2-product]:checked")].map(x=>x.dataset.wafs2Product);await Promise.all(ps.map(oneW));$("wafs-status").textContent=ps.length+" WAFS layer";counts()}$("wafs-enabled").onchange=loadW;document.querySelectorAll("[data-wafs2-product],[data-wafs2-level]").forEach(x=>x.onchange=loadW);function read(u,s,e){let x="";for(let i=s;i<e&&u[i];i++)x+=String.fromCharCode(u[i]);return x.trim()}function parse(u){let b=u.buffer.slice(u.byteOffset,u.byteOffset+u.byteLength),h=new Uint32Array(b,0,13),q=h[2],v=h[10],a=[];for(let o=q;o+q<=b.byteLength;o+=q){let i=new Int32Array(b,o,q/4),u16=new Uint16Array(b,o,q/2),s=new Int16Array(b,o,q/2),x=new Uint8Array(b,o,q),lon=i[2]/1e6,lat=i[3]/1e6;if(!(x[73]&64)||Math.abs(lat)>90||Math.abs(lon)>180)continue;let hex=(i[0]&0xffffff).toString(16).padStart(6,"0"),track=(x[74]&8)?s[20]/90:0;a.push({hex,lon,lat,heading:track,registration:read(x,92,104),flight:(x[73]&8)?read(x,78,86):"",typeCode:read(x,88,92)})}return a}async function initD(){if(ready)return;if(!window.zstddec?.ZSTDDecoder)throw 0;dec=new zstddec.ZSTDDecoder;await dec.init();ready=true}function hideF(){fc?.abort();clearTimeout(ft);marks.forEach(x=>x.el.style.display="none")}async function loadF(){if(!flights())return;try{await initD()}catch{return}fc?.abort();fc=new AbortController;let b=box(.2),q=[b.south,b.north,b.west,b.east].map(x=>x.toFixed(6)).join(",");try{let r=await fetch(`${A.a}?action=feed&box=${encodeURIComponent(q)}`,{signal:fc.signal,cache:"no-store"}),a=parse(dec.decode(new Uint8Array(await r.arrayBuffer())));fl=a;let seen=new Set;a.forEach(x=>{seen.add(x.hex);let m=marks.get(x.hex);if(!m){let el=document.createElement("div");el.className="aircraft-marker";el.innerHTML='<svg viewBox="0 0 64 64"><path d="M32 3 L27 26 L7 35 L7 39 L28 34 L28 50 L20 56 L20 59 L32 56 L44 59 L44 56 L36 50 L36 34 L57 39 L57 35 L37 26 Z" fill="#fff" stroke="#000" stroke-width="2"/></svg>';m={el,marker:new maplibregl.Marker({element:el,rotationAlignment:"map"}).setLngLat([x.lon,x.lat]).addTo(map)};marks.set(x.hex,m)}m.el.style.display="";m.marker.setLngLat([x.lon,x.lat]);m.marker.setRotation(x.heading||0);m.el.title=[x.registration,x.flight,x.typeCode].filter(Boolean).join(" · ")});for(let[h,m]of marks)if(!seen.has(h)){m.marker.remove();marks.delete(h)}counts();$("status-text").textContent="LIVE"}catch(e){}finally{if(flights())ft=setTimeout(loadF,2000)}}$("flights-enabled").onchange=()=>$("flights-enabled").checked?loadF():hideF();$("nav-search").oninput=e=>{clearTimeout(st);st=setTimeout(async()=>{let q=e.target.value.trim();if(q.length<2)return;try{let r=await fetch(`${A.n}?action=search&q=${encodeURIComponent(q)}`),d=await r.json(),box=$("search-results");box.innerHTML=(d.results||[]).map((x,i)=>`<button class="search-result" data-i="${i}"><span><strong>${x.ident||x.name}</strong><small>${x.name||""}</small></span></button>`).join("");box.classList.add("open");box.querySelectorAll("button").forEach((b,i)=>b.onclick=()=>{let x=d.results[i];box.classList.remove("open");if(Number.isFinite(x.lon)&&Number.isFinite(x.lat))map.flyTo({center:[x.lon,x.lat],zoom:9})})}catch{}},200)};initTime();map.on("load",()=>{layers();$("boot").classList.add("hidden");modeSet(panel)});map.on("moveend",()=>{panel==="chart-panel"?loadC():panel==="notam-panel"?loadN():panel==="flights-panel"&&loadF()})})();
+(() => {
+  "use strict";
+
+  const $ = id => document.getElementById(id);
+  if (!window.maplibregl) {
+    if ($("boot-detail")) $("boot-detail").textContent = "MapLibre yüklenemedi";
+    return;
+  }
+
+  const api = {
+    navdata:"/main/api/navdata.php",
+    notam:"/main/api/notam.php",
+    wafs:"/main/api/wafs.php",
+    adsb:"/main/api/adsb.php"
+  };
+  const esc = value => String(value ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+
+  const map = new maplibregl.Map({
+    container:"map",
+    center:[30.8,36.9],
+    zoom:6,
+    minZoom:2,
+    maxZoom:15,
+    hash:true,
+    style:{
+      version:8,
+      glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources:{osm:{type:"raster",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],tileSize:256,attribution:"© OpenStreetMap contributors"}},
+      layers:[{id:"osm-base",type:"raster",source:"osm",paint:{"raster-saturation":-.82,"raster-brightness-min":.05,"raster-brightness-max":.42,"raster-contrast":.22}}]
+    }
+  });
+  window.__YC_MAP__ = map;
+  map.addControl(new maplibregl.NavigationControl({showCompass:true}),"bottom-left");
+  map.addControl(new maplibregl.ScaleControl({maxWidth:120,unit:"nautical"}),"bottom-left");
+
+  function bbox(padding=0){
+    const b=map.getBounds(),west=b.getWest(),east=b.getEast(),south=b.getSouth(),north=b.getNorth();
+    const dx=(east-west)*padding,dy=(north-south)*padding;
+    return {west:Math.max(-180,west-dx),east:Math.min(180,east+dx),south:Math.max(-85,south-dy),north:Math.min(85,north+dy)};
+  }
+  function setStatus(text,error=false){
+    if($("status-text"))$("status-text").textContent=text;
+    const dot=$("status-dot");if(dot){dot.classList.toggle("bad",error);dot.classList.toggle("ok",!error);}
+  }
+  function popup(lngLat,title,subtitle,body,options={}){
+    return new maplibregl.Popup({closeButton:true,closeOnClick:true,maxWidth:options.maxWidth||"360px"})
+      .setLngLat(lngLat)
+      .setHTML(`<div class="popup"><h3>${esc(title)}</h3><div class="sub">${esc(subtitle||"")}</div><div class="popup-grid">${body||""}</div></div>`)
+      .addTo(map);
+  }
+
+  const pad=n=>String(n).padStart(2,"0");
+  function utcInputNow(){const d=new Date();return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;}
+  function getTimeIso(){const value=$("map-time")?.value;return value?new Date(value+":00Z").toISOString():new Date().toISOString();}
+  function syncTimeLabel(){const iso=getTimeIso();if($("selected-time-label"))$("selected-time-label").textContent=iso.slice(0,16).replace("T"," ")+"Z";}
+
+  const ctx={map,api,esc,popup,setStatus,bbox,getTimeIso};
+  const engines={};
+  let activeMode="charts";
+  const panelFor={charts:"chart-panel",notam:"notam-panel",flights:"flights-panel",wafs:"wafs-panel"};
+  const modeForPanel={"chart-panel":"charts","notam-panel":"notam","flights-panel":"flights","wafs-panel":"wafs"};
+
+  function buildEngines(){
+    engines.charts=window.YCCharts?.create(ctx);
+    engines.notam=window.YCNotam?.create(ctx);
+    engines.flights=window.YCAdsb?.create(ctx);
+    engines.wafs=window.YCWafs?.create(ctx);
+    Object.values(engines).forEach(engine=>engine?.init?.());
+  }
+
+  function updateZoomHint(){
+    const hint=$("zoom-hint");if(!hint)return;
+    if(activeMode!=="charts"||map.getZoom()>=5){hint.hidden=true;return;}
+    hint.hidden=false;hint.textContent="Navdata için biraz yaklaş · z5+";
+  }
+
+  function setMode(mode){
+    activeMode=engines[mode]?mode:"charts";
+    document.querySelectorAll(".tool-panel").forEach(panel=>panel.classList.remove("open"));
+    const target=$(panelFor[activeMode]);target?.classList.add("open");
+    document.querySelectorAll("[data-panel-target]").forEach(button=>button.classList.toggle("active",modeForPanel[button.dataset.panelTarget]===activeMode));
+    Object.entries(engines).forEach(([name,engine])=>engine?.setActive?.(name===activeMode));
+    const timeline=$("timeline-dock");if(timeline)timeline.classList.toggle("mode-hidden",!["notam","wafs"].includes(activeMode));
+    setStatus(activeMode==="flights"?"LIVE":activeMode.toUpperCase());
+    updateZoomHint();
+  }
+
+  document.querySelectorAll("[data-panel-target]").forEach(button=>{
+    button.addEventListener("click",()=>{
+      const panel=button.dataset.panelTarget,mode=modeForPanel[panel];
+      if(!mode)return;
+      if(activeMode===mode&&$(panel)?.classList.contains("open")){ $(panel).classList.remove("open"); return; }
+      setMode(mode);
+    });
+  });
+  document.querySelectorAll("[data-panel-close]").forEach(button=>button.addEventListener("click",()=>button.closest(".tool-panel")?.classList.remove("open")));
+
+  function refreshTimeEngines(){syncTimeLabel();engines.notam?.refresh?.();engines.wafs?.refresh?.();}
+  function initTime(){
+    if($("map-time"))$("map-time").value=utcInputNow();syncTimeLabel();
+    $("timeline-toggle")?.addEventListener("click",()=>$("timeline-dock")?.classList.toggle("is-collapsed"));
+    $("time-now")?.addEventListener("click",()=>{if($("map-time"))$("map-time").value=utcInputNow();refreshTimeEngines();});
+    document.querySelectorAll("[data-time-step]").forEach(button=>button.addEventListener("click",()=>{
+      const d=new Date(getTimeIso());d.setUTCHours(d.getUTCHours()+Number(button.dataset.timeStep||0));
+      if($("map-time"))$("map-time").value=d.toISOString().slice(0,16);refreshTimeEngines();
+    }));
+    $("map-time")?.addEventListener("change",refreshTimeEngines);
+  }
+
+  let searchTimer=null,searchController=null,lastResults=[];
+  function renderSearch(results){
+    const box=$("search-results");if(!box)return;lastResults=results;
+    if(!results.length){box.innerHTML='<div style="padding:12px;color:#999;font-size:10px">Sonuç bulunamadı.</div>';box.classList.add("open");return;}
+    box.innerHTML=results.slice(0,24).map((item,i)=>`<button class="search-result" type="button" data-result-index="${i}"><span><strong>${esc(item.ident||item.name||"—")}</strong><small>${esc(item.name||"")}</small></span><span class="badge">${esc(item.kind||"")}</span></button>`).join("");
+    box.classList.add("open");
+    box.querySelectorAll("[data-result-index]").forEach(button=>button.addEventListener("click",()=>{
+      const item=lastResults[Number(button.dataset.resultIndex)];if(!item)return;box.classList.remove("open");
+      if(item.kind==="aircraft"&&item.hex){setMode("flights");engines.flights?.select?.(item.hex);return;}
+      if(Number.isFinite(Number(item.lon))&&Number.isFinite(Number(item.lat)))map.flyTo({center:[Number(item.lon),Number(item.lat)],zoom:Math.max(map.getZoom(),9)});
+    }));
+  }
+  async function search(query){
+    const q=String(query||"").trim();if(q.length<2){$("search-results")?.classList.remove("open");return;}
+    const local=engines.flights?.searchLocal?.(q)||[];renderSearch(local);
+    searchController?.abort();searchController=new AbortController();
+    try{
+      const r=await fetch(`${api.navdata}?action=search&q=${encodeURIComponent(q)}`,{cache:"no-store",signal:searchController.signal});
+      const d=await r.json().catch(()=>null);if(!r.ok||!d?.ok)throw 0;
+      renderSearch([...local,...(d.results||[])]);
+    }catch(e){if(e?.name!=="AbortError")renderSearch(local);}
+  }
+  $("nav-search")?.addEventListener("input",e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>search(e.target.value),180);});
+  document.addEventListener("click",e=>{if(!$("search-shell")?.contains(e.target))$("search-results")?.classList.remove("open");});
+
+  initTime();
+  map.on("load",()=>{
+    buildEngines();
+    $("boot")?.classList.add("hidden");
+    const requested=new URLSearchParams(location.search).get("mode");
+    setMode(["charts","notam","flights","wafs"].includes(requested)?requested:"charts");
+  });
+  map.on("moveend",()=>{engines[activeMode]?.refresh?.();updateZoomHint();});
+  map.on("zoomend",updateZoomHint);
+})();
