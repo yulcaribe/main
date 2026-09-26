@@ -30,6 +30,22 @@ function ycApiV1String(array $source, string $key, int $maxLength = 200): string
     return substr($value, 0, $maxLength);
 }
 
+// Compatibility for the renamed NOTAM map cache helper. The map endpoint still
+// calls the old navmapCacheDir() name while the local helper is now
+// notamMapCacheDir(). Keep the alias here so the endpoint cannot fatal.
+if (!function_exists('navmapCacheDir')) {
+    function navmapCacheDir(): string {
+        if (function_exists('notamMapCacheDir')) {
+            return notamMapCacheDir();
+        }
+
+        $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR
+            . 'yulcaribe_notam_map_v1';
+        if (!is_dir($dir)) @mkdir($dir, 0770, true);
+        return $dir;
+    }
+}
 
 function ycApiDb(): PDO {
     static $pdo = null;
