@@ -1,0 +1,261 @@
+/* Map UI v8: independent WAFS levels + readable NOTAM modal */
+#wafs-panel{
+  width:390px;
+}
+.wafs2-intro{
+  margin:10px 0 4px;
+  color:#8ca5b3;
+  font-size:9px;
+  line-height:1.45;
+}
+.wafs2-product-list{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.wafs2-product-row{
+  padding:10px;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;
+  background:rgba(255,255,255,.025);
+}
+.wafs2-product-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.wafs2-product-head label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+  color:#dcebf1;
+  font-size:10px;
+  font-weight:750;
+  cursor:pointer;
+}
+.wafs2-product-head label>span{
+  display:flex;
+  align-items:center;
+  gap:7px;
+}
+.wafs2-product-head input[type="checkbox"]{accent-color:var(--cyan)}
+.wafs2-level{
+  width:92px;
+  height:32px;
+  padding:0 8px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#07131c;
+  color:var(--text);
+  font:700 10px/1 inherit;
+}
+.wafs2-product-controls{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  align-items:center;
+  gap:10px;
+  margin-top:9px;
+}
+.wafs2-product-controls span{
+  color:#78909d;
+  font-size:8px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.wafs2-product-controls input[type="range"]{
+  width:100%;
+  accent-color:var(--cyan);
+}
+.wafs2-product-row small{
+  display:block;
+  margin-top:7px;
+  min-height:13px;
+  color:#78909d;
+  font-size:8px;
+  line-height:1.35;
+}
+.wafs-active-summary{
+  position:fixed;
+  z-index:1000;
+  left:12px;
+  top:132px;
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  max-width:min(270px,calc(100vw - 24px));
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:rgba(6,17,26,.9);
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(14px);
+  pointer-events:none;
+}
+.wafs-active-summary[hidden]{display:none}
+.wafs-active-summary span{
+  color:#b8cad3;
+  font:9px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.wafs-active-summary b{color:var(--cyan-2);font-weight:850}
+
+/* NOTAM popups behave as centered readable dialogs on desktop. */
+.maplibregl-popup.yc-notam-popup{
+  position:fixed!important;
+  z-index:1450!important;
+  left:50%!important;
+  top:50%!important;
+  right:auto!important;
+  bottom:auto!important;
+  width:min(560px,calc(100vw - 40px))!important;
+  max-width:none!important;
+  transform:translate(-50%,-50%)!important;
+  pointer-events:auto;
+}
+.yc-notam-popup .maplibregl-popup-tip{display:none!important}
+.yc-notam-popup .maplibregl-popup-content{
+  width:100%;
+  max-height:min(74vh,760px);
+  overflow:auto;
+  padding:0!important;
+  border-radius:20px!important;
+  scrollbar-width:thin;
+  overscroll-behavior:contain;
+}
+.yc-notam-popup .maplibregl-popup-close-button{
+  position:sticky!important;
+  z-index:6;
+  top:10px;
+  float:right;
+  width:38px;
+  height:38px;
+  margin:10px 10px -48px 0;
+  padding:0!important;
+  border:1px solid rgba(140,242,255,.34)!important;
+  border-radius:11px!important;
+  background:#0a2635!important;
+  color:#eaf7fb!important;
+  font-size:25px!important;
+  line-height:34px!important;
+  box-shadow:0 8px 20px rgba(0,0,0,.3);
+  cursor:pointer;
+}
+.yc-notam-popup .maplibregl-popup-close-button:hover{
+  background:#103548!important;
+  border-color:rgba(140,242,255,.62)!important;
+}
+.yc-notam-popup .popup.notam-card{
+  min-width:0;
+  padding:18px 18px 20px;
+  border:0;
+  background:transparent;
+}
+.yc-notam-popup .popup h3{
+  margin:0;
+  padding-right:48px;
+  font-size:20px;
+  line-height:1.15;
+  letter-spacing:-.015em;
+}
+.yc-notam-popup .popup .sub{
+  margin:6px 0 16px;
+  padding-right:48px;
+  color:#8ba7b5;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.1em;
+}
+.yc-notam-popup .popup-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+.yc-notam-popup .popup-grid>div{
+  min-width:0;
+  padding:9px 10px;
+  border:1px solid rgba(255,255,255,.055);
+  border-radius:10px;
+  background:rgba(255,255,255,.025);
+}
+.yc-notam-popup .popup-grid span{
+  color:#7793a1;
+  font-size:7.5px;
+  font-weight:850;
+  letter-spacing:.09em;
+}
+.yc-notam-popup .popup-grid strong{
+  margin-top:4px;
+  overflow-wrap:anywhere;
+  color:#edf8fb;
+  font-size:10.5px;
+  line-height:1.35;
+}
+.yc-notam-popup .notam-text{
+  margin-top:14px;
+  padding:13px 14px;
+  border:1px solid rgba(255,255,255,.065);
+  border-radius:12px;
+  background:rgba(1,10,16,.42);
+  color:#d7e6ec;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font:11px/1.62 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+
+@media(max-width:720px){
+  #wafs-panel{
+    left:8px;
+    right:8px;
+    top:128px;
+    width:auto;
+    max-height:calc(100dvh - 230px);
+    padding:12px;
+  }
+  .wafs2-product-list{gap:7px}
+  .wafs2-product-row{padding:10px}
+  .wafs2-product-head{align-items:flex-start}
+  .wafs2-product-head label{font-size:11px;line-height:1.3}
+  .wafs2-level{width:88px;height:34px;font-size:11px}
+  .wafs2-product-controls{margin-top:8px}
+  .wafs2-product-row small{font-size:8.5px}
+  .wafs-active-summary{
+    left:8px;
+    top:168px;
+    max-width:calc(100vw - 16px);
+  }
+
+  .maplibregl-popup.yc-notam-popup{
+    left:8px!important;
+    right:8px!important;
+    top:auto!important;
+    bottom:max(10px,env(safe-area-inset-bottom))!important;
+    width:auto!important;
+    transform:none!important;
+  }
+  .yc-notam-popup .maplibregl-popup-content{
+    max-height:78dvh;
+    border-radius:20px!important;
+  }
+  .yc-notam-popup .maplibregl-popup-close-button{
+    top:8px;
+    width:42px;
+    height:42px;
+    margin:8px 8px -50px 0;
+    font-size:28px!important;
+    line-height:38px!important;
+  }
+  .yc-notam-popup .popup.notam-card{padding:16px 14px 18px}
+  .yc-notam-popup .popup h3{font-size:20px;padding-right:52px}
+  .yc-notam-popup .popup .sub{font-size:9px;padding-right:52px;margin-bottom:13px}
+  .yc-notam-popup .popup-grid{grid-template-columns:1fr;gap:6px}
+  .yc-notam-popup .popup-grid>div{padding:8px 10px}
+  .yc-notam-popup .popup-grid span{font-size:8px}
+  .yc-notam-popup .popup-grid strong{font-size:11.5px}
+  .yc-notam-popup .notam-text{
+    margin-top:12px;
+    padding:12px;
+    font-size:11.5px;
+    line-height:1.65;
+  }
+}
