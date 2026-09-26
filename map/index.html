@@ -8,10 +8,21 @@
   <title>Aviation Map | YulCaribe</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/main/map/map.css?v=1">
+  <link rel="stylesheet" href="/main/map/map.css?v=2">
 </head>
 <body>
   <div id="map" aria-label="Aeronautical navigation map"></div>
+
+  <aside class="aircraft-info" id="aircraft-info" aria-hidden="true">
+    <div class="aircraft-info-head">
+      <div class="aircraft-info-title">
+        <strong id="aircraft-info-title">Aircraft</strong>
+        <span id="aircraft-info-subtitle">—</span>
+      </div>
+      <button class="aircraft-close" id="aircraft-info-close" type="button" aria-label="Uçak bilgisini kapat">×</button>
+    </div>
+    <div id="aircraft-info-body"></div>
+  </aside>
 
   <div class="boot" id="boot">
     <div>
@@ -62,11 +73,16 @@
 
   <aside class="tool-panel" id="flights-panel">
     <div class="tool-head">
-      <div><strong>FLIGHTS</strong><small>ADSB.lol · live aircraft</small></div>
+      <div><strong>FLIGHTS</strong><small>TheAirTraffic · binCraft + zstd</small></div>
       <button type="button" data-panel-close>×</button>
     </div>
     <label class="master-row"><span><i class="legend-dot flight-swatch"></i>Canlı uçuşlar</span><input id="flights-enabled" type="checkbox"></label>
     <div class="notam-stat"><strong data-layer-count="flight">0</strong><span>görünümdeki uçak</span></div>
+    <div class="adsb-stat-grid">
+      <div><span>Kaynak</span><strong>TheAirTraffic</strong></div>
+      <div><span>Son veri</span><strong id="flights-updated">—</strong></div>
+      <div><span>Payload</span><strong id="flights-payload">—</strong></div>
+    </div>
     <div class="card-note" id="flights-status">ADS-B katmanı kapalı.</div>
   </aside>
 
@@ -208,8 +224,15 @@
         }
 
         try {
+          detail.textContent = "ADS-B decoder hazırlanıyor…";
+          await loadScript("https://cdn.jsdelivr.net/gh/wiedehopf/tar1090@master/html/libs/zstddec-tar1090-0.0.5.js");
+        } catch (error) {
+          console.warn("zstd decoder yüklenemedi:", error);
+        }
+
+        try {
           detail.textContent = "Harita istemcisi yükleniyor…";
-          await loadScript("/main/map/map.js?v=1");
+          await loadScript("/main/map/map.js?v=2");
         } catch (error) {
           console.error(error);
           detail.textContent = "/main/map/map.js yüklenemedi.";
