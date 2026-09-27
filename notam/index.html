@@ -7,6 +7,13 @@
   <meta name="description" content="YulCaribe NOTAM arama ve filtreleme ekranı.">
   <title>NOTAM | YulCaribe</title>
   <link rel="stylesheet" href="/main/app.css?v=2">
+  <style>
+    .notam-source-block{display:grid;justify-items:end;gap:1px;text-align:right;line-height:1.2}
+    .notam-source-block span{color:#777;font-size:8px;letter-spacing:.08em}
+    .notam-source-block strong{color:#aaa;font-size:10px;font-weight:400;white-space:nowrap}
+    .notam-disclaimer{margin:-8px 0 6px;color:#777;font-size:9px;line-height:1.35}
+    @media(max-width:760px){.notam-source-block strong{font-size:9px}.notam-disclaimer{margin-top:-7px;font-size:8px}}
+  </style>
 </head>
 <body data-page="notam">
   <header class="app-header">
@@ -17,8 +24,12 @@
     <section class="notam-toolbar" aria-labelledby="notam-title">
       <div class="section-title-row">
         <h1 id="notam-title">NOTAM</h1>
-        <span id="source-state" class="source-line">FAA NMS</span>
+        <div class="notam-source-block" aria-label="NOTAM source">
+          <span>SOURCE</span>
+          <strong>FAA.GOV NOTAM SERVICE</strong>
+        </div>
       </div>
+      <p class="notam-disclaimer">Verify with official sources before operational use.</p>
 
       <div class="filter-grid" aria-label="NOTAM filtreleri">
         <label><span>Arama</span><input id="f-q" type="search" placeholder="NOTAM no, metin…"></label>
