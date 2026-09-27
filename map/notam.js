@@ -17,8 +17,19 @@
       const approx = ["qline-coordinate","airport-location"];
       let active = false;
       let controller = null;
+      let requestSeq = 0;
       const toggle = document.querySelector('[data-nav-layer="notam"]');
       const enabled = () => active && Boolean(toggle?.checked);
+      const note = () => document.getElementById("notam-time-status");
+
+      function selectedLabel() {
+        return getTimeIso().slice(0,16).replace("T"," ") + "Z";
+      }
+
+      function setNote(text) {
+        const el = note();
+        if (el) el.textContent = text;
+      }
 
       function visibility() { return enabled() ? "visible" : "none"; }
       function syncVisibility() {
@@ -81,6 +92,7 @@
         let rows="";
         rows+=infoRow("Location",p.icao_location||p.location);
         rows+=infoRow("Class",p.classification);
+        rows+=infoRow("Selected UTC",selectedLabel());
         rows+=infoRow("Valid from",p.effective_start);
         rows+=infoRow("Valid to",p.effective_end_raw||p.effective_end);
         rows+=infoRow("Schedule",p.schedule);
@@ -89,8 +101,8 @@
         rows+=infoRow("Upper",p.upper_limit);
         rows+=infoRow("Type",p.semantic_class||p.category);
         rows+=infoRow("Map source",p.geometry_accuracy||p.geometry_source);
-        const html=`<div class="popup-grid">${rows}</div><div class="notam-text" data-notam-detail>NOTAM metni yükleniyor…</div>`;
-        const pop=popup(lngLat,p.ident||"NOTAM","FAA NMS",html,{maxWidth:"420px",raw:true});
+        const html=`<div class="popup-grid">${rows}</div><div class="notam-text" data-notam-detail>Loading NOTAM text…</div>`;
+        const pop=popup(lngLat,p.ident||"NOTAM","FAA.GOV NOTAM SERVICE",html,{maxWidth:"420px",raw:true});
         if(!p.nms_id)return;
         try{
           const q=new URLSearchParams({action:"detail",id:String(p.nms_id),at:getTimeIso()});
@@ -98,30 +110,77 @@
           const d=await r.json().catch(()=>null);
           const target=pop?.getElement()?.querySelector("[data-notam-detail]");
           if(!target)return;
-          if(!r.ok||!d?.ok||!d?.notam){target.textContent="NOTAM metni yüklenemedi.";return;}
-          target.textContent=d.notam.text||"NOTAM metni bulunamadı.";
+          if(!r.ok||!d?.ok||!d?.notam){target.textContent="NOTAM text could not be loaded.";return;}
+          target.textContent=d.notam.text||"NOTAM text is unavailable.";
         }catch{
           const target=pop?.getElement()?.querySelector("[data-notam-detail]");
-          if(target)target.textContent="NOTAM metni yüklenemedi.";
+          if(target)target.textContent="NOTAM text could not be loaded.";
         }
       }
 
+      function renderCoverage(payload) {
+        const selected = payload?.atUtc
+          ? String(payload.atUtc).slice(0,16).replace("T"," ") + "Z"
+          : selectedLabel();
+        const coverage = payload?.coverage || {};
+        if (coverage.mode === "future") {
+          setNote(`Future view · ${selected} · currently published NOTAMs only.`);
+          return;
+        }
+        if (coverage.mode === "historical") {
+          if (coverage.complete === false) {
+            const from = coverage.completeFromUtc
+              ? String(coverage.completeFromUtc).slice(0,16).replace("T"," ") + "Z"
+              : null;
+            setNote(from
+              ? `Historical view · ${selected} · coverage may be incomplete before ${from}.`
+              : `Historical view · ${selected} · coverage may be incomplete.`);
+          } else {
+            setNote(`Historical view · ${selected} · validity, cancellation, replacement and schedule evaluated for this UTC.`);
+          }
+          return;
+        }
+        setNote(`${selected} · valid and schedule-active NOTAM geometries.`);
+      }
+
       async function load(){
-        if(!enabled()){map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});return;}
-        if(map.getZoom()<5)return;
+        if(!enabled()){
+          controller?.abort();
+          map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});
+          return;
+        }
+        if(map.getZoom()<5){
+          setNote(`${selectedLabel()} · zoom in to load NOTAM geometry.`);
+          return;
+        }
         controller?.abort();controller=new AbortController();
+        const seq=++requestSeq;
+        const selected=selectedLabel();
+        setStatus("NOTAM · updating…");
+        setNote(`Updating NOTAM view for ${selected}…`);
         const b=bbox(.38);
         const q=new URLSearchParams({action:"map",z:String(Math.floor(map.getZoom())),at:getTimeIso(),...b});
         try{
           const r=await fetch(`${api.notam}?${q}`,{cache:"default",signal:controller.signal});
           const d=await r.json().catch(()=>null);
+          if(seq!==requestSeq)return;
           if(!r.ok||!d?.ok||!d?.data)throw new Error(d?.error||`HTTP ${r.status}`);
           map.getSource(SOURCE)?.setData(d.data);
-          const skipped=Number(d.schedule?.outsideSchedule||0);
-          setStatus(skipped>0?`NOTAM · ${skipped} schedule dışı gizlendi`:"NOTAM");
-          const note=document.getElementById("notam-time-status");
-          if(note)note.textContent=`${getTimeIso().slice(0,16).replace("T"," ")}Z · geçerli ve schedule aktif NOTAM geometrileri`;
-        }catch(e){if(e?.name!=="AbortError")setStatus("NOTAM ERROR",true);}
+          const skipped=Number(d.schedule?.outside||d.schedule?.outsideSchedule||0);
+          const unknown=Number(d.schedule?.unknown||0);
+          setStatus(unknown>0?"NOTAM · schedule check":"NOTAM");
+          renderCoverage(d);
+          if(skipped>0||unknown>0){
+            const base=note()?.textContent||"";
+            const extra=[skipped>0?`${skipped} outside schedule`:null,unknown>0?`${unknown} schedule unparsed`:null].filter(Boolean).join(" · ");
+            if(extra)setNote(`${base} ${extra}.`);
+          }
+        }catch(e){
+          if(e?.name==="AbortError")return;
+          if(seq!==requestSeq)return;
+          setStatus("NOTAM ERROR",true);
+          setNote(`NOTAM view could not be updated for ${selected}.`);
+        }
       }
 
       toggle?.addEventListener("change",()=>{syncVisibility();load();});
