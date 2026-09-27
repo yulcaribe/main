@@ -1,14 +1,59 @@
 <?php
 declare(strict_types=1);
 
+// These browser-origin checks are defence in depth, not client authentication.
+function ycRejectRequest(int $status, string $message): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(['ok'=>false,'error'=>$message], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+function ycSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || $parts['port'] === 443)
+        && !isset($parts['user']) && !isset($parts['pass']);
+}
+header('Vary: Origin, Sec-Fetch-Site, Referer');
+header('Cross-Origin-Resource-Policy: same-origin');
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+$referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+$fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+    || ($origin !== '' ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+        : !ycSameOrigin($referer))) {
+    ycRejectRequest(403, 'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.');
+}
+foreach ($_GET as $value) {
+    if (!is_string($value) || strlen($value) > 2048 || str_contains($value, "\0")) {
+        ycRejectRequest(400, 'Geçersiz veya çok uzun istek parametresi.');
+    }
+}
+if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET','POST'], true)) {
+    header('Allow: GET, POST');
+    ycRejectRequest(405, 'HTTP method not allowed.');
+}
+
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, max-age=0');
 header('X-YC-API-Resource: health');
 
 function out(int $status, array $payload): never {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('[health] JSON response: '.json_last_error_msg());
+        $status = 500;
+        $json = '{"ok":false,"error":"Response could not be encoded."}';
+    }
     http_response_code($status);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    header('Content-Type: application/json; charset=utf-8');
+    if ($status >= 400) header('Cache-Control: no-store, max-age=0');
+    echo $json;
     exit;
 }
 
@@ -34,11 +79,14 @@ function loadConfig(): array {
 
 function sessionStart(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    ini_set('session.use_strict_mode','1');
+    ini_set('session.use_only_cookies','1');
+    ini_set('session.use_trans_sid','0');
     session_name('yulcaribe_health');
     session_set_cookie_params([
         'lifetime'=>0,
         'path'=>'/main/',
-        'secure'=>!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'secure'=>true,
         'httponly'=>true,
         'samesite'=>'Strict',
     ]);
@@ -72,9 +120,26 @@ function verifyPassword(string $provided): bool {
     return $legacy !== '' && hash_equals($legacy, $provided);
 }
 
+function credentialVersion(): string {
+    $env = trim((string)(getenv('HEALTH_ADMIN_KEY') ?: ''));
+    return hash('sha256', $env !== '' ? $env : (passwordHashValue() ?: adminKey()));
+}
+
 function authenticated(): bool {
     sessionStart();
-    return ($_SESSION['health_authenticated'] ?? false) === true;
+    if (($_SESSION['health_authenticated'] ?? false) !== true) return false;
+    $now = time();
+    $loginAt = (int)($_SESSION['health_login_at'] ?? 0);
+    $lastSeen = (int)($_SESSION['health_last_seen'] ?? 0);
+    $version = (string)($_SESSION['health_credential_version'] ?? '');
+    if (!$loginAt || !$lastSeen || $now-$lastSeen > 1800 || $now-$loginAt > 28800
+        || $loginAt > $now || $lastSeen > $now || !hash_equals(credentialVersion(),$version)) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        return false;
+    }
+    $_SESSION['health_last_seen'] = $now;
+    return true;
 }
 
 function login(string $password): bool {
@@ -86,6 +151,8 @@ function login(string $password): bool {
     session_regenerate_id(true);
     $_SESSION['health_authenticated'] = true;
     $_SESSION['health_login_at'] = time();
+    $_SESSION['health_last_seen'] = time();
+    $_SESSION['health_credential_version'] = credentialVersion();
     return true;
 }
 
@@ -253,10 +320,7 @@ function jobs(array $local): array {
 }
 
 function baseUrl(): string {
-    $host = trim((string)($_SERVER['HTTP_HOST'] ?? 'yulcaribe.com'));
-    if ($host === '' || !preg_match('/^[A-Za-z0-9.-]+(?::\d+)?$/',$host)) $host='yulcaribe.com';
-    $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
-    return ($https ? 'https' : 'http') . '://' . $host;
+    return 'https://yulcaribe.com';
 }
 
 function httpProbe(string $url, bool $head = false, int $timeout = 10): array {
@@ -266,7 +330,7 @@ function httpProbe(string $url, bool $head = false, int $timeout = 10): array {
         CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,
         CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>$timeout,CURLOPT_USERAGENT=>'YulCaribe-Health/1.0',
         CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_NOBODY=>$head,
-        CURLOPT_HTTPHEADER=>['Accept: application/json,text/html,image/*;q=0.8,*/*;q=0.5'],
+        CURLOPT_HTTPHEADER=>array_merge(['Accept: application/json,text/html,image/*;q=0.8,*/*;q=0.5'], str_starts_with($url, baseUrl().'/main/api/') ? ['Origin: https://yulcaribe.com'] : []),
     ]);
     $started=microtime(true);$body=curl_exec($ch);$status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);$error=curl_error($ch);curl_close($ch);
     if($error!=='')error_log('[health-http] '.$error);
@@ -422,6 +486,7 @@ function runDeltaCron(): array {
     return ['ok'=>true,'cronState'=>$local['cronState'],'syncHealth'=>$local['syncHealth'],'syncAgeSeconds'=>$local['syncAgeSeconds']];
 }
 
+if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0)>16384) out(413,['ok'=>false,'error'=>'Request body too large.']);
 $action=strtolower(trim((string)($_GET['action'] ?? 'session')));
 
 try {
@@ -430,8 +495,9 @@ try {
         out(200,['ok'=>true,'authenticated'=>authenticated()]);
     }
     if($action==='login'){
-        method('POST');$body=json_decode((string)file_get_contents('php://input'),true);if(!is_array($body))$body=[];
-        if(!login((string)($body['password'] ?? '')))out(401,['ok'=>false,'error'=>'Invalid Health password.']);
+        method('POST');$body=json_decode((string)file_get_contents('php://input',false,null,0,16385),true);if(!is_array($body))$body=[];
+        if(!is_string($body['password'] ?? null) || strlen($body['password'])>4096) out(400,['ok'=>false,'error'=>'Invalid password input.']);
+        if(!login($body['password']))out(401,['ok'=>false,'error'=>'Invalid Health password.']);
         out(200,['ok'=>true,'authenticated'=>true]);
     }
     if($action==='logout'){
@@ -460,11 +526,11 @@ try {
         method('GET');out(200,['ok'=>true,'retentionDays'=>3,'lines'=>logLines((int)($_GET['lines'] ?? 300))]);
     }
     if($action==='settings-save'){
-        method('POST');$body=json_decode((string)file_get_contents('php://input'),true);if(!is_array($body))$body=[];
+        method('POST');$body=json_decode((string)file_get_contents('php://input',false,null,0,16385),true);if(!is_array($body))$body=[];
         out(200,['ok'=>true,'changed'=>saveSettings($body)]);
     }
     if($action==='secret-reveal'){
-        method('POST');$body=json_decode((string)file_get_contents('php://input'),true);if(!is_array($body))$body=[];
+        method('POST');$body=json_decode((string)file_get_contents('php://input',false,null,0,16385),true);if(!is_array($body))$body=[];
         $kind=trim((string)($body['kind'] ?? ''));$secret=revealSecret($kind,(string)($body['password'] ?? ''));
         out(200,['ok'=>true,'kind'=>$kind,'secret'=>$secret,'expiresInSeconds'=>30]);
     }

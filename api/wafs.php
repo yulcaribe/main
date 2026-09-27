@@ -1,9 +1,47 @@
 <?php
 declare(strict_types=1);
 
+// These browser-origin checks are defence in depth, not client authentication.
+function ycRejectRequest(int $status, string $message): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(['ok'=>false,'error'=>$message], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+function ycSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || $parts['port'] === 443)
+        && !isset($parts['user']) && !isset($parts['pass']);
+}
+header('Vary: Origin, Sec-Fetch-Site, Referer');
+header('Cross-Origin-Resource-Policy: same-origin');
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+$referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+$fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+    || ($origin !== '' ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+        : !ycSameOrigin($referer))) {
+    ycRejectRequest(403, 'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.');
+}
+foreach ($_GET as $value) {
+    if (!is_string($value) || strlen($value) > 2048 || str_contains($value, "\0")) {
+        ycRejectRequest(400, 'Geçersiz veya çok uzun istek parametresi.');
+    }
+}
+if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET'], true)) {
+    header('Allow: GET');
+    ycRejectRequest(405, 'HTTP method not allowed.');
+}
+if (!in_array(strtolower(trim($_GET['action'] ?? 'image')), ['image','status','health'], true)) ycRejectRequest(400, 'Geçersiz action.');
+
+
 header('X-YC-API-Resource: wafs');
 header('X-Content-Type-Options: nosniff');
-header('Cache-Control: public, max-age=900');
+header('Cache-Control: private, max-age=900');
 
 const YC_WAFS_BASE = 'https://aviationweather.gov/data/products/wafs';
 const YC_WAFS_UA = 'YulCaribe-WAFS/1.0 (+https://yulcaribe.com)';
@@ -13,9 +51,16 @@ const YC_WAFS_BUDGET = 11.0;
 $ycWafsStarted = microtime(true);
 
 function jsonOut(int $status, array $payload): never {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('[wafs] JSON response: '.json_last_error_msg());
+        $status = 500;
+        $json = '{"ok":false,"error":"Response could not be encoded."}';
+    }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($status >= 400) header('Cache-Control: no-store, max-age=0');
+    echo $json;
     exit;
 }
 
@@ -95,9 +140,13 @@ function fetchPng(string $url, bool $useCache = true): ?string {
 
 function parseUtc(string $value): int {
     $value = trim($value);
-    if ($value === '') jsonOut(400, ['ok'=>false,'error'=>'valid UTC zorunlu.']);
-    $ts = strtotime($value.' UTC');
-    if ($ts === false) jsonOut(400, ['ok'=>false,'error'=>'Geçersiz valid UTC.']);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/D', $value)) jsonOut(400, ['ok'=>false,'error'=>'Geçersiz valid UTC.']);
+    try {
+        $date = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+        $errors = DateTimeImmutable::getLastErrors();
+        if ($errors !== false && ($errors['warning_count'] || $errors['error_count'])) throw new RuntimeException('Invalid calendar date.');
+        $ts = $date->getTimestamp();
+    } catch (Throwable) { jsonOut(400, ['ok'=>false,'error'=>'Geçersiz valid UTC.']); }
     if ($ts < time() - 14*86400 || $ts > time() + 72*3600) jsonOut(400, ['ok'=>false,'error'=>'WAFS zamanı desteklenen aralığın dışında.']);
     return $ts;
 }

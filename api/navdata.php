@@ -1,14 +1,60 @@
 <?php
 declare(strict_types=1);
 
+// These browser-origin checks are defence in depth, not client authentication.
+function ycRejectRequest(int $status, string $message): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(['ok'=>false,'error'=>$message], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+function ycSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || $parts['port'] === 443)
+        && !isset($parts['user']) && !isset($parts['pass']);
+}
+header('Vary: Origin, Sec-Fetch-Site, Referer');
+header('Cross-Origin-Resource-Policy: same-origin');
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+$referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+$fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+    || ($origin !== '' ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+        : !ycSameOrigin($referer))) {
+    ycRejectRequest(403, 'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.');
+}
+foreach ($_GET as $value) {
+    if (!is_string($value) || strlen($value) > 2048 || str_contains($value, "\0")) {
+        ycRejectRequest(400, 'Geçersiz veya çok uzun istek parametresi.');
+    }
+}
+if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET'], true)) {
+    header('Allow: GET');
+    ycRejectRequest(405, 'HTTP method not allowed.');
+}
+if (!in_array(strtolower(trim($_GET['action'] ?? 'viewport')), ['health','airport-detail','airport-near','airport-search','search','viewport'], true)) ycRejectRequest(400, 'Geçersiz action.');
+
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
-header('Cache-Control: public, max-age=30, stale-while-revalidate=60');
+header('Cache-Control: private, max-age=30, stale-while-revalidate=60');
 header('X-YC-API-Resource: navdata');
 
 function out(int $status, array $payload): never {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('[navdata] JSON response: '.json_last_error_msg());
+        $status = 500;
+        $json = '{"ok":false,"error":"Response could not be encoded."}';
+    }
     http_response_code($status);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    header('Content-Type: application/json; charset=utf-8');
+    if ($status >= 400) header('Cache-Control: no-store, max-age=0');
+    echo $json;
     exit;
 }
 
@@ -20,6 +66,16 @@ if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'GET') {
 function apiString(array $source, string $key, int $maxLength = 200): string {
     $value = trim((string)($source[$key] ?? ''));
     return function_exists('mb_substr') ? mb_substr($value, 0, $maxLength) : substr($value, 0, $maxLength);
+}
+
+
+function boundedNumber(string $key, float $min, float $max, ?float $default = null): float {
+    $raw = $_GET[$key] ?? null;
+    if ($raw === null && $default !== null) return $default;
+    if (!is_string($raw) || !is_numeric($raw)) out(400, ['ok'=>false,'error'=>'Geçersiz sayı: '.$key]);
+    $value = (float)$raw;
+    if (!is_finite($value) || $value < $min || $value > $max) out(400, ['ok'=>false,'error'=>'Sınır dışında: '.$key]);
+    return $value;
 }
 
 function db(): PDO {
@@ -50,7 +106,11 @@ function db(): PDO {
 
 function navEmptyCollection(): array { return ['type'=>'FeatureCollection','features'=>[]]; }
 function navClamp(float $value, float $min, float $max): float { return max($min, min($max, $value)); }
-function navNormalizeLon(float $lon): float { while ($lon > 180) $lon -= 360; while ($lon < -180) $lon += 360; return $lon; }
+function navNormalizeLon(float $lon): float {
+    if (!is_finite($lon)) out(400, ['ok'=>false,'error'=>'Geçersiz boylam.']);
+    $lon = fmod($lon, 360.0);
+    return $lon > 180.0 ? $lon - 360.0 : ($lon < -180.0 ? $lon + 360.0 : $lon);
+}
 
 function navBboxSql(float $west, float $south, float $east, float $north, array &$params): string {
     if ($west <= $east) {
@@ -109,36 +169,36 @@ try {
         out(200,['ok'=>true,'resource'=>'navdata','mode'=>'airport-detail','airport'=>navAirportItem($row)]);
     }
     if($action==='airport-near'){
-        $lat=filter_input(INPUT_GET,'lat',FILTER_VALIDATE_FLOAT);$lon=filter_input(INPUT_GET,'lon',FILTER_VALIDATE_FLOAT);
+        $lat=boundedNumber('lat',-90,90);$lon=boundedNumber('lon',-180,180);
         if($lat===false||$lat===null||$lon===false||$lon===null)out(400,['ok'=>false,'error'=>'lat ve lon gerekli.']);
-        $delta=isset($_GET['delta'])&&is_numeric($_GET['delta'])?max(.05,min(10,(float)$_GET['delta'])):1.0;$limit=max(1,min(100,(int)($_GET['limit']??25)));
+        $delta=boundedNumber('delta',.05,10,1.0);$limit=max(1,min(100,(int)($_GET['limit']??25)));
         $stmt=$pdo->prepare("SELECT id,ident,iata,name,city,lat,lon,elevation_ft,type_code,provider_status FROM nav_points WHERE kind='airport' AND lat BETWEEN :s AND :n AND lon BETWEEN :w AND :e ORDER BY ABS(lat-:lat)+ABS(lon-:lon) LIMIT {$limit}");
         $stmt->execute(['s'=>(float)$lat-$delta,'n'=>(float)$lat+$delta,'w'=>(float)$lon-$delta,'e'=>(float)$lon+$delta,'lat'=>(float)$lat,'lon'=>(float)$lon]);$rows=$stmt->fetchAll();
         out(200,['ok'=>true,'resource'=>'navdata','mode'=>'airport-near','count'=>count($rows),'items'=>array_map('navAirportItem',$rows)]);
     }
     if($action==='airport-search'){
         $q=strtoupper(apiString($_GET,'q',80)); if(strlen($q)<2)out(400,['ok'=>false,'error'=>'En az 2 karakter gir.']);
-        $like='%'.$q.'%';$limit=max(1,min(50,(int)($_GET['limit']??20)));
-        $stmt=$pdo->prepare("SELECT id,ident,iata,name,city,lat,lon,elevation_ft,type_code,provider_status FROM nav_points WHERE kind='airport' AND (UPPER(ident) LIKE :a OR UPPER(COALESCE(iata,'')) LIKE :b OR UPPER(COALESCE(name,'')) LIKE :c OR UPPER(COALESCE(city,'')) LIKE :d) ORDER BY (UPPER(ident)=:ei) DESC,(UPPER(COALESCE(iata,''))=:ea) DESC,ident LIMIT {$limit}");
+        $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';$limit=max(1,min(50,(int)($_GET['limit']??20)));
+        $stmt=$pdo->prepare("SELECT id,ident,iata,name,city,lat,lon,elevation_ft,type_code,provider_status FROM nav_points WHERE kind='airport' AND (UPPER(ident) LIKE :a ESCAPE '!' OR UPPER(COALESCE(iata,'')) LIKE :b ESCAPE '!' OR UPPER(COALESCE(name,'')) LIKE :c ESCAPE '!' OR UPPER(COALESCE(city,'')) LIKE :d ESCAPE '!') ORDER BY (UPPER(ident)=:ei) DESC,(UPPER(COALESCE(iata,''))=:ea) DESC,ident LIMIT {$limit}");
         $stmt->execute(['a'=>$like,'b'=>$like,'c'=>$like,'d'=>$like,'ei'=>$q,'ea'=>$q]);$rows=$stmt->fetchAll();
         out(200,['ok'=>true,'resource'=>'navdata','mode'=>'airport-search','query'=>$q,'count'=>count($rows),'items'=>array_map('navAirportItem',$rows)]);
     }
     if($action==='search'){
-        $q=trim((string)($_GET['q']??''));$qlen=function_exists('mb_strlen')?mb_strlen($q):strlen($q);if($q===''||$qlen<2)out(400,['ok'=>false,'error'=>'En az 2 karakter gir.']);
-        $like='%'.$q.'%';$results=[];
-        $stmt=$pdo->prepare('SELECT id,kind,ident,name,lat,lon FROM nav_points WHERE ident LIKE :q1 OR name LIKE :q2 ORDER BY (ident=:exact) DESC,kind,ident LIMIT 12');$stmt->execute(['q1'=>$like,'q2'=>$like,'exact'=>$q]);
+        $q=apiString($_GET,'q',80);$qlen=function_exists('mb_strlen')?mb_strlen($q):strlen($q);if($q===''||$qlen<2)out(400,['ok'=>false,'error'=>'En az 2 karakter gir.']);
+        $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';$results=[];
+        $stmt=$pdo->prepare('SELECT id,kind,ident,name,lat,lon FROM nav_points WHERE ident LIKE :q1 ESCAPE \'!\' OR name LIKE :q2 ESCAPE \'!\' ORDER BY (ident=:exact) DESC,kind,ident LIMIT 12');$stmt->execute(['q1'=>$like,'q2'=>$like,'exact'=>$q]);
         foreach($stmt as $row)$results[]=['kind'=>$row['kind']==='designatedpoint'?'waypoint':$row['kind'],'id'=>(int)$row['id'],'ident'=>$row['ident'],'name'=>$row['name'],'lon'=>(float)$row['lon'],'lat'=>(float)$row['lat']];
-        $stmt=$pdo->prepare('SELECT id,ident,type FROM nav_routes WHERE ident LIKE :q ORDER BY (ident=:exact) DESC,type,ident LIMIT 8');$stmt->execute(['q'=>$like,'exact'=>$q]);
+        $stmt=$pdo->prepare('SELECT id,ident,type FROM nav_routes WHERE ident LIKE :q ESCAPE \'!\' ORDER BY (ident=:exact) DESC,type,ident LIMIT 8');$stmt->execute(['q'=>$like,'exact'=>$q]);
         foreach($stmt as $row)$results[]=['kind'=>$row['type'],'id'=>(int)$row['id'],'ident'=>$row['ident'],'name'=>null,'lon'=>null,'lat'=>null];
-        $stmt=$pdo->prepare('SELECT id,ident,name FROM nav_airspaces WHERE ident LIKE :q1 OR name LIKE :q2 ORDER BY (ident=:exact) DESC,ident LIMIT 8');$stmt->execute(['q1'=>$like,'q2'=>$like,'exact'=>$q]);
+        $stmt=$pdo->prepare('SELECT id,ident,name FROM nav_airspaces WHERE ident LIKE :q1 ESCAPE \'!\' OR name LIKE :q2 ESCAPE \'!\' ORDER BY (ident=:exact) DESC,ident LIMIT 8');$stmt->execute(['q1'=>$like,'q2'=>$like,'exact'=>$q]);
         foreach($stmt as $row)$results[]=['kind'=>'airspace','id'=>(int)$row['id'],'ident'=>$row['ident'],'name'=>$row['name'],'lon'=>null,'lat'=>null];
         out(200,['ok'=>true,'resource'=>'navdata','mode'=>'search','results'=>array_slice($results,0,24)]);
     }
     if($action!=='viewport')out(400,['ok'=>false,'error'=>'Geçersiz action.']);
 
-    $zoom=isset($_GET['z'])&&is_numeric($_GET['z'])?max(0,min(18,(int)$_GET['z'])):5;
+    $zoom=(int)boundedNumber('z',0,24,5);
     foreach(['west','south','east','north'] as $key)if(!isset($_GET[$key])||!is_numeric($_GET[$key]))out(400,['ok'=>false,'error'=>"Eksik/geçersiz bbox: {$key}"]);
-    $west=navNormalizeLon((float)$_GET['west']);$east=navNormalizeLon((float)$_GET['east']);$south=navClamp((float)$_GET['south'],-85,85);$north=navClamp((float)$_GET['north'],-85,85);if($south>$north)[$south,$north]=[$north,$south];
+    $west=navNormalizeLon(boundedNumber('west',-1080,1080));$east=navNormalizeLon(boundedNumber('east',-1080,1080));$south=navClamp(boundedNumber('south',-90,90),-85,85);$north=navClamp(boundedNumber('north',-90,90),-85,85);if($south>$north)[$south,$north]=[$north,$south];
     $requested=array_filter(array_map(static fn(string $v):string=>strtolower(trim($v)),explode(',',(string)($_GET['layers']??'airport,navaid,waypoint,airway,sid,star,airspace'))));
     $allowed=['airport','navaid','waypoint','airway','sid','star','airspace'];$layers=array_values(array_intersect($allowed,$requested));$features=[];$counts=array_fill_keys($allowed,0);$truncated=false;
     if($zoom<5||!$layers)out(200,['ok'=>true,'resource'=>'navdata','mode'=>'viewport','zoom'=>$zoom,'data'=>navEmptyCollection(),'counts'=>$counts,'total'=>0,'truncated'=>false]);

@@ -1,6 +1,44 @@
 <?php
 declare(strict_types=1);
 
+// These browser-origin checks are defence in depth, not client authentication.
+function ycRejectRequest(int $status, string $message): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(['ok'=>false,'error'=>$message], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+function ycSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || $parts['port'] === 443)
+        && !isset($parts['user']) && !isset($parts['pass']);
+}
+header('Vary: Origin, Sec-Fetch-Site, Referer');
+header('Cross-Origin-Resource-Policy: same-origin');
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+$referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+$fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+    || ($origin !== '' ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+        : !ycSameOrigin($referer))) {
+    ycRejectRequest(403, 'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.');
+}
+foreach ($_GET as $value) {
+    if (!is_string($value) || strlen($value) > 2048 || str_contains($value, "\0")) {
+        ycRejectRequest(400, 'Geçersiz veya çok uzun istek parametresi.');
+    }
+}
+if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET'], true)) {
+    header('Allow: GET');
+    ycRejectRequest(405, 'HTTP method not allowed.');
+}
+if (!in_array(strtolower(trim($_GET['action'] ?? 'list')), ['list','filters','detail','map','health'], true)) ycRejectRequest(400, 'Geçersiz action.');
+
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, max-age=0');
@@ -9,9 +47,27 @@ header('X-YC-API-Resource: notam');
 const NOTAM_RETENTION_DAYS = 3;
 
 function out(int $status, array $payload): never {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('[notam] JSON response: '.json_last_error_msg());
+        $status = 500;
+        $json = '{"ok":false,"error":"Response could not be encoded."}';
+    }
     http_response_code($status);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    header('Content-Type: application/json; charset=utf-8');
+    if ($status >= 400) header('Cache-Control: no-store, max-age=0');
+    echo $json;
     exit;
+}
+
+
+function boundedNumber(string $key, float $min, float $max, ?float $default = null): float {
+    $raw = $_GET[$key] ?? null;
+    if ($raw === null && $default !== null) return $default;
+    if (!is_string($raw) || !is_numeric($raw)) out(400, ['ok'=>false,'error'=>'Geçersiz sayı: '.$key]);
+    $value = (float)$raw;
+    if (!is_finite($value) || $value < $min || $value > $max) out(400, ['ok'=>false,'error'=>'Sınır dışında: '.$key]);
+    return $value;
 }
 
 function db(): PDO {
@@ -44,11 +100,15 @@ function db(): PDO {
 }
 
 function utc(mixed $value): DateTimeImmutable {
+    $raw = is_string($value) ? trim($value) : '';
+    if ($raw === '') return new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/D', $raw)) out(400, ['ok'=>false,'error'=>'Geçersiz UTC.']);
     try {
-        return new DateTimeImmutable(trim((string)$value) === '' ? 'now' : (string)$value, new DateTimeZone('UTC'));
-    } catch (Throwable) {
-        out(400, ['ok'=>false,'error'=>'Geçersiz UTC.']);
-    }
+        $date = new DateTimeImmutable($raw, new DateTimeZone('UTC'));
+        $errors = DateTimeImmutable::getLastErrors();
+        if ($errors !== false && ($errors['warning_count'] || $errors['error_count'])) throw new RuntimeException('Invalid calendar date.');
+        return $date->setTimezone(new DateTimeZone('UTC'));
+    } catch (Throwable) { out(400, ['ok'=>false,'error'=>'Geçersiz UTC.']); }
 }
 
 function ident(array $row): string {
@@ -314,57 +374,54 @@ function cancellationTargetKey(array $row): ?string {
     return null;
 }
 
+// Number/year is not globally unique. Require matching provider account and
+// operational location as conservative additional scope, then exactly one target.
+// Missing scope or ambiguous candidates must never cause automatic cancellation.
+function referenceScope(array $row): ?array {
+    $account = trim((string)($row['account_id'] ?? ''));
+    $fir = strtoupper(trim((string)($row['affected_fir'] ?? '')));
+    $location = strtoupper(trim((string)(($row['icao_location'] ?? '') ?: ($row['location'] ?? ''))));
+    if ($account === '' || $fir === '' || $location === '') return null;
+    return ['account'=>$account,'fir'=>$fir,'reference_location'=>$location];
+}
+
 function resolveReferenceTargets(PDO $pdo, array $targets, string $metaIdKey): array {
     $index=[];
     if (!$targets) return $index;
-    $find=$pdo->prepare("SELECT nms_id FROM notams WHERE source='FAA_NMS' AND environment='production' AND series=:series AND (number=:serial OR number=:serial_slash OR number=:target) AND (year=:year4 OR year=:year2 OR year IS NULL)");
-    foreach($targets as $target=>$meta) {
-        if(!preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/',$target,$m)) continue;
-        $series=$m[1]; $serial=$m[2]; $year2=(int)$m[3]; $year4=2000+$year2;
-        $find->execute(['series'=>$series,'serial'=>$serial,'serial_slash'=>$serial.'/'.$m[3],'target'=>$target,'year4'=>$year4,'year2'=>$year2]);
-        while($targetRow=$find->fetch()) {
-            $targetId=(string)$targetRow['nms_id'];
-            if($targetId==='' || $targetId===(string)($meta[$metaIdKey] ?? '')) continue;
-            $index[$targetId]=$meta;
-        }
+    $find=$pdo->prepare("SELECT nms_id,series,number,year,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND account_id=:account AND affected_fir=:fir AND COALESCE(NULLIF(icao_location,''),location)=:reference_location AND series=:series AND (number=:serial OR number=:serial_slash OR number=:target) AND (year=:year4 OR year=:year2 OR year IS NULL) LIMIT 3");
+    foreach($targets as $entry) {
+        $target=$entry['target']; $meta=$entry['meta']; $scope=$entry['scope'];
+        if(!preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/D',$target,$m)) continue;
+        $find->execute($scope+['series'=>$m[1],'serial'=>$m[2],'serial_slash'=>$m[2].'/'.$m[3],'target'=>$target,'year4'=>2000+(int)$m[3],'year2'=>(int)$m[3]]);
+        $rows=$find->fetchAll();
+        if (count($rows)!==1) continue;
+        $row=$rows[0]; $targetId=(string)$row['nms_id'];
+        if ($targetId==='' || $targetId===(string)($meta[$metaIdKey] ?? '') || identKey($row)!==$target || referenceScope($row)!==$scope) continue;
+        $index[$targetId]=$meta;
     }
     return $index;
 }
 
-function replacementIndex(PDO $pdo, DateTimeImmutable $at): array {
+function referenceIndex(PDO $pdo, DateTimeImmutable $at, string $type): array {
     static $cache=[];
-    $cacheKey=$at->format('Y-m-d H:i');
+    $cacheKey=$type.'|'.$at->format('Y-m-d H:i:s');
     if (isset($cache[$cacheKey])) return $cache[$cacheKey];
-    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_text,raw_json,effective_start,last_updated FROM notams WHERE source='FAA_NMS' AND environment='production' AND UPPER(COALESCE(notam_type,''))='R' AND (effective_start IS NULL OR effective_start<=:at)");
-    $stmt->execute(['at'=>$at->format('Y-m-d H:i:s')]);
+    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_text,raw_json,effective_start,last_updated,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND UPPER(COALESCE(notam_type,''))=:type AND COALESCE(effective_start,last_updated)<=:at ORDER BY COALESCE(effective_start,last_updated),nms_id");
+    $stmt->execute(['type'=>$type,'at'=>$at->format('Y-m-d H:i:s')]);
     $targets=[];
+    $prefix=$type==='R'?'replacement':'cancellation';
     while($row=$stmt->fetch()) {
-        $target=replacementTargetKey($row);
-        if($target===null || isset($targets[$target])) continue;
-        $targets[$target]=['replacementId'=>(string)$row['nms_id'],'replacementIdent'=>ident($row),'effectiveStart'=>$row['effective_start'] ?? null];
+        $target=$type==='R'?replacementTargetKey($row):cancellationTargetKey($row);
+        $scope=referenceScope($row);
+        if ($target===null || $scope===null) continue;
+        $key=json_encode([$scope,$target],JSON_THROW_ON_ERROR);
+        if (isset($targets[$key])) continue;
+        $targets[$key]=['target'=>$target,'scope'=>$scope,'meta'=>[$prefix.'Id'=>(string)$row['nms_id'],$prefix.'Ident'=>ident($row),'effectiveStart'=>$row['effective_start'] ?? $row['last_updated'] ?? null]];
     }
-    return $cache[$cacheKey]=resolveReferenceTargets($pdo,$targets,'replacementId');
+    return $cache[$cacheKey]=resolveReferenceTargets($pdo,$targets,$prefix.'Id');
 }
-
-function cancellationIndex(PDO $pdo, DateTimeImmutable $at): array {
-    static $cache=[];
-    $cacheKey=$at->format('Y-m-d H:i');
-    if (isset($cache[$cacheKey])) return $cache[$cacheKey];
-    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_text,raw_json,effective_start,last_updated FROM notams WHERE source='FAA_NMS' AND environment='production' AND UPPER(COALESCE(notam_type,''))='C' AND COALESCE(effective_start,last_updated)<=:at");
-    $stmt->execute(['at'=>$at->format('Y-m-d H:i:s')]);
-    $targets=[];
-    while($row=$stmt->fetch()) {
-        $target=cancellationTargetKey($row);
-        if($target===null) continue;
-        $eventTime=$row['effective_start'] ?? $row['last_updated'] ?? null;
-        if(isset($targets[$target])) {
-            $old=(string)($targets[$target]['effectiveStart'] ?? '');
-            if($old!=='' && $eventTime!==null && strcmp((string)$eventTime,$old)>=0) continue;
-        }
-        $targets[$target]=['cancellationId'=>(string)$row['nms_id'],'cancellationIdent'=>ident($row),'effectiveStart'=>$eventTime];
-    }
-    return $cache[$cacheKey]=resolveReferenceTargets($pdo,$targets,'cancellationId');
-}
+function replacementIndex(PDO $pdo, DateTimeImmutable $at): array { return referenceIndex($pdo,$at,'R'); }
+function cancellationIndex(PDO $pdo, DateTimeImmutable $at): array { return referenceIndex($pdo,$at,'C'); }
 
 function addIndexExclusion(array $index, array &$where, array &$params, string $prefix): void {
     if (!$index) return;
@@ -405,14 +462,17 @@ function coverageInfo(PDO $pdo, DateTimeImmutable $at): array {
 
 function addExact(array &$where, array &$params, string $column, string $key, string $value, string $regex): void {
     $value = strtoupper(trim($value));
-    if ($value !== '' && preg_match($regex, $value)) {$where[] = "$column=:$key";$params[$key] = $value;}
+    if ($value !== '' && !preg_match($regex, $value)) out(400,['ok'=>false,'error'=>'Geçersiz filtre: '.$key]);
+    if ($value !== '') {$where[] = "$column=:$key";$params[$key] = $value;}
 }
 
 function listAction(PDO $pdo): never {
     $at = utc($_GET['at'] ?? '');
     $state = strtolower((string)($_GET['state'] ?? 'valid'));
-    if (!in_array($state,['valid','future','expired','cancelled','replaced','all'],true)) $state='valid';
-    $page = max(1, (int)($_GET['page'] ?? 1));
+    if (!in_array($state,['valid','future','expired','cancelled','replaced','all'],true)) out(400,['ok'=>false,'error'=>'Geçersiz state.']);
+    $pageRaw = $_GET['page'] ?? '1';
+    if (!preg_match('/^[1-9][0-9]{0,6}$/D',$pageRaw)) out(400,['ok'=>false,'error'=>'Geçersiz sayfa.']);
+    $page = (int)$pageRaw;
     $limit = max(1, min(200, (int)($_GET['limit'] ?? 50)));
     $where = ["n.source='FAA_NMS'", "n.environment='production'"];
     $params = [];
@@ -447,12 +507,15 @@ function listAction(PDO $pdo): never {
     addExact($where,$params,"UPPER(COALESCE(n.selection_code,''))",'selection',(string)($_GET['selection_code'] ?? ''),'/^[A-Z0-9]{1,12}$/');
 
     $icao = strtoupper(trim((string)($_GET['icao'] ?? '')));
+    if ($icao!=='' && !preg_match('/^[A-Z0-9]{4}$/D',$icao)) out(400,['ok'=>false,'error'=>'Geçersiz ICAO.']);
     if (preg_match('/^[A-Z0-9]{4}$/', $icao)) {$where[] = "(UPPER(COALESCE(n.icao_location,''))=:icao OR UPPER(COALESCE(n.location,''))=:location)";$params['icao'] = $icao;$params['location'] = $icao;}
     $q = trim((string)($_GET['q'] ?? ''));
-    if ($q !== '') {$where[] = '(n.nms_id LIKE :q1 OR n.notam_text LIKE :q2)';$params['q1'] = $params['q2'] = '%' . $q . '%';}
+    if (strlen($q)>200) out(400,['ok'=>false,'error'=>'Arama en fazla 200 bayt olabilir.']);
+    if ($q !== '') {$where[] = '(n.nms_id LIKE :q1 ESCAPE \'!\' OR n.notam_text LIKE :q2 ESCAPE \'!\')';$params['q1'] = $params['q2'] = '%' . strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']) . '%';}
 
     $whereSql = implode(' AND ', $where);
     $count = $pdo->prepare('SELECT COUNT(*) FROM notams n WHERE ' . $whereSql);$count->execute($params);$total = (int)$count->fetchColumn();
+    $page = min($page, max(1, (int)ceil($total / $limit)));
     $offset = ($page - 1) * $limit;
     $order = match ((string)($_GET['sort'] ?? 'updated_desc')) {'start_asc' => 'n.effective_start ASC','start_desc' => 'n.effective_start DESC','ident' => 'n.series,n.number',default => 'n.last_updated DESC'};
     $stmt = $pdo->prepare('SELECT ' . columns(true,false) . ' FROM notams n WHERE ' . $whereSql . ' ORDER BY ' . $order . ' LIMIT ' . $limit . ' OFFSET ' . $offset);$stmt->execute($params);
@@ -485,7 +548,11 @@ function detailAction(PDO $pdo): never {
     out(200, ['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'notam'=>$entry]);
 }
 
-function normalizeLon(float $lon): float {while ($lon < -180.0) $lon += 360.0;while ($lon > 180.0) $lon -= 360.0;return $lon;}
+function normalizeLon(float $lon): float {
+    if (!is_finite($lon)) out(400, ['ok'=>false,'error'=>'Geçersiz boylam.']);
+    $lon = fmod($lon, 360.0);
+    return $lon > 180.0 ? $lon - 360.0 : ($lon < -180.0 ? $lon + 360.0 : $lon);
+}
 function circlePolygon(float $lon, float $lat, float $radiusNm, int $steps = 60): array {
     $earthRadiusNm = 3440.065;$angularDistance = max(0.0, $radiusNm) / $earthRadiusNm;$latRad = deg2rad($lat);$lonRad = deg2rad($lon);$ring = [];
     for ($i = 0; $i <= $steps; $i++) {$bearing = deg2rad(($i / $steps) * 360.0);$sinLat2 = sin($latRad) * cos($angularDistance) + cos($latRad) * sin($angularDistance) * cos($bearing);$lat2 = asin(max(-1.0, min(1.0, $sinLat2)));$lon2 = $lonRad + atan2(sin($bearing) * sin($angularDistance) * cos($latRad),cos($angularDistance) - sin($latRad) * sin($lat2));$ring[] = [round(normalizeLon(rad2deg($lon2)),6), round(rad2deg($lat2),6)];}
@@ -522,9 +589,9 @@ function addFeature(array $row,array &$features,array &$seenIds,array &$seenFeat
 
 function mapAction(PDO $pdo): never {
     foreach (['west','south','east','north'] as $key) if (!is_numeric($_GET[$key] ?? null)) out(400,['ok'=>false,'error'=>'bbox gerekli.']);
-    $zoom=max(0,min(18,(int)($_GET['z'] ?? 5)));$west=normalizeLon((float)$_GET['west']); $east=normalizeLon((float)$_GET['east']);$south=max(-85.0,min(85.0,(float)$_GET['south'])); $north=max(-85.0,min(85.0,(float)$_GET['north']));if($south>$north)[$south,$north]=[$north,$south];$at=utc($_GET['at'] ?? '');$coverage=coverageInfo($pdo,$at);
+    $zoom=(int)boundedNumber('z',0,24,5);$west=normalizeLon(boundedNumber('west',-1080,1080)); $east=normalizeLon(boundedNumber('east',-1080,1080));$south=max(-85.0,min(85.0,boundedNumber('south',-90,90))); $north=max(-85.0,min(85.0,boundedNumber('north',-90,90)));if($south>$north)[$south,$north]=[$north,$south];$at=utc($_GET['at'] ?? '');$coverage=coverageInfo($pdo,$at);
     if($zoom<4) out(200,['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>$coverage,'data'=>['type'=>'FeatureCollection','features'=>[]],'counts'=>['notam'=>0],'truncated'=>false,'schedule'=>['outside'=>0,'unknown'=>0]]);
-    header('Cache-Control: public, max-age=60, stale-while-revalidate=120');
+    header('Cache-Control: private, max-age=60, stale-while-revalidate=120');
     $time=$at->format('Y-m-d H:i:s');$features=[];$seenIds=[];$seenFeatures=[];$truncated=false;$replacementIndex=replacementIndex($pdo,$at);$cancellationIndex=cancellationIndex($pdo,$at);$mapStats=['outsideSchedule'=>0,'scheduleUnknown'=>0,'replaced'=>count($replacementIndex),'cancelled'=>count($cancellationIndex)];
     $params=['at_start'=>$time,'at_end'=>$time];$bbox=bboxSql($west,$south,$east,$north,$params);$sql='SELECT '.columns(true,true).",'faa-geometry' AS geometry_source FROM notams n WHERE ".validWhere()." AND n.geometry IS NOT NULL AND $bbox ORDER BY n.effective_start DESC LIMIT 5000";$stmt=$pdo->prepare($sql); $stmt->execute($params);while($row=$stmt->fetch()) addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);if($stmt->rowCount()>=5000)$truncated=true;
     try {$lonWhere=$west<=$east ? 'lon BETWEEN :west AND :east' : '(lon>=:west OR lon<=:east)';$ap=$pdo->prepare("SELECT ident,lat,lon FROM nav_points WHERE kind='airport' AND lat BETWEEN :south AND :north AND $lonWhere LIMIT 2500");$ap->execute(['south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);$airports=[];while($r=$ap->fetch()){$id=strtoupper(trim((string)$r['ident']));if($id!=='')$airports[$id]=['lon'=>(float)$r['lon'],'lat'=>(float)$r['lat']];}if($airports){foreach(array_chunk(array_keys($airports),400) as$chunk){$marks=implode(',',array_fill(0,count($chunk),'?'));$q=$pdo->prepare('SELECT '.columns(true,false).' FROM notams n WHERE '.str_replace([':at_start',':at_end'],['?','?'],validWhere())." AND n.geometry IS NULL AND (UPPER(COALESCE(n.icao_location,'')) IN ($marks) OR UPPER(COALESCE(n.location,'')) IN ($marks)) ORDER BY n.effective_start DESC LIMIT 5000");$values=[$time,$time,...$chunk,...$chunk]; $q->execute($values);while($row=$q->fetch()){$anchor=strtoupper(trim((string)($row['icao_location'] ?: $row['location']))); $point=$airports[$anchor] ?? null; if(!$point)continue;$row['geometry']=['type'=>'Point','coordinates'=>[$point['lon'],$point['lat']]]; $row['geometry_source']='airport-location';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}} catch(Throwable $e){ error_log('[notam-map-airport] '.$e->getMessage()); }

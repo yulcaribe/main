@@ -118,7 +118,7 @@
     box.querySelectorAll("[data-result-index]").forEach(button=>button.addEventListener("click",()=>{
       const item=lastResults[Number(button.dataset.resultIndex)];if(!item)return;box.classList.remove("open");
       if(item.kind==="aircraft"&&item.hex){setMode("flights");engines.flights?.select?.(item.hex);return;}
-      if(Number.isFinite(Number(item.lon))&&Number.isFinite(Number(item.lat)))map.flyTo({center:[Number(item.lon),Number(item.lat)],zoom:Math.max(map.getZoom(),9)});
+      if(item.lon!==null&&item.lon!==undefined&&item.lat!==null&&item.lat!==undefined&&Number.isFinite(Number(item.lon))&&Number.isFinite(Number(item.lat)))map.flyTo({center:[Number(item.lon),Number(item.lat)],zoom:Math.max(map.getZoom(),9)});
     }));
   }
   async function search(query){

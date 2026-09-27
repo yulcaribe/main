@@ -7,7 +7,8 @@
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 
   function setActiveNav(name) {
     document.querySelectorAll("[data-nav]").forEach(link => {
@@ -33,33 +34,45 @@
     SQ:{tr:"Bora",en:"Squall"}, FC:{tr:"Huni/tornado",en:"Funnel/tornado"}
   };
 
-  function decodeWeatherToken(token, language) {
-    let code = String(token || "").toUpperCase();
-    if (!code) return null;
-    const parts = [];
-    const intensity = code.startsWith("+") ? (language === "en" ? "Heavy" : "Kuvvetli") : code.startsWith("-") ? (language === "en" ? "Light" : "Hafif") : "";
-    code = code.replace(/^[+-]/, "").replace(/^VC/, "");
-    for (let i = 0; i < code.length; i += 2) {
-      const item = WX[code.slice(i, i + 2)]?.[language];
-      if (item) parts.push(item);
-    }
-    if (!parts.length) return null;
-    return [intensity, ...parts].filter(Boolean).join(" ");
+  function weatherTokens(raw) {
+    const tokens = String(raw || "").toUpperCase().replace(/=\s*$/, "").trim().split(/\s+/).filter(Boolean);
+    const end = tokens.indexOf("RMK");
+    return end < 0 ? tokens : tokens.slice(0, end);
   }
 
-  function decodeConditions(raw, language) {
+  function weatherHeader(tokens) {
+    let index = 0;
+    while (["METAR", "SPECI", "TAF", "AMD", "COR"].includes(tokens[index])) index++;
+    const station = /^[A-Z][A-Z0-9]{3}$/.test(tokens[index] || "") ? tokens[index++] : null;
+    const issued = /^\d{6}Z$/.test(tokens[index] || "") ? tokens[index++] : null;
+    return { station, issued, index: station ? index : 0 };
+  }
+
+  function decodeWeatherToken(token, language) {
+    const match = String(token || "").toUpperCase().match(/^([+-]?)(VC)?((?:MI|PR|BC|DR|BL|SH|TS|FZ)?)((?:(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)){0,3})$/);
+    if (!match || (!match[4] && !["TS", "SH"].includes(match[3])) || (match[1] && match[2])) return null;
+    const parts = [];
+    if (match[1]) parts.push(match[1] === "+" ? (language === "en" ? "Heavy" : "Kuvvetli") : (language === "en" ? "Light" : "Hafif"));
+    if (match[2]) parts.push(language === "en" ? "In the vicinity" : "Çevrede");
+    for (const code of (match[3] + match[4]).match(/.{2}/g) || []) parts.push(WX[code]?.[language] || code);
+    return parts.join(" ");
+  }
+
+  function decodeConditions(raw, language, bodyOnly = false) {
     const d = weatherDictionary(language);
-    const tokens = String(raw || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    const tokens = weatherTokens(raw);
     const rows = [];
     const clouds = [];
     const phenomena = [];
 
-    const station = tokens.find(t => /^[A-Z]{4}$/.test(t));
-    if (station) rows.push([d.station, station]);
-    const time = tokens.find(t => /^\d{6}Z$/.test(t));
-    if (time) rows.push([d.observation, `${time.slice(0,2)} ${time.slice(2,4)}:${time.slice(4,6)} UTC`]);
+    const header = bodyOnly ? {index:0} : weatherHeader(tokens);
+    if (header.station) rows.push([d.station, header.station]);
+    if (header.issued) rows.push([d.observation, `${header.issued.slice(0,2)} ${header.issued.slice(2,4)}:${header.issued.slice(4,6)} UTC`]);
+    const body = tokens.slice(header.index);
+    const trend = body.findIndex(t => /^(NOSIG|TEMPO|BECMG|PROB(?:30|40)|FM\d{6})$/.test(t));
+    const conditions = !bodyOnly && trend >= 0 ? body.slice(0,trend) : body;
 
-    for (const token of tokens) {
+    for (const token of conditions) {
       let m = token.match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT$/);
       if (m) {
         const dir = m[1] === "VRB" ? d.variable : `${Number(m[1])}°`;
@@ -116,29 +129,82 @@
 
   function buildInterpretation(data, language) {
     const d = weatherDictionary(language);
+    const all = weatherTokens(data?.metar?.raw);
+    const header = weatherHeader(all);
+    const body = all.slice(header.index);
+    const trend = body.findIndex(t => /^(NOSIG|TEMPO|BECMG|PROB(?:30|40)|FM\d{6})$/.test(t));
+    const tokens = trend < 0 ? body : body.slice(0,trend);
+    if (data?.metar?.available === false || !header.station || !header.issued || tokens.includes("NIL") || !tokens.length) {
+      return [{text:language === "en" ? "No usable METAR; current conditions cannot be interpreted." : "Kullanılabilir METAR yok; mevcut hava yorumlanamadı.",attention:true}];
+    }
     const items = [];
-    const raw = String(data?.metar?.raw || "");
-    const tokens = raw.split(/\s+/).filter(Boolean);
     if (tokens.includes("CAVOK")) items.push({text:d.cavok,attention:false});
-    const wind = tokens.map(t => t.match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT$/)).find(Boolean);
+    const wind = tokens.map(t => t.match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?(KT|MPS)$/)).find(Boolean);
     if (wind) {
-      const speed = Number(wind[2]);
-      if (speed >= 20) items.push({text:`${d.strongWind}: ${speed} kt${wind[4] ? `, ${d.gust} ${Number(wind[4])} kt` : ""}`,attention:true});
-      else if (wind[4] && Number(wind[4]) >= 25) items.push({text:`${d.gust}: ${Number(wind[4])} kt`,attention:true});
+      const factor = wind[5] === "MPS" ? 1.943844 : 1;
+      const speed = Math.round(Number(wind[2])*factor), gust = Math.round(Number(wind[4] || 0)*factor);
+      if (speed >= 20) items.push({text:`${d.strongWind}: ${speed} kt${gust ? `, ${d.gust} ${gust} kt` : ""}`,attention:true});
+      else if (gust >= 25) items.push({text:`${d.gust}: ${gust} kt`,attention:true});
     }
     const vis = tokens.find(t => /^\d{4}$/.test(t));
     if (vis && Number(vis) < 5000) items.push({text:`${d.lowVisibility}: ${Number(vis)} m`,attention:true});
-    const hazardous = tokens.find(t => /TS|FZRA|SN|FG|SQ|FC/.test(t));
-    if (hazardous) items.push({text:`${d.weather}: ${decodeWeatherToken(hazardous, language) || hazardous}`,attention:true});
-    if (!items.length) items.push({text:d.noSignificant,attention:false});
+    const hazardous = tokens.filter(t => decodeWeatherToken(t, language) && /TS|FZ|SN|FG|SQ|FC|GR|GS|PL|VA|SS|DS/.test(t));
+    for (const token of hazardous) items.push({text:`${d.weather}: ${decodeWeatherToken(token, language)}`,attention:true});
+    // Absence of a recognized warning is not an all-clear for flight conditions.
+    if (!items.length) items.push({text:language === "en" ? "No warning found in the decoded groups; review the raw METAR." : "Çözümlenen gruplarda uyarı bulunmadı; ham METAR’ı inceleyin.",attention:false});
     return items;
+  }
+
+  function tafGroups(raw, language) {
+    const tokens = weatherTokens(raw), header = weatherHeader(tokens);
+    if (!header.station || !header.issued || tokens.includes("NIL") || tokens.includes("CNL")) return [];
+    const period = token => {
+      const m = String(token || "").match(/^(\d{2})(\d{2})\/(\d{2})(\d{2})$/);
+      return m ? `${m[1]} ${m[2]}:00–${m[3]} ${m[4]}:00 UTC` : null;
+    };
+    let i = header.index;
+    const validity = period(tokens[i]);
+    if (!validity) return [];
+    i++;
+    const groups = [];
+    let group = {label:`${weatherDictionary(language).validity}: ${validity}`, tokens:[]};
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (/^FM\d{6}$/.test(token) || /^(TEMPO|BECMG|PROB30|PROB40)$/.test(token)) {
+        groups.push(group);
+        let label = token;
+        if (/^FM/.test(token)) label = `FM · ${token.slice(2,4)} ${token.slice(4,6)}:${token.slice(6,8)} UTC`;
+        i++;
+        if (/^PROB/.test(token) && tokens[i] === "TEMPO") label += ` ${tokens[i++]}`;
+        const range = period(tokens[i]);
+        if (range) { label += ` · ${range}`; i++; }
+        group = {label,tokens:[]};
+      } else group.tokens.push(tokens[i++]);
+    }
+    groups.push(group);
+    return groups.map(g => ({label:g.label,raw:g.tokens.join(" ")}));
+  }
+
+  function renderTaf(container, raw, language) {
+    if (!container) return;
+    container.replaceChildren();
+    const groups = tafGroups(raw, language);
+    for (const group of groups) {
+      const child = document.createElement("div");
+      container.appendChild(child);
+      const rows = decodeConditions(group.raw, language, true);
+      // Preserve unsupported groups instead of silently giving them another meaning.
+      if (!rows.length && group.raw) rows.push([language === "en" ? "Raw group" : "Ham grup", group.raw]);
+      renderDecode(child, `TAF · ${group.label}`, rows, language);
+    }
+    container.hidden = !groups.length;
   }
 
   function initWeather() {
     const form = $("weather-search-form");
     const input = $("weather-icao");
     if (!form || !input) return;
-    let language = localStorage.getItem("yulcaribe-weather-language") || "tr";
+    let language = localStorage.getItem("yulcaribe-weather-language") === "en" ? "en" : "tr";
     let lastData = null;
     let controller = null;
 
@@ -157,8 +223,12 @@
       if (!results || !metar || !taf) return;
       metar.textContent = data?.metar?.raw || "METAR bulunamadı.";
       taf.textContent = data?.taf?.raw || "TAF bulunamadı.";
-      renderDecode($("weather-metar-decode"), "METAR", decodeConditions(data?.metar?.raw, language), language);
-      renderDecode($("weather-taf-decode"), "TAF", decodeConditions(data?.taf?.raw, language), language);
+      results.hidden = false;
+      for (const id of ["weather-metar-decode", "weather-taf-decode"]) {
+        const element = $(id); if (element) { element.replaceChildren(); element.hidden = true; }
+      }
+      try { renderDecode($("weather-metar-decode"), "METAR", decodeConditions(data?.metar?.raw, language), language); } catch (error) { console.error("METAR decode", error); }
+      try { renderTaf($("weather-taf-decode"), data?.taf?.raw, language); } catch (error) { console.error("TAF decode", error); }
       const panel = $("weather-interpretation");
       const title = $("weather-interpretation-title");
       const content = $("weather-interpretation-content");
@@ -191,14 +261,16 @@
       if (!/^[A-Z0-9]{4}$/.test(code)) { feedback("4 karakterli ICAO kodu gir.", "error"); return; }
       controller?.abort();
       controller = new AbortController();
+      const requestController = controller;
       feedback(`${code} · yükleniyor`);
       try {
-        const response = await fetch(`/main/api/metartaf.php?icao=${encodeURIComponent(code)}`, {cache:"no-store",signal:controller.signal,headers:{Accept:"application/json"}});
+        const response = await fetch(`/main/api/metartaf.php?icao=${encodeURIComponent(code)}`, {cache:"no-store",signal:requestController.signal,headers:{Accept:"application/json"}});
         const data = await response.json().catch(() => null);
+        if (requestController !== controller || requestController.signal.aborted) return;
         if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
         render(data);
       } catch (error) {
-        if (error?.name === "AbortError") return;
+        if (requestController !== controller || error?.name === "AbortError") return;
         feedback(error?.message || "Veri alınamadı.", "error");
       }
     }
@@ -296,6 +368,7 @@
         const response = await fetch(`/main/api/notam.php?${q}`, {cache:"no-store",signal:controller.signal});
         const payload = await response.json().catch(() => null);
         if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+        currentPage = Number(payload.paging?.page) || 1;
         renderItems(payload); renderPaging(payload);
         if (fields.status) fields.status.textContent = `${String(payload.state || "").toUpperCase()} · ${fmt(payload.atUtc)}`;
       } catch (error) {

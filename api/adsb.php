@@ -1,6 +1,44 @@
 <?php
 declare(strict_types=1);
 
+// These browser-origin checks are defence in depth, not client authentication.
+function ycRejectRequest(int $status, string $message): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(['ok'=>false,'error'=>$message], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+function ycSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || $parts['port'] === 443)
+        && !isset($parts['user']) && !isset($parts['pass']);
+}
+header('Vary: Origin, Sec-Fetch-Site, Referer');
+header('Cross-Origin-Resource-Policy: same-origin');
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+$referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+$fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+    || ($origin !== '' ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+        : !ycSameOrigin($referer))) {
+    ycRejectRequest(403, 'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.');
+}
+foreach ($_GET as $value) {
+    if (!is_string($value) || strlen($value) > 2048 || str_contains($value, "\0")) {
+        ycRejectRequest(400, 'Geçersiz veya çok uzun istek parametresi.');
+    }
+}
+if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET'], true)) {
+    header('Allow: GET');
+    ycRejectRequest(405, 'HTTP method not allowed.');
+}
+if (!in_array(strtolower(trim($_GET['action'] ?? 'feed')), ['feed','status','health'], true)) ycRejectRequest(400, 'Geçersiz action.');
+
+
 header('X-YC-API-Resource: adsb');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, max-age=0');
@@ -10,9 +48,16 @@ const YC_ADSB_SOURCE = 'TheAirTraffic';
 const YC_ADSB_MAX_BYTES = 12000000;
 
 function jsonOut(int $status, array $payload): never {
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('[adsb] JSON response: '.json_last_error_msg());
+        $status = 500;
+        $json = '{"ok":false,"error":"Response could not be encoded."}';
+    }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($status >= 400) header('Cache-Control: no-store, max-age=0');
+    echo $json;
     exit;
 }
 

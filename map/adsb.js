@@ -12,6 +12,7 @@
       let active = false;
       let controller = null;
       let timer = null;
+      let requestVersion = 0, failures = 0;
       let decoder = null;
       let decoderReady = false;
       let sourceClockOffsetMs = 0;
@@ -126,7 +127,7 @@
           item.rendered=shown;item.el.style.display="";item.marker.setLngLat([shown.lon,shown.lat]);item.marker.setRotation(Number.isFinite(shown.heading)?shown.heading:0);
         }
       }
-      function animation(ts){if(ts-lastFrame>=FRAME_MS){lastFrame=ts;renderBuffered(Date.now());}requestAnimationFrame(animation);}
+      function animation(ts){if(!document.hidden && ts-lastFrame>=FRAME_MS){lastFrame=ts;renderBuffered(Date.now());}requestAnimationFrame(animation);}
       function startAnimation(){if(animationStarted)return;animationStarted=true;requestAnimationFrame(animation);}
 
       function setHealth(state){
@@ -137,21 +138,35 @@
         else{health.classList.add("is-loading");if(label)label.textContent="Yükleniyor";}
       }
 
+      function stopRequest(){
+        requestVersion++;
+        clearTimeout(timer); timer=null;
+        controller?.abort(); controller=null;
+      }
       async function load(){
-        clearTimeout(timer);if(!enabled())return;
+        stopRequest();
+        if(!enabled() || document.hidden)return;
         if(map.getZoom()<MIN_ZOOM){timer=setTimeout(load,1200);return;}
-        try{await initDecoder();}catch{setHealth("error");return;}
-        controller?.abort();controller=new AbortController();setHealth(haveSourceClock?"ok":"loading");
-        const b=bbox(.35),box=[b.south,b.north,b.west,b.east].map(v=>Number(v).toFixed(6)).join(",");
+        const version=requestVersion,requestController=new AbortController();
+        controller=requestController;
+        const current=()=>version===requestVersion && enabled() && !document.hidden && !requestController.signal.aborted;
+        setHealth(haveSourceClock?"ok":"loading");
         try{
-          const r=await fetch(`${api.adsb}?action=feed&box=${encodeURIComponent(box)}`,{cache:"no-store",signal:controller.signal});
+          await initDecoder();
+          if(!current())return;
+          const b=bbox(.35),box=[b.south,b.north,b.west,b.east].map(v=>Number(v).toFixed(6)).join(",");
+          const r=await fetch(`${api.adsb}?action=feed&box=${encodeURIComponent(box)}`,{cache:"no-store",signal:requestController.signal});
           if(!r.ok)throw new Error(`HTTP ${r.status}`);
-          const compressed=new Uint8Array(await r.arrayBuffer()),decoded=decoder.decode(compressed),parsed=parseBinCraft(decoded);
+          const buffer=await r.arrayBuffer();
+          if(!current())return;
+          const decoded=decoder.decode(new Uint8Array(buffer)),parsed=parseBinCraft(decoded);
           const sourceNowMs=parsed.now*1000,measured=Date.now()-sourceNowMs;
+          if(!Number.isFinite(sourceNowMs) || sourceNowMs<=0)throw new Error("Invalid ADS-B timestamp");
           sourceClockOffsetMs=haveSourceClock?sourceClockOffsetMs*.85+measured*.15:measured;haveSourceClock=true;
-          currentAircraft=parsed.aircraft;ingest(currentAircraft,sourceNowMs);setStatus("LIVE");setHealth("ok");startAnimation();
-        }catch(e){if(e?.name!=="AbortError"){setStatus("ADS-B ERROR",true);setHealth("error");}}
-        finally{if(enabled())timer=setTimeout(load,REFRESH_MS);}
+          currentAircraft=parsed.aircraft;ingest(currentAircraft,sourceNowMs);failures=0;
+          setStatus("LIVE");setHealth("ok");startAnimation();
+        }catch(e){if(current() && e?.name!=="AbortError"){failures=Math.min(failures+1,4);setStatus("ADS-B ERROR",true);setHealth("error");}}
+        finally{if(current()){controller=null;timer=setTimeout(load,Math.min(30000,REFRESH_MS*2**failures));}}
       }
 
       function setVisibility(){for(const item of markers.values())item.el.style.display=enabled()?"":"none";}
@@ -166,10 +181,11 @@
       }
       function select(hex){const item=markers.get(hex);if(!item)return;const shown=item.rendered||item.data;map.flyTo({center:[shown.lon,shown.lat],zoom:Math.max(map.getZoom(),9)});showAircraftCard(item);}
 
-      enabledInput?.addEventListener("change",()=>{setVisibility();if(enabled())load();else{clearTimeout(timer);setHealth("off");}});
+      enabledInput?.addEventListener("change",()=>{setVisibility();if(enabled())load();else{stopRequest();setHealth("off");}});
+      document.addEventListener("visibilitychange",()=>{if(document.hidden)stopRequest();else if(enabled())load();});
       return {
         init(){startAnimation();},
-        setActive(value){active=Boolean(value);if(active&&enabledInput)enabledInput.checked=true;setVisibility();if(active)load();else{clearTimeout(timer);setHealth("off");}},
+        setActive(value){active=Boolean(value);if(active&&enabledInput)enabledInput.checked=true;setVisibility();if(active)load();else{stopRequest();setHealth("off");}},
         refresh(){if(enabled())load();},
         searchLocal,
         select
