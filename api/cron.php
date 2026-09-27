@@ -269,9 +269,10 @@ function nmsLoggedGeometryWarnings(): array {
 function nmsTextFallbackKind(string $text): ?array {
     $u=strtoupper($text);
     if(preg_match('/\bSEE\s+FDC\s+([0-9]{1,2}\/[0-9]{4})\b/',$u,$m))return['kind'=>'referenced-notam','reference'=>$m[1]];
-    $compact='(?:[0-9]{6}(?:\.[0-9]+)?[NS][0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][0-9]{5}(?:\.[0-9]+)?[EW])';
-    if(preg_match('/\b(?:COORDS?|COORDINATES?)\s*:/',$u) && preg_match_all('/'.$compact.'/',$u,$m)>=3)return['kind'=>'e-text-polygon'];
+    $compact='(?:[0-9]{6}(?:\.[0-9]+)?[NS][ \t]*[0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][ \t]*[0-9]{5}(?:\.[0-9]+)?[EW])';
     $spaced='[0-9]{2}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[NS]\s+[0-9]{3}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[EW]';
+    $polygonCue=preg_match('/(?:\b(?:COORDS?|COORDINATES?)\s*:|\bLATERAL\s+LIMITS?\b|\bAREA\s+FORMED\s+BY\b|\bFLW\s+POINTS\s*:)/',$u)===1;
+    if($polygonCue && preg_match_all('/(?:'.$compact.'|'.$spaced.')/',$u,$m)>=3)return['kind'=>'e-text-polygon'];
     if(preg_match('/\bWI(?:THIN)?\s+[0-9]+(?:\.[0-9]+)?\s*(?:NM|KM|M)\s+OF\s+COORD(?:INATE)?S?\s*:?\s*(?:'.$compact.'|'.$spaced.')/',$u))return['kind'=>'e-text-circle'];
     return null;
 }
