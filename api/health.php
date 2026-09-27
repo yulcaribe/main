@@ -402,7 +402,7 @@ function latestNotams(int $limit): array {
     $stmt=$db->prepare("SELECT nms_id,series,number,year,notam_type,classification,affected_fir,location,icao_location,effective_start,effective_end,effective_end_raw,lower_limit,upper_limit,coordinates_raw,radius_nm,status,last_updated,notam_text,raw_json FROM notams WHERE source='FAA_NMS' AND environment='production' ORDER BY last_updated DESC LIMIT {$limit}");
     $stmt->execute();$items=[];
     while($row=$stmt->fetch()){
-        $ident=strtoupper(trim((string)$row['series'])).trim((string)$row['number']);$year=trim((string)$row['year']);if($year!=='')$ident.='/'.substr($year,-2);
+        $series=strtoupper(trim((string)$row['series']));$number=strtoupper(trim((string)$row['number']));$ident=($number!==''&&$series!==''&&str_starts_with($number,$series))?$number:$series.$number;$year=trim((string)$row['year']);if($year!==''&&!preg_match('/\/\d{2}$/D',$ident))$ident.='/'.substr($year,-2);
         $raw=json_decode((string)($row['raw_json'] ?? ''),true);
         $items[]=['parsed'=>[
             'id'=>$row['nms_id'],'ident'=>$ident ?: $row['nms_id'],'type'=>$row['notam_type'],'classification'=>$row['classification'],
@@ -415,9 +415,9 @@ function latestNotams(int $limit): array {
 }
 
 function logLines(int $lines): array {
-    $dir=dirname(__DIR__,3).'/logs/main/notam';$files=(array)glob($dir.'/nms-*.log');rsort($files);$all=[];
-    foreach(array_slice($files,0,4) as$file){$rows=@file($file,FILE_IGNORE_NEW_LINES);if(!is_array($rows))continue;foreach($rows as$row)$all[]='['.basename($file).'] '.$row;}
-    return array_slice($all,-max(20,min(1000,$lines)));
+    $limit=max(20,min(1000,$lines));$dir=dirname(__DIR__,3).'/logs/main/notam';$files=(array)glob($dir.'/nms-*.log');rsort($files,SORT_STRING);$all=[];
+    foreach(array_slice($files,0,4) as$file){$rows=@file($file,FILE_IGNORE_NEW_LINES);if(!is_array($rows))continue;$rows=array_reverse($rows);foreach($rows as$row){$all[]='['.basename($file).'] '.$row;if(count($all)>=$limit)break 2;}}
+    return $all;
 }
 
 function testFaaSettings(array $nms): bool {

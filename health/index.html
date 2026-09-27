@@ -70,6 +70,8 @@
           </div>
           <div id="health-nms" class="decode-list"></div>
           <pre id="health-nms-detail">Loading…</pre>
+          <div class="plain-block-head"><strong>Unresolved Geometry Issues</strong></div>
+          <div id="health-geometry-issues" class="results"></div>
           <div class="plain-block-head"><strong>Latest NOTAMs</strong></div>
           <div id="health-notam-list" class="results"></div>
           <div class="weather-results">
@@ -91,7 +93,7 @@
             <button id="health-json-download" type="button">Download JSON</button>
           </div>
           <div id="health-log-status" class="status-line" aria-live="polite"></div>
-          <pre id="health-logs">Open this section to load logs.</pre>
+          <pre id="health-logs" style="max-height:460px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;word-break:break-word;">Open this section to load logs.</pre>
         </details>
 
         <details id="health-settings-section" class="plain-block">
@@ -190,13 +192,15 @@
     const jobs = data.jobs || {};
     const cron = local.cronState || {};
     const geometryWarnings = Number(cron.geometryWarnings || 0);
+    const geometryDiagnostics = cron.geometryDiagnostics || {};
+    const unresolvedGeometry = Number(geometryDiagnostics.unresolvedCount || 0);
 
     const apiState = combine(Object.values(files).map(v => v ? "ok" : "error").concat(Object.values(api).map(probeState)));
     const dbState = db.ok ? "ok" : "error";
     const mapState = combine([probeState(net.mapPage), probeState(net.mapScript), probeState(net.maplibre), probeState(net.osm), probeState(api.navdata), probeState(api.notam)]);
     const weatherState = combine([probeState(api.metartaf), probeState(api.wafs), probeState(net.wafsFeed)]);
     const adsbState = probeState(api.adsb);
-    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : geometryWarnings > 0 ? "warn" : "ok";
+    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : unresolvedGeometry > 0 ? "warn" : "ok";
     if (net.faa) notamState = combine([notamState, probeState(net.faa)]);
     const jobsState = jobs.cron?.status || "unknown";
 
@@ -214,10 +218,13 @@
     $("health-nms").innerHTML = [
       row("Environment",esc(nmsConfig.environment || "—")),row("FAA Credentials",nmsConfig.credentialsConfigured ? "Configured" : "Missing"),row("FAA Auth",esc(probeLabel(net.faa))),
       row("Sync Health",esc(local.syncHealth || "—")),row("Sync Age",local.syncAgeSeconds != null ? esc(local.syncAgeSeconds + " s") : "—"),row("Latest NOTAM",esc(local.latestNotamUpdate || "—")),
-      row("Last batch received",cron.received != null ? esc(cron.received) : "—"),row("Last batch processed",cron.processed != null ? esc(cron.processed) : "—"),row("Geometry warnings",esc(geometryWarnings)),
+      row("Last batch received",cron.received != null ? esc(cron.received) : "—"),row("Last batch processed",cron.processed != null ? esc(cron.processed) : "—"),row("Last batch geometry warnings",esc(geometryWarnings)),
+      row("Unresolved geometry issues",esc(unresolvedGeometry)),row("Resolved by text fallback",esc(geometryDiagnostics.resolvedByFallback ?? 0)),row("Resolved by referenced NOTAM",esc(geometryDiagnostics.resolvedByReference ?? 0)),row("Geometry not applicable",esc(geometryDiagnostics.notApplicable ?? 0)),row("Last geometry warning",esc(geometryDiagnostics.lastWarningAt || "—")),
       row("Total",esc(local.counts?.total ?? "—")),row("Active",esc(local.counts?.active ?? "—")),row("Future",esc(local.counts?.future ?? "—")),row("Expired",esc(local.counts?.expired ?? "—")),row("Cancelled",esc(local.counts?.cancelled ?? "—")),row("PERM",esc(local.counts?.permanent ?? "—"))
     ].join("");
-    $("health-nms-detail").textContent = JSON.stringify({state:local.state,cronState:local.cronState},null,2);
+    $("health-nms-detail").textContent = JSON.stringify({state:local.state,cronState:local.cronState,unresolvedGeometryIssues:geometryDiagnostics.unresolved || []},null,2);
+    const unresolvedItems = Array.isArray(geometryDiagnostics.unresolved) ? geometryDiagnostics.unresolved : [];
+    $("health-geometry-issues").innerHTML = unresolvedItems.length ? unresolvedItems.map(issue => `<div class="notam-card"><strong>${esc(issue.ident || issue.nmsId || "Unknown NOTAM")}</strong><span class="notam-location">${esc(issue.location || "")}</span><span class="source-line">${esc(issue.geometryType || "geometry")} · ${esc(issue.time || "")}</span><span class="source-line">${esc(issue.reference ? `Reference ${issue.reference} unresolved` : issue.error || "Geometry unresolved")}</span></div>`).join("") : '<div class="empty-box">No unresolved geometry issues.</div>';
     $("health-jobs").textContent = JSON.stringify(jobs,null,2);
 
     const settings = data.settings || {};
@@ -241,9 +248,22 @@
     } finally { $("health-refresh").disabled = $("health-probe").disabled = false; }
   }
 
+  function healthNotamIdent(item) {
+    const n=item?.raw?.properties?.coreNOTAMData?.notam || {};
+    const series=String(n.series || "").trim().toUpperCase();
+    const number=String(n.number || "").trim().toUpperCase();
+    const year=String(n.year || "").trim();
+    let ident=number && series && number.startsWith(series) ? number : series + number;
+    if (!ident) ident=String(item?.parsed?.ident || item?.parsed?.id || "NOTAM");
+    if (year && !/\/\d{2}$/.test(ident)) ident += "/" + year.slice(-2);
+    return ident;
+  }
+
   async function loadNotams() {
     if (notamsLoaded) return;
-    const data = await req("notams&limit=20"); latestNotams=data.items || []; notamsLoaded=true;
+    const data = await req("notams&limit=20"); latestNotams=data.items || [];
+    latestNotams.forEach(x=>{if(x?.parsed)x.parsed.ident=healthNotamIdent(x);});
+    notamsLoaded=true;
     $("health-notam-list").innerHTML = latestNotams.map((x,i) => `<button type="button" class="notam-card" data-health-notam="${i}"><strong>${esc(x.parsed.ident)}</strong><span class="notam-location">${esc(x.parsed.location || "")}</span><span class="source-line">${esc(x.parsed.status || "")} · ${esc(x.parsed.lastUpdated || "")}</span></button>`).join("") || '<div class="empty-box">No NOTAM records.</div>';
     document.querySelectorAll("[data-health-notam]").forEach(button => button.addEventListener("click", () => {
       const x=latestNotams[Number(button.dataset.healthNotam)];
@@ -253,10 +273,17 @@
   }
 
   async function loadLogs() {
-    const data=await req("logs&lines=300");
+    const data=await req("logs&lines=1000");
     logsLoaded=true;
-    $("health-logs").textContent=(data.lines || []).join("\n") || "No logs.";
-    return data;
+    const lines=(data.lines || []).slice();
+    lines.sort((a,b)=>{
+      const ta=String(a).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
+      const tb=String(b).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
+      return tb.localeCompare(ta);
+    });
+    $("health-logs").textContent=lines.join("\n") || "No logs.";
+    $("health-logs").scrollTop=0;
+    return {...data,lines};
   }
 
   function downloadBlob(name, type, text) {
@@ -284,11 +311,16 @@
   async function downloadLogs(format) {
     const status=$("health-log-status"); status.textContent="Preparing export…";
     const data=await req("logs&lines=1000");
+    const lines=(data.lines || []).slice().sort((a,b)=>{
+      const ta=String(a).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
+      const tb=String(b).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
+      return tb.localeCompare(ta);
+    });
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     if(format==="log"){
-      downloadBlob(`yulcaribe-health-${stamp}.log`,"text/plain;charset=utf-8",(data.lines || []).join("\n")+"\n");
+      downloadBlob(`yulcaribe-health-${stamp}.log`,"text/plain;charset=utf-8",lines.join("\n")+"\n");
     }else{
-      const payload={exportedAt:new Date().toISOString(),health:safeDiagnosticSnapshot(),logRetentionDays:data.retentionDays ?? null,logs:data.lines || []};
+      const payload={exportedAt:new Date().toISOString(),health:safeDiagnosticSnapshot(),logRetentionDays:data.retentionDays ?? null,logs:lines};
       downloadBlob(`yulcaribe-health-${stamp}.json`,"application/json;charset=utf-8",JSON.stringify(payload,null,2));
     }
     status.textContent=`Exported ${data.lines?.length || 0} log lines.`;
