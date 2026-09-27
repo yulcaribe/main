@@ -21,6 +21,7 @@
       const toggle = document.querySelector('[data-nav-layer="notam"]');
       const enabled = () => active && Boolean(toggle?.checked);
       const note = () => document.getElementById("notam-time-status");
+      const statusDot = () => document.getElementById("status-dot");
 
       function selectedLabel() {
         return getTimeIso().slice(0,16).replace("T"," ") + "Z";
@@ -29,6 +30,10 @@
       function setNote(text) {
         const el = note();
         if (el) el.textContent = text;
+      }
+
+      function setLoading(value) {
+        statusDot()?.classList.toggle("loading", Boolean(value));
       }
 
       function visibility() { return enabled() ? "visible" : "none"; }
@@ -146,17 +151,20 @@
       async function load(){
         if(!enabled()){
           controller?.abort();
+          setLoading(false);
           map.getSource(SOURCE)?.setData({type:"FeatureCollection",features:[]});
           return;
         }
         if(map.getZoom()<5){
+          setLoading(false);
           setNote(`${selectedLabel()} · zoom in to load NOTAM geometry.`);
           return;
         }
         controller?.abort();controller=new AbortController();
         const seq=++requestSeq;
         const selected=selectedLabel();
-        setStatus("NOTAM · updating…");
+        setStatus("NOTAM");
+        setLoading(true);
         setNote(`Updating NOTAM view for ${selected}…`);
         const b=bbox(.38);
         const q=new URLSearchParams({action:"map",z:String(Math.floor(map.getZoom())),at:getTimeIso(),...b});
@@ -166,9 +174,10 @@
           if(seq!==requestSeq)return;
           if(!r.ok||!d?.ok||!d?.data)throw new Error(d?.error||`HTTP ${r.status}`);
           map.getSource(SOURCE)?.setData(d.data);
+          setLoading(false);
           const skipped=Number(d.schedule?.outside||d.schedule?.outsideSchedule||0);
           const unknown=Number(d.schedule?.unknown||0);
-          setStatus(unknown>0?"NOTAM · schedule check":"NOTAM");
+          setStatus("NOTAM");
           renderCoverage(d);
           if(skipped>0||unknown>0){
             const base=note()?.textContent||"";
@@ -178,6 +187,7 @@
         }catch(e){
           if(e?.name==="AbortError")return;
           if(seq!==requestSeq)return;
+          setLoading(false);
           setStatus("NOTAM ERROR",true);
           setNote(`NOTAM view could not be updated for ${selected}.`);
         }
@@ -186,7 +196,17 @@
       toggle?.addEventListener("change",()=>{syncVisibility();load();});
       return {
         init(){addLayers();},
-        setActive(value){active=Boolean(value);if(active&&toggle)toggle.checked=true;syncVisibility();if(active)load();else map.getCanvas().style.cursor="";},
+        setActive(value){
+          active=Boolean(value);
+          if(active&&toggle)toggle.checked=true;
+          syncVisibility();
+          if(active)load();
+          else{
+            controller?.abort();
+            setLoading(false);
+            map.getCanvas().style.cursor="";
+          }
+        },
         refresh(){load();},
         searchLocal(){return[];}
       };
