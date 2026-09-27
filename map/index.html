@@ -54,12 +54,13 @@
   </aside>
 
   <aside class="tool-panel" id="notam-panel">
-    <div class="tool-head"><div><strong>NOTAM</strong><small>FAA NMS</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
+    <div class="tool-head"><div><strong>NOTAM</strong><small>FAA.GOV NOTAM SERVICE</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
+    <small class="panel-note" role="note">For situational awareness only. Verify NOTAM information with the responsible local aviation authority and official operational sources before flight operations.</small>
     <label class="master-row"><span>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
     <div class="notam-legend" aria-label="NOTAM renkleri">
       <span><i data-notam-color="aerial"></i>AERIAL SPORT</span><span><i data-notam-color="restricted"></i>DANGER / RESTRICTED</span><span><i data-notam-color="survey"></i>PHOTO / SURVEY</span><span><i data-notam-color="training"></i>TRAINING / MIL</span><span><i data-notam-color="other"></i>OTHER</span>
     </div>
-    <small class="panel-note" id="notam-time-status">Seçilen UTC için geçerli NOTAM geometrileri gösterilir.</small>
+    <small class="panel-note" id="notam-time-status" aria-live="polite">Selected UTC için NOTAM görünümü hazırlanıyor…</small>
   </aside>
 
   <aside class="tool-panel" id="wafs-panel">
@@ -110,7 +111,7 @@
           detail.textContent='Katman motorları hazırlanıyor…';
           await Promise.all([
             load('/main/map/charts.js?v=1'),
-            load('/main/map/notam.js?v=1'),
+            load('/main/map/notam.js?v=2'),
             load('/main/map/adsb.js?v=1'),
             load('/main/map/wafs.js?v=1')
           ]);
