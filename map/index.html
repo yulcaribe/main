@@ -9,6 +9,10 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="/main/app.css?v=2">
   <link rel="stylesheet" href="/main/map/map.css?v=10">
+  <style>
+    @keyframes yc-status-spin{to{transform:rotate(360deg)}}
+    .map-status .dot.loading{width:10px;height:10px;background:transparent!important;border:2px solid #555;border-top-color:#fff;animation:yc-status-spin .7s linear infinite}
+  </style>
 </head>
 <body data-page="map">
   <div id="map" aria-label="Aeronautical navigation map"></div>
@@ -55,7 +59,6 @@
 
   <aside class="tool-panel" id="notam-panel">
     <div class="tool-head"><div><strong>NOTAM</strong><small>FAA.GOV NOTAM SERVICE</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
-    <small class="panel-note" role="note">For situational awareness only. Verify NOTAM information with the responsible local aviation authority and official operational sources before flight operations.</small>
     <label class="master-row"><span>NOTAM katmanı</span><input type="checkbox" data-nav-layer="notam"></label>
     <div class="notam-legend" aria-label="NOTAM renkleri">
       <span><i data-notam-color="aerial"></i>AERIAL SPORT</span><span><i data-notam-color="restricted"></i>DANGER / RESTRICTED</span><span><i data-notam-color="survey"></i>PHOTO / SURVEY</span><span><i data-notam-color="training"></i>TRAINING / MIL</span><span><i data-notam-color="other"></i>OTHER</span>
@@ -111,7 +114,7 @@
           detail.textContent='Katman motorları hazırlanıyor…';
           await Promise.all([
             load('/main/map/charts.js?v=1'),
-            load('/main/map/notam.js?v=2'),
+            load('/main/map/notam.js?v=3'),
             load('/main/map/adsb.js?v=1'),
             load('/main/map/wafs.js?v=1')
           ]);
