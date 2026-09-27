@@ -85,7 +85,12 @@
 
         <details id="health-logs-section" class="plain-block">
           <summary class="plain-block-head"><strong>Logs</strong><span class="badge valid">OK</span></summary>
-          <div class="filter-actions"><button id="health-logs-refresh" type="button">Refresh logs</button></div>
+          <div class="filter-actions">
+            <button id="health-logs-refresh" type="button">Refresh logs</button>
+            <button id="health-logs-download" type="button">Download .log</button>
+            <button id="health-json-download" type="button">Download JSON</button>
+          </div>
+          <div id="health-log-status" class="status-line" aria-live="polite"></div>
           <pre id="health-logs">Open this section to load logs.</pre>
         </details>
 
@@ -183,13 +188,15 @@
     const local = data.nms || {};
     const nmsConfig = data.nmsConfig || {};
     const jobs = data.jobs || {};
+    const cron = local.cronState || {};
+    const geometryWarnings = Number(cron.geometryWarnings || 0);
 
     const apiState = combine(Object.values(files).map(v => v ? "ok" : "error").concat(Object.values(api).map(probeState)));
     const dbState = db.ok ? "ok" : "error";
     const mapState = combine([probeState(net.mapPage), probeState(net.mapScript), probeState(net.maplibre), probeState(net.osm), probeState(api.navdata), probeState(api.notam)]);
     const weatherState = combine([probeState(api.metartaf), probeState(api.wafs), probeState(net.wafsFeed)]);
     const adsbState = probeState(api.adsb);
-    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : "ok";
+    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : geometryWarnings > 0 ? "warn" : "ok";
     if (net.faa) notamState = combine([notamState, probeState(net.faa)]);
     const jobsState = jobs.cron?.status || "unknown";
 
@@ -207,6 +214,7 @@
     $("health-nms").innerHTML = [
       row("Environment",esc(nmsConfig.environment || "—")),row("FAA Credentials",nmsConfig.credentialsConfigured ? "Configured" : "Missing"),row("FAA Auth",esc(probeLabel(net.faa))),
       row("Sync Health",esc(local.syncHealth || "—")),row("Sync Age",local.syncAgeSeconds != null ? esc(local.syncAgeSeconds + " s") : "—"),row("Latest NOTAM",esc(local.latestNotamUpdate || "—")),
+      row("Last batch received",cron.received != null ? esc(cron.received) : "—"),row("Last batch processed",cron.processed != null ? esc(cron.processed) : "—"),row("Geometry warnings",esc(geometryWarnings)),
       row("Total",esc(local.counts?.total ?? "—")),row("Active",esc(local.counts?.active ?? "—")),row("Future",esc(local.counts?.future ?? "—")),row("Expired",esc(local.counts?.expired ?? "—")),row("Cancelled",esc(local.counts?.cancelled ?? "—")),row("PERM",esc(local.counts?.permanent ?? "—"))
     ].join("");
     $("health-nms-detail").textContent = JSON.stringify({state:local.state,cronState:local.cronState},null,2);
@@ -244,7 +252,48 @@
     }));
   }
 
-  async function loadLogs() { const data=await req("logs&lines=300"); logsLoaded=true; $("health-logs").textContent=(data.lines || []).join("\n") || "No logs."; }
+  async function loadLogs() {
+    const data=await req("logs&lines=300");
+    logsLoaded=true;
+    $("health-logs").textContent=(data.lines || []).join("\n") || "No logs.";
+    return data;
+  }
+
+  function downloadBlob(name, type, text) {
+    const blob=new Blob([text],{type});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url; link.download=name; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  function safeDiagnosticSnapshot() {
+    if (!snapshot) return null;
+    return {
+      generatedAt:snapshot.generatedAt || null,
+      php:snapshot.php || null,
+      database:{ok:snapshot.database?.ok ?? null,latencyMs:snapshot.database?.latencyMs ?? null,serverVersion:snapshot.database?.serverVersion ?? null,counts:snapshot.database?.counts || {}},
+      nms:snapshot.nms || null,
+      nmsConfig:{environment:snapshot.nmsConfig?.environment || null,credentialsConfigured:snapshot.nmsConfig?.credentialsConfigured ?? null,managedByEnv:snapshot.nmsConfig?.managedByEnv ?? null},
+      network:snapshot.network || null,
+      apiFiles:snapshot.apiFiles || null,
+      jobs:snapshot.jobs || null
+    };
+  }
+
+  async function downloadLogs(format) {
+    const status=$("health-log-status"); status.textContent="Preparing export…";
+    const data=await req("logs&lines=1000");
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    if(format==="log"){
+      downloadBlob(`yulcaribe-health-${stamp}.log`,"text/plain;charset=utf-8",(data.lines || []).join("\n")+"\n");
+    }else{
+      const payload={exportedAt:new Date().toISOString(),health:safeDiagnosticSnapshot(),logRetentionDays:data.retentionDays ?? null,logs:data.lines || []};
+      downloadBlob(`yulcaribe-health-${stamp}.json`,"application/json;charset=utf-8",JSON.stringify(payload,null,2));
+    }
+    status.textContent=`Exported ${data.lines?.length || 0} log lines.`;
+  }
+
   async function reveal(kind,target) {
     const password=prompt("Enter Health password again:"); if(password===null)return;
     const data=await req("secret-reveal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind,password})});
@@ -260,7 +309,9 @@
   $("health-refresh").onclick=()=>load(false); $("health-probe").onclick=()=>load(true);
   $("health-logout").onclick=async()=>{await req("logout",{method:"POST",body:"{}"});showLogin();};
   $("health-logs-refresh").onclick=()=>loadLogs().catch(e=>alert(e.message));
-  $("health-delta").onclick=async()=>{const b=$("health-delta");b.disabled=true;try{await req("nms-delta",{method:"POST",body:"{}"});notamsLoaded=false;await load(true);await loadNotams();}catch(e){alert(e.message)}finally{b.disabled=false}};
+  $("health-logs-download").onclick=()=>downloadLogs("log").catch(e=>{$("health-log-status").textContent=e.message;});
+  $("health-json-download").onclick=()=>downloadLogs("json").catch(e=>{$("health-log-status").textContent=e.message;});
+  $("health-delta").onclick=async()=>{const b=$("health-delta");b.disabled=true;try{await req("nms-delta",{method:"POST",body:"{}"});notamsLoaded=false;logsLoaded=false;await load(true);await loadNotams();if($("health-logs-section").open)await loadLogs();}catch(e){alert(e.message)}finally{b.disabled=false}};
   $("health-reveal-faa").onclick=()=>reveal("faa-client-secret","health-nms-secret").catch(e=>alert(e.message));
   $("health-reveal-db").onclick=()=>reveal("db-password","health-db-password").catch(e=>alert(e.message));
 
