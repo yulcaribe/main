@@ -1,6 +1,41 @@
 <?php
 declare(strict_types=1);
 
+function ycAdsbSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts)
+        && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || (int)$parts['port'] === 443)
+        && !isset($parts['user'])
+        && !isset($parts['pass']);
+}
+
+function ycAdsbRequireSameOrigin(): void {
+    header('Vary: Origin, Sec-Fetch-Site, Referer');
+    header('Cross-Origin-Resource-Policy: same-origin');
+
+    $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+    $referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    $fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+
+    $blocked = ($fetchSite !== '' && $fetchSite !== 'same-origin')
+        || ($origin !== ''
+            ? !in_array($origin, ['https://yulcaribe.com', 'https://yulcaribe.com:443'], true)
+            : !ycAdsbSameOrigin($referer));
+
+    if ($blocked) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
+        echo json_encode(['ok'=>false,'error'=>'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        exit;
+    }
+}
+
+ycAdsbRequireSameOrigin();
+
 require_once __DIR__ . '/adsbtat.php';
 require_once __DIR__ . '/adsblol.php';
 require_once __DIR__ . '/adsbfi.php';
