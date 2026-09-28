@@ -109,13 +109,11 @@
         try{
           detail.textContent='Harita motoru yükleniyor…';
           try{await load('https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js')}catch(_){await load('https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js')}
-          detail.textContent='ADS-B decoder hazırlanıyor…';
-          try{await load('https://cdn.jsdelivr.net/gh/wiedehopf/tar1090@41e0f8d73202edd2385f2008c73d9792f90a9df9/html/libs/zstddec-tar1090-0.0.5.js','sha384-8vJsGJ+qBUCGpBwnDvVZ6+ZUcOL1HKM2snEFwVS5IDkTpJzBQ8RrfpaB0fKereI5')}catch(_){}
           detail.textContent='Katman motorları hazırlanıyor…';
           await Promise.all([
             load('/main/map/charts.js?v=1'),
             load('/main/map/notam.js?v=3'),
-            load('/main/map/adsb.js?v=1'),
+            load('/main/map/adsb.js?v=2'),
             load('/main/map/wafs.js?v=1')
           ]);
           detail.textContent='Harita hazırlanıyor…';
