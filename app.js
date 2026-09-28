@@ -10,6 +10,18 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
+  const languageApi = window.YCI18N || {
+    getLanguage: () => localStorage.getItem("yulcaribe-language") === "en" ? "en" : "tr",
+    setLanguage: value => {
+      const language = value === "en" ? "en" : "tr";
+      localStorage.setItem("yulcaribe-language", language);
+      document.documentElement.lang = language;
+      window.dispatchEvent(new CustomEvent("yc:languagechange", {detail:{language}}));
+      return language;
+    },
+    t: (key, fallback = "") => fallback || key
+  };
+
   function setActiveNav(name) {
     document.querySelectorAll("[data-nav]").forEach(link => {
       if (link.dataset.nav === name) link.setAttribute("aria-current", "page");
@@ -17,14 +29,42 @@
     });
   }
 
+  function initShell() {
+    const host = document.querySelector(".app-header, .map-topbar");
+    if (!host || host.querySelector(".yc-header-tools")) return;
+    const tools = document.createElement("div");
+    tools.className = "yc-header-tools";
+    tools.innerHTML = `<span class="yc-utc-clock" aria-label="UTC time"></span><a class="yc-weather-link" href="/main/">METAR / TAF</a><div class="yc-language" role="group" aria-label="Language"><button type="button" data-global-language="tr">TR</button><button type="button" data-global-language="en">EN</button></div>`;
+    host.appendChild(tools);
+
+    const clock = tools.querySelector(".yc-utc-clock");
+    const updateClock = () => {
+      const d = new Date();
+      clock.textContent = `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
+    };
+    updateClock();
+    setInterval(updateClock, 15000);
+
+    const syncLanguage = () => {
+      const language = languageApi.getLanguage();
+      document.documentElement.lang = language;
+      document.querySelectorAll("[data-global-language]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.globalLanguage === language)));
+    };
+    tools.querySelectorAll("[data-global-language]").forEach(button => button.addEventListener("click", () => languageApi.setLanguage(button.dataset.globalLanguage)));
+    window.addEventListener("yc:languagechange", syncLanguage);
+    syncLanguage();
+  }
+
   function weatherDictionary(language) {
     const tr = {
-      wind:"Rüzgar",visibility:"Görüş",cloud:"Bulut",weather:"Hava",temperature:"Sıcaklık",dew:"Çiy noktası",qnh:"QNH",station:"İstasyon",observation:"Gözlem",issued:"Yayın",validity:"Geçerlilik",decoded:"Çözümleme",current:"Mevcut",forecast:"Tahmin",interpretation:"Hava Durumu Yorumu",calm:"Sakin",variable:"Değişken",noSignificant:"Belirgin olumsuz hava işareti yok.",lowVisibility:"Düşük görüş",strongWind:"Kuvvetli rüzgar",gust:"Hamle",cavok:"CAVOK: görüş ve bulut şartları belirgin kısıt göstermiyor."
+      wind:"Rüzgar",visibility:"Görüş",cloud:"Bulut",weather:"Hava",temperature:"Sıcaklık",dew:"Çiy noktası",qnh:"QNH",station:"İstasyon",observation:"Gözlem",issued:"Yayın",validity:"Geçerlilik",decoded:"Çözümleme",current:"Mevcut",forecast:"Tahmin",interpretation:"Hava Durumu Yorumu",calm:"Sakin",variable:"Değişken",noSignificant:"Belirgin olumsuz hava işareti yok.",lowVisibility:"Düşük görüş",strongWind:"Kuvvetli rüzgar",gust:"Hamle",cavok:"CAVOK: görüş ve bulut şartları belirgin kısıt göstermiyor.",rawGroup:"Ham grup",noUsableMetar:"Kullanılabilir METAR yok; mevcut hava yorumlanamadı.",noWarning:"Çözümlenen gruplarda uyarı bulunmadı; ham METAR’ı inceleyin."
     };
     const en = {
-      wind:"Wind",visibility:"Visibility",cloud:"Cloud",weather:"Weather",temperature:"Temperature",dew:"Dew point",qnh:"QNH",station:"Station",observation:"Observation",issued:"Issued",validity:"Validity",decoded:"Decoded",current:"Current",forecast:"Forecast",interpretation:"Weather interpretation",calm:"Calm",variable:"Variable",noSignificant:"No significant adverse weather signal detected.",lowVisibility:"Low visibility",strongWind:"Strong wind",gust:"Gust",cavok:"CAVOK: visibility and cloud conditions show no significant restriction."
+      wind:"Wind",visibility:"Visibility",cloud:"Cloud",weather:"Weather",temperature:"Temperature",dew:"Dew point",qnh:"QNH",station:"Station",observation:"Observation",issued:"Issued",validity:"Validity",decoded:"Decoded",current:"Current",forecast:"Forecast",interpretation:"Weather interpretation",calm:"Calm",variable:"Variable",noSignificant:"No significant adverse weather signal detected.",lowVisibility:"Low visibility",strongWind:"Strong wind",gust:"Gust",cavok:"CAVOK: visibility and cloud conditions show no significant restriction.",rawGroup:"Raw group",noUsableMetar:"No usable METAR; current conditions cannot be interpreted.",noWarning:"No warning found in the decoded groups; review the raw METAR."
     };
-    return language === "en" ? en : tr;
+    const base = language === "en" ? en : tr;
+    if (!window.YCI18N?.dictionaries?.[language]) return base;
+    return {...base, ...window.YCI18N.dictionaries[language]};
   }
 
   const WX = {
@@ -64,41 +104,27 @@
     const rows = [];
     const clouds = [];
     const phenomena = [];
-
     const header = bodyOnly ? {index:0} : weatherHeader(tokens);
     if (header.station) rows.push([d.station, header.station]);
     if (header.issued) rows.push([d.observation, `${header.issued.slice(0,2)} ${header.issued.slice(2,4)}:${header.issued.slice(4,6)} UTC`]);
     const body = tokens.slice(header.index);
     const trend = body.findIndex(t => /^(NOSIG|TEMPO|BECMG|PROB(?:30|40)|FM\d{6})$/.test(t));
     const conditions = !bodyOnly && trend >= 0 ? body.slice(0,trend) : body;
-
     for (const token of conditions) {
       let m = token.match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT$/);
       if (m) {
         const dir = m[1] === "VRB" ? d.variable : `${Number(m[1])}°`;
-        const speed = Number(m[2]);
-        rows.push([d.wind, `${dir} · ${speed} kt${m[4] ? ` · ${d.gust} ${Number(m[4])} kt` : ""}`]);
+        rows.push([d.wind, `${dir} · ${Number(m[2])} kt${m[4] ? ` · ${d.gust} ${Number(m[4])} kt` : ""}`]);
         continue;
       }
-      if (token === "CAVOK" || token === "9999") {
-        rows.push([d.visibility, token === "CAVOK" ? "10 km+ · CAVOK" : "10 km+"]);
-        continue;
-      }
-      if (/^\d{4}$/.test(token)) {
-        rows.push([d.visibility, `${Number(token).toLocaleString(language === "tr" ? "tr-TR" : "en-US")} m`]);
-        continue;
-      }
+      if (token === "CAVOK" || token === "9999") { rows.push([d.visibility, token === "CAVOK" ? "10 km+ · CAVOK" : "10 km+"]); continue; }
+      if (/^\d{4}$/.test(token)) { rows.push([d.visibility, `${Number(token).toLocaleString(language === "tr" ? "tr-TR" : "en-US")} m`]); continue; }
       m = token.match(/^(FEW|SCT|BKN|OVC|VV)(\d{3})(CB|TCU)?$/);
-      if (m) {
-        clouds.push(`${m[1]} ${Number(m[2]) * 100} ft${m[3] ? ` ${m[3]}` : ""}`);
-        continue;
-      }
+      if (m) { clouds.push(`${m[1]} ${Number(m[2]) * 100} ft${m[3] ? ` ${m[3]}` : ""}`); continue; }
       m = token.match(/^(M?\d{2})\/(M?\d{2})$/);
       if (m) {
         const num = v => (v.startsWith("M") ? -1 : 1) * Number(v.replace("M", ""));
-        rows.push([d.temperature, `${num(m[1])} °C`]);
-        rows.push([d.dew, `${num(m[2])} °C`]);
-        continue;
+        rows.push([d.temperature, `${num(m[1])} °C`]); rows.push([d.dew, `${num(m[2])} °C`]); continue;
       }
       m = token.match(/^Q(\d{4})$/);
       if (m) { rows.push([d.qnh, `${Number(m[1])} hPa`]); continue; }
@@ -110,23 +136,6 @@
     return rows;
   }
 
-  function renderDecode(container, title, rows, language) {
-    if (!container) return;
-    container.innerHTML = "";
-    if (!rows.length) { container.hidden = true; return; }
-    const section = document.createElement("section");
-    section.className = "decode-section";
-    section.innerHTML = `<h3>${esc(title)} · ${esc(weatherDictionary(language).decoded)}</h3>`;
-    rows.forEach(([label, value]) => {
-      const row = document.createElement("div");
-      row.className = "decode-row";
-      row.innerHTML = `<span>${esc(label)}</span><strong>${esc(value)}</strong>`;
-      section.appendChild(row);
-    });
-    container.appendChild(section);
-    container.hidden = false;
-  }
-
   function buildInterpretation(data, language) {
     const d = weatherDictionary(language);
     const all = weatherTokens(data?.metar?.raw);
@@ -134,9 +143,7 @@
     const body = all.slice(header.index);
     const trend = body.findIndex(t => /^(NOSIG|TEMPO|BECMG|PROB(?:30|40)|FM\d{6})$/.test(t));
     const tokens = trend < 0 ? body : body.slice(0,trend);
-    if (data?.metar?.available === false || !header.station || !header.issued || tokens.includes("NIL") || !tokens.length) {
-      return [{text:language === "en" ? "No usable METAR; current conditions cannot be interpreted." : "Kullanılabilir METAR yok; mevcut hava yorumlanamadı.",attention:true}];
-    }
+    if (data?.metar?.available === false || !header.station || !header.issued || tokens.includes("NIL") || !tokens.length) return [{text:d.noUsableMetar,attention:true}];
     const items = [];
     if (tokens.includes("CAVOK")) items.push({text:d.cavok,attention:false});
     const wind = tokens.map(t => t.match(/^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?(KT|MPS)$/)).find(Boolean);
@@ -150,8 +157,7 @@
     if (vis && Number(vis) < 5000) items.push({text:`${d.lowVisibility}: ${Number(vis)} m`,attention:true});
     const hazardous = tokens.filter(t => decodeWeatherToken(t, language) && /TS|FZ|SN|FG|SQ|FC|GR|GS|PL|VA|SS|DS/.test(t));
     for (const token of hazardous) items.push({text:`${d.weather}: ${decodeWeatherToken(token, language)}`,attention:true});
-    // Absence of a recognized warning is not an all-clear for flight conditions.
-    if (!items.length) items.push({text:language === "en" ? "No warning found in the decoded groups; review the raw METAR." : "Çözümlenen gruplarda uyarı bulunmadı; ham METAR’ı inceleyin.",attention:false});
+    if (!items.length) items.push({text:d.noWarning,attention:false});
     return items;
   }
 
@@ -185,105 +191,133 @@
     return groups.map(g => ({label:g.label,raw:g.tokens.join(" ")}));
   }
 
-  function renderTaf(container, raw, language) {
-    if (!container) return;
-    container.replaceChildren();
-    const groups = tafGroups(raw, language);
-    for (const group of groups) {
-      const child = document.createElement("div");
-      container.appendChild(child);
+  function stationTitle(station) {
+    const left = [station?.icao, station?.iata].filter(Boolean).join(" / ");
+    const name = station?.name || station?.city || "";
+    return [left, name].filter(Boolean).join(" — ") || station?.input || "Station";
+  }
+
+  function decodeRowsHtml(rows) {
+    return rows.map(([label,value]) => `<div class="decode-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+  }
+
+  function tafDecodeHtml(raw, language) {
+    const d = weatherDictionary(language);
+    return tafGroups(raw, language).map(group => {
       const rows = decodeConditions(group.raw, language, true);
-      // Preserve unsupported groups instead of silently giving them another meaning.
-      if (!rows.length && group.raw) rows.push([language === "en" ? "Raw group" : "Ham grup", group.raw]);
-      renderDecode(child, `TAF · ${group.label}`, rows, language);
-    }
-    container.hidden = !groups.length;
+      if (!rows.length && group.raw) rows.push([d.rawGroup, group.raw]);
+      return `<section class="decode-section"><h3>${esc(`TAF · ${group.label}`)}</h3>${decodeRowsHtml(rows)}</section>`;
+    }).join("");
   }
 
   function initWeather() {
-    const form = $("weather-search-form");
-    const input = $("weather-icao");
+    const form = $("weather-search-form"), input = $("weather-stations");
     if (!form || !input) return;
-    let language = localStorage.getItem("yulcaribe-weather-language") === "en" ? "en" : "tr";
+    const metarToggle = $("weather-type-metar"), tafToggle = $("weather-type-taf");
+    let language = languageApi.getLanguage();
     let lastData = null;
     let controller = null;
 
-    const feedback = (text, state = "") => {
-      const el = $("weather-feedback");
-      if (!el) return;
-      el.className = "status-line" + (state ? ` is-${state}` : "");
-      el.textContent = text;
+    const text = (key, fallback) => window.YCI18N?.t(key, fallback) || fallback;
+    const feedback = (message, state = "") => {
+      const el = $("weather-feedback"); if (!el) return;
+      el.className = "status-line" + (state ? ` is-${state}` : ""); el.textContent = message;
+    };
+    const applyLanguage = () => {
+      language = languageApi.getLanguage();
+      document.documentElement.lang = language;
+      $("weather-search-submit") && ($("weather-search-submit").textContent = text("search", language === "en" ? "Search" : "Sorgula"));
+      $("weather-copy") && ($("weather-copy").textContent = text("copy", language === "en" ? "Copy" : "Kopyala"));
+      $("weather-share") && ($("weather-share").textContent = text("share", language === "en" ? "Share" : "Paylaş"));
+      input.placeholder = text("stationInput", language === "en" ? "ICAO / IATA · e.g. LTAI AYT LTFM" : "ICAO / IATA · ör. LTAI AYT LTFM");
+      input.setAttribute("aria-label", input.placeholder);
+      if (lastData) render(lastData);
     };
 
-    const render = data => {
+    function rawPayload(data) {
+      return (data?.stations || []).map(station => {
+        const lines = [];
+        if (data?.requested?.metar && station?.metar?.raw) lines.push(station.metar.raw.trim());
+        if (data?.requested?.taf && station?.taf?.raw) lines.push(station.taf.raw.trim());
+        return lines.join("\n");
+      }).filter(Boolean).join("\n\n");
+    }
+
+    function render(data) {
       lastData = data;
-      const results = $("weather-results");
-      const metar = $("weather-metar");
-      const taf = $("weather-taf");
-      if (!results || !metar || !taf) return;
-      metar.textContent = data?.metar?.raw || "METAR bulunamadı.";
-      taf.textContent = data?.taf?.raw || "TAF bulunamadı.";
-      results.hidden = false;
-      for (const id of ["weather-metar-decode", "weather-taf-decode"]) {
-        const element = $(id); if (element) { element.replaceChildren(); element.hidden = true; }
-      }
-      try { renderDecode($("weather-metar-decode"), "METAR", decodeConditions(data?.metar?.raw, language), language); } catch (error) { console.error("METAR decode", error); }
-      try { renderTaf($("weather-taf-decode"), data?.taf?.raw, language); } catch (error) { console.error("TAF decode", error); }
-      const panel = $("weather-interpretation");
-      const title = $("weather-interpretation-title");
-      const content = $("weather-interpretation-content");
-      if (panel && title && content) {
-        const d = weatherDictionary(language);
-        title.textContent = d.interpretation;
-        content.innerHTML = `<div class="weather-summary-section"><h3>${esc(d.current)}</h3>${buildInterpretation(data, language).map(i => `<div class="weather-summary-item${i.attention ? " is-attention" : ""}">${esc(i.text)}</div>`).join("")}</div>`;
-        panel.hidden = false;
-      }
-      const source = $("weather-source-line");
-      if (source) source.textContent = `Kaynak · ${data?.source || "AviationWeather.gov"}`;
-      results.hidden = false;
-      feedback(`${data?.icao || ""} · ${[data?.metar?.raw ? "METAR" : "", data?.taf?.raw ? "TAF" : ""].filter(Boolean).join(" + ") || "veri yok"}`, data?.metar?.raw || data?.taf?.raw ? "success" : "error");
-    };
+      const raw = $("weather-raw"), decoded = $("weather-decoded"), results = $("weather-results");
+      if (!raw || !decoded || !results) return;
+      const d = weatherDictionary(language);
+      const stations = data?.stations || [];
+      raw.innerHTML = stations.map(station => {
+        const title = stationTitle(station);
+        const parts = [];
+        if (data?.requested?.metar) parts.push(`<section class="weather-product"><strong>METAR</strong><pre>${esc(station?.metar?.raw || text("noMetar", language === "en" ? "METAR unavailable." : "METAR bulunamadı."))}</pre></section>`);
+        if (data?.requested?.taf) parts.push(`<section class="weather-product"><strong>TAF</strong><pre>${esc(station?.taf?.raw || text("noTaf", language === "en" ? "TAF unavailable." : "TAF bulunamadı."))}</pre></section>`);
+        const error = station?.error ? `<div class="status-line is-error">${esc(station.error)}</div>` : "";
+        return `<article class="weather-station"><h2>${esc(title)}</h2>${error}${parts.join("")}</article>`;
+      }).join("") || `<div class="empty-box">${esc(text("noData", language === "en" ? "No data available." : "Veri bulunamadı."))}</div>`;
 
-    document.querySelectorAll("[data-weather-language]").forEach(button => {
-      const sync = () => button.setAttribute("aria-pressed", String(button.dataset.weatherLanguage === language));
-      sync();
-      button.addEventListener("click", () => {
-        language = button.dataset.weatherLanguage === "en" ? "en" : "tr";
-        localStorage.setItem("yulcaribe-weather-language", language);
-        document.querySelectorAll("[data-weather-language]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.weatherLanguage === language)));
-        if (lastData) render(lastData);
-      });
-    });
+      decoded.innerHTML = `<h2>${esc(text("decodedData", language === "en" ? "DECODED" : "ÇÖZÜMLEME"))}</h2>` + stations.map(station => {
+        const blocks = [];
+        if (data?.requested?.metar && station?.metar?.raw) {
+          const rows = decodeConditions(station.metar.raw, language);
+          blocks.push(`<section class="decode-section"><h3>METAR · ${esc(d.decoded)}</h3>${decodeRowsHtml(rows)}</section>`);
+          blocks.push(`<section class="weather-summary-section"><h3>${esc(d.interpretation)}</h3>${buildInterpretation(station, language).map(i => `<div class="weather-summary-item${i.attention ? " is-attention" : ""}">${esc(i.text)}</div>`).join("")}</section>`);
+        }
+        if (data?.requested?.taf && station?.taf?.raw) blocks.push(tafDecodeHtml(station.taf.raw, language));
+        return blocks.length ? `<article class="weather-station weather-station-decoded"><h2>${esc(stationTitle(station))}</h2>${blocks.join("")}</article>` : "";
+      }).join("");
+      decoded.hidden = !decoded.querySelector(".weather-station-decoded");
+      const source = $("weather-source-line"); if (source) source.textContent = `${text("source", language === "en" ? "Source" : "Kaynak")} · ${data?.source || "AviationWeather.gov"}`;
+      results.hidden = false;
+      const usable = rawPayload(data);
+      feedback(`${stations.length} ${language === "en" ? "station" : "istasyon"} · ${[data?.requested?.metar ? "METAR" : "",data?.requested?.taf ? "TAF" : ""].filter(Boolean).join(" + ")}`, usable ? "success" : "error");
+    }
 
-    async function request(codeRaw) {
-      const code = String(codeRaw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
-      input.value = code;
-      if (!/^[A-Z0-9]{4}$/.test(code)) { feedback("4 karakterli ICAO kodu gir.", "error"); return; }
-      controller?.abort();
-      controller = new AbortController();
-      const requestController = controller;
-      feedback(`${code} · yükleniyor`);
+    function normalizeInput(value) {
+      return String(value || "").toUpperCase().replace(/[^A-Z0-9,;\s]/g, "").replace(/\s{2,}/g, " ").slice(0, 100);
+    }
+
+    async function request(rawInput) {
+      const values = normalizeInput(rawInput).split(/[\s,;]+/).filter(Boolean);
+      const unique = [...new Set(values)];
+      if (!unique.length || unique.some(code => !/^[A-Z0-9]{3,4}$/.test(code))) { feedback(text("enterStations", language === "en" ? "Enter 1–10 ICAO or IATA codes." : "1–10 ICAO veya IATA kodu gir."), "error"); return; }
+      if (unique.length > 10) { feedback(text("tooManyStations", language === "en" ? "A maximum of 10 stations can be queried." : "En fazla 10 istasyon sorgulanabilir."), "error"); return; }
+      if (!metarToggle.checked && !tafToggle.checked) { feedback(text("selectProduct", language === "en" ? "At least one of METAR or TAF must be selected." : "METAR veya TAF seçeneklerinden en az biri açık olmalı."), "error"); return; }
+      input.value = unique.join(" ");
+      controller?.abort(); controller = new AbortController(); const requestController = controller;
+      feedback(`${unique.join(" · ")} · ${text("loading", language === "en" ? "Loading" : "Yükleniyor")}`);
+      const query = new URLSearchParams({stations:unique.join(","),metar:metarToggle.checked ? "1" : "0",taf:tafToggle.checked ? "1" : "0"});
       try {
-        const response = await fetch(`/main/api/metartaf.php?icao=${encodeURIComponent(code)}`, {cache:"no-store",signal:requestController.signal,headers:{Accept:"application/json"}});
+        const response = await fetch(`/main/api/metartaf.php?${query}`, {cache:"no-store",signal:requestController.signal,headers:{Accept:"application/json"}});
         const data = await response.json().catch(() => null);
         if (requestController !== controller || requestController.signal.aborted) return;
         if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
         render(data);
       } catch (error) {
         if (requestController !== controller || error?.name === "AbortError") return;
-        feedback(error?.message || "Veri alınamadı.", "error");
+        feedback(error?.message || text("requestFailed", language === "en" ? "Weather data could not be retrieved." : "Hava verisi alınamadı."), "error");
       }
     }
 
-    input.addEventListener("input", () => { input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4); });
+    input.addEventListener("input", () => { input.value = normalizeInput(input.value); });
     form.addEventListener("submit", event => { event.preventDefault(); request(input.value); });
-    document.querySelectorAll("[data-weather-icao]").forEach(button => button.addEventListener("click", () => request(button.dataset.weatherIcao)));
-    document.querySelectorAll("[data-copy-weather]").forEach(button => button.addEventListener("click", async () => {
-      const target = $(button.dataset.copyWeather === "taf" ? "weather-taf" : "weather-metar");
-      const text = target?.textContent?.trim();
-      if (!text || text.includes("bulunamadı")) return;
-      try { await navigator.clipboard.writeText(text); const old = button.textContent; button.textContent = "Kopyalandı"; setTimeout(() => button.textContent = old, 900); } catch (_) {}
-    }));
+    document.querySelectorAll("[data-weather-code]").forEach(button => button.addEventListener("click", () => request(button.dataset.weatherCode)));
+    $("weather-copy")?.addEventListener("click", async () => {
+      const payload = rawPayload(lastData); if (!payload) return;
+      try { await navigator.clipboard.writeText(payload); const button=$("weather-copy"), old=button.textContent; button.textContent=text("copied", language === "en" ? "Copied" : "Kopyalandı"); setTimeout(()=>button.textContent=old,900); } catch (_) {}
+    });
+    $("weather-share")?.addEventListener("click", async () => {
+      const payload = rawPayload(lastData); if (!payload) return;
+      if (navigator.share) {
+        try { await navigator.share({title:"METAR / TAF",text:payload}); } catch (error) { if (error?.name !== "AbortError") feedback(text("shareFailed", language === "en" ? "Share could not be opened." : "Paylaşım açılamadı."), "error"); }
+      } else {
+        try { await navigator.clipboard.writeText(payload); feedback(text("shareFallback", language === "en" ? "Sharing is unavailable; RAW data was copied to the clipboard." : "Paylaşım desteklenmiyor; RAW veri panoya kopyalandı."), "success"); } catch (_) {}
+      }
+    });
+    window.addEventListener("yc:languagechange", applyLanguage);
+    applyLanguage();
   }
 
   function initNotam() {
@@ -389,6 +423,7 @@
     loadFilters().finally(() => load(1));
   }
 
+  initShell();
   if (page === "home") { setActiveNav("home"); initWeather(); }
   if (page === "notam") { setActiveNav("notam"); initNotam(); }
   if (page === "map") setActiveNav("map");
