@@ -37,7 +37,6 @@ if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET']
     ycRejectRequest(405, 'HTTP method not allowed.');
 }
 
-
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, max-age=0');
 header('X-Content-Type-Options: nosniff');
@@ -51,15 +50,83 @@ function out(int $status, array $payload): never {
         $json = '{"ok":false,"error":"Response could not be encoded."}';
     }
     http_response_code($status);
-    header('Content-Type: application/json; charset=utf-8');
     if ($status >= 400) header('Cache-Control: no-store, max-age=0');
     echo $json;
     exit;
 }
 
-function cleanIcao(?string $raw): ?string {
-    $icao = strtoupper(trim((string)$raw));
-    return preg_match('/^[A-Z0-9]{4}$/', $icao) ? $icao : null;
+function boolParam(string $key, bool $default): bool {
+    if (!array_key_exists($key, $_GET)) return $default;
+    return in_array(strtolower(trim((string)$_GET[$key])), ['1','true','yes','on'], true);
+}
+
+function stationTokens(): array {
+    $raw = trim((string)($_GET['stations'] ?? $_GET['icao'] ?? ''));
+    if ($raw === '') out(400, ['ok'=>false,'error'=>'ICAO veya IATA kodu gerekli.']);
+    $parts = preg_split('/[\s,;]+/', strtoupper($raw), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $parts = array_values(array_unique($parts));
+    if (count($parts) > 10) out(400, ['ok'=>false,'error'=>'En fazla 10 istasyon sorgulanabilir.']);
+    foreach ($parts as $code) {
+        if (!preg_match('/^[A-Z0-9]{3,4}$/', $code)) out(400, ['ok'=>false,'error'=>'Geçersiz ICAO/IATA kodu: '.$code]);
+    }
+    return $parts;
+}
+
+function navDb(): ?PDO {
+    static $loaded = false;
+    static $pdo = null;
+    if ($loaded) return $pdo;
+    $loaded = true;
+    if (!extension_loaded('pdo_mysql')) return null;
+    $path = dirname(__DIR__, 3) . '/data.php';
+    if (!is_file($path)) return null;
+    try {
+        $cfg = require $path;
+        if (!is_array($cfg)) return null;
+        foreach (['host','port','database','user','password'] as $key) if (!array_key_exists($key, $cfg)) return null;
+        $pdo = new PDO(
+            sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $cfg['host'], (int)$cfg['port'], $cfg['database']),
+            $cfg['user'],
+            $cfg['password'],
+            [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES=>false]
+        );
+    } catch (Throwable $e) {
+        error_log('[metartaf] nav db: '.$e->getMessage());
+        $pdo = null;
+    }
+    return $pdo;
+}
+
+function resolveStation(string $input): array {
+    $pdo = navDb();
+    $row = null;
+    if ($pdo instanceof PDO) {
+        try {
+            if (strlen($input) === 3) {
+                $stmt = $pdo->prepare("SELECT ident,iata,name,city FROM nav_points WHERE kind='airport' AND UPPER(COALESCE(iata,''))=:code ORDER BY ident LIMIT 1");
+            } else {
+                $stmt = $pdo->prepare("SELECT ident,iata,name,city FROM nav_points WHERE kind='airport' AND UPPER(ident)=:code ORDER BY ident LIMIT 1");
+            }
+            $stmt->execute(['code'=>$input]);
+            $row = $stmt->fetch() ?: null;
+        } catch (Throwable $e) {
+            error_log('[metartaf] airport resolve '.$input.': '.$e->getMessage());
+        }
+    }
+
+    if (strlen($input) === 3) {
+        if (!$row) return ['input'=>$input,'icao'=>null,'iata'=>$input,'name'=>null,'city'=>null,'error'=>'Havalimanı bulunamadı.'];
+        return ['input'=>$input,'icao'=>strtoupper((string)$row['ident']),'iata'=>strtoupper((string)$row['iata']),'name'=>$row['name'] ?: null,'city'=>$row['city'] ?: null,'error'=>null];
+    }
+
+    return [
+        'input'=>$input,
+        'icao'=>$input,
+        'iata'=>$row && $row['iata'] ? strtoupper((string)$row['iata']) : null,
+        'name'=>$row['name'] ?? null,
+        'city'=>$row['city'] ?? null,
+        'error'=>null,
+    ];
 }
 
 function cacheDir(): string {
@@ -67,9 +134,11 @@ function cacheDir(): string {
     if (!is_dir($dir)) @mkdir($dir, 0700, true);
     return $dir;
 }
-
-function cacheRead(string $product, string $icao, int $ttl): ?array {
-    $file = cacheDir() . DIRECTORY_SEPARATOR . $product . '_' . $icao . '.json';
+function batchCacheFile(string $product, array $icaos): string {
+    return cacheDir() . DIRECTORY_SEPARATOR . $product . '_' . sha1(implode(',', $icaos)) . '.json';
+}
+function cacheReadBatch(string $product, array $icaos, int $ttl): ?array {
+    $file = batchCacheFile($product, $icaos);
     if (!is_file($file)) return null;
     $age = time() - (int)@filemtime($file);
     if ($age < 0 || $age > $ttl) return null;
@@ -78,34 +147,30 @@ function cacheRead(string $product, string $icao, int $ttl): ?array {
     $data['cacheHit'] = true;
     return $data;
 }
-
-function cacheWrite(string $product, string $icao, array $payload): void {
-    $file = cacheDir() . DIRECTORY_SEPARATOR . $product . '_' . $icao . '.json';
-    @file_put_contents($file, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+function cacheWriteBatch(string $product, array $icaos, array $payload): void {
+    @file_put_contents(batchCacheFile($product, $icaos), json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
 }
 
-function fetchAwc(string $product, string $icao, int $ttl): array {
-    if ($cached = cacheRead($product, $icao, $ttl)) return $cached;
-    if (!function_exists('curl_init')) {
-        return ['ok'=>false,'available'=>false,'raw'=>null,'source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-    }
+function fetchAwcBatch(string $product, array $icaos, int $ttl): array {
+    if (!$icaos) return ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+    if ($cached = cacheReadBatch($product, $icaos, $ttl)) return $cached;
+    if (!function_exists('curl_init')) return ['ok'=>false,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
 
     $url = 'https://aviationweather.gov/api/data/' . rawurlencode($product)
-        . '?ids=' . rawurlencode($icao) . '&format=raw';
+        . '?ids=' . rawurlencode(implode(',', $icaos)) . '&format=raw';
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS => 2,
         CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 10,
+        CURLOPT_TIMEOUT => 12,
         CURLOPT_ENCODING => '',
         CURLOPT_USERAGENT => 'YulCaribe/1.0 (+https://yulcaribe.com)',
         CURLOPT_HTTPHEADER => ['Accept: text/plain, */*;q=0.8'],
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
-
     $body = curl_exec($ch);
     $errno = curl_errno($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -113,63 +178,95 @@ function fetchAwc(string $product, string $icao, int $ttl): array {
     curl_close($ch);
 
     if ($errno !== 0 || $body === false || ($status !== 204 && ($status < 200 || $status >= 300))) {
-        error_log('[metartaf] '.$product.' '.$icao.' upstream failed: HTTP '.$status.' '.$error);
-        return ['ok'=>false,'available'=>false,'raw'=>null,'source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+        error_log('[metartaf] '.$product.' '.implode(',', $icaos).' upstream failed: HTTP '.$status.' '.$error);
+        return ['ok'=>false,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
     }
-
-    $raw = trim((string)$body);
-    if ($raw !== '' && !preg_match('/\b'.preg_quote($icao, '/').'\b/i', $raw)) {
-        error_log('[metartaf] '.$product.' '.$icao.' response did not contain requested station');
-        return ['ok'=>false,'available'=>false,'raw'=>null,'source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-    }
-
-    $payload = [
-        'ok'=>true,
-        'available'=>$raw !== '',
-        'raw'=>$raw !== '' ? $raw : null,
-        'source'=>'AviationWeather.gov',
-        'transport'=>'HTTPS',
-        'cacheHit'=>false,
-    ];
-    cacheWrite($product, $icao, $payload);
+    $payload = ['ok'=>true,'raw'=>trim((string)$body),'source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+    cacheWriteBatch($product, $icaos, $payload);
     return $payload;
 }
 
-$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-if ($method !== 'GET') {
-    header('Allow: GET');
-    out(405, ['ok'=>false,'error'=>'HTTP method not allowed.']);
+function splitReports(string $raw): array {
+    $raw = trim(str_replace("\r", "", $raw));
+    if ($raw === '') return [];
+    $lines = preg_split('/\n+/', $raw) ?: [];
+    $reports = [];
+    $current = '';
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') continue;
+        $isStart = (bool)preg_match('/^(?:METAR\s+|SPECI\s+|TAF(?:\s+(?:AMD|COR))?\s+)?[A-Z][A-Z0-9]{3}\s+\d{6}Z\b/', $line);
+        if ($isStart && $current !== '') {
+            $reports[] = trim($current);
+            $current = $line;
+        } else {
+            $current = $current === '' ? $line : $current.' '.$line;
+        }
+    }
+    if ($current !== '') $reports[] = trim($current);
+    return $reports;
 }
 
-$icao = cleanIcao($_GET['icao'] ?? null);
-if ($icao === null) out(400, ['ok'=>false,'error'=>'4 karakterli geçerli ICAO kodu gerekli.']);
-
-$metar = fetchAwc('metar', $icao, 60);
-$taf = fetchAwc('taf', $icao, 180);
-
-if (!$metar['ok'] && !$taf['ok']) {
-    out(502, ['ok'=>false,'icao'=>$icao,'error'=>'Hava verisi alınamadı.']);
+function reportForStation(array $reports, string $icao): ?string {
+    foreach ($reports as $report) {
+        if (preg_match('/\b'.preg_quote($icao, '/').'\s+\d{6}Z\b/i', $report)) return trim($report);
+    }
+    return null;
 }
 
-out(200, [
+$tokens = stationTokens();
+$wantMetar = boolParam('metar', true);
+$wantTaf = boolParam('taf', true);
+if (!$wantMetar && !$wantTaf) out(400, ['ok'=>false,'error'=>'METAR veya TAF seçeneklerinden en az biri gerekli.']);
+
+$stations = [];
+$seenIcao = [];
+foreach ($tokens as $token) {
+    $station = resolveStation($token);
+    $icao = $station['icao'];
+    if ($icao !== null && isset($seenIcao[$icao])) continue;
+    if ($icao !== null) $seenIcao[$icao] = true;
+    $stations[] = $station;
+}
+$icaos = array_values(array_map(fn($s) => $s['icao'], array_filter($stations, fn($s) => !empty($s['icao']))));
+
+$metarBatch = $wantMetar ? fetchAwcBatch('metar', $icaos, 60) : ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+$tafBatch = $wantTaf ? fetchAwcBatch('taf', $icaos, 180) : ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+if (($wantMetar && !$metarBatch['ok']) && ($wantTaf && !$tafBatch['ok'])) out(502, ['ok'=>false,'error'=>'Hava verisi alınamadı.']);
+if ($wantMetar && !$wantTaf && !$metarBatch['ok']) out(502, ['ok'=>false,'error'=>'METAR verisi alınamadı.']);
+if ($wantTaf && !$wantMetar && !$tafBatch['ok']) out(502, ['ok'=>false,'error'=>'TAF verisi alınamadı.']);
+
+$metarReports = splitReports((string)$metarBatch['raw']);
+$tafReports = splitReports((string)$tafBatch['raw']);
+foreach ($stations as &$station) {
+    $icao = $station['icao'];
+    if ($icao === null) {
+        $station['metar'] = $wantMetar ? ['available'=>false,'raw'=>null,'source'=>'AviationWeather.gov','transport'=>'HTTPS'] : null;
+        $station['taf'] = $wantTaf ? ['available'=>false,'raw'=>null,'source'=>'AviationWeather.gov','transport'=>'HTTPS'] : null;
+        continue;
+    }
+    if ($wantMetar) {
+        $raw = $metarBatch['ok'] ? reportForStation($metarReports, $icao) : null;
+        $station['metar'] = ['available'=>$raw !== null,'raw'=>$raw,'source'=>'AviationWeather.gov','transport'=>'HTTPS'];
+    } else $station['metar'] = null;
+    if ($wantTaf) {
+        $raw = $tafBatch['ok'] ? reportForStation($tafReports, $icao) : null;
+        $station['taf'] = ['available'=>$raw !== null,'raw'=>$raw,'source'=>'AviationWeather.gov','transport'=>'HTTPS'];
+    } else $station['taf'] = null;
+}
+unset($station);
+
+$payload = [
     'ok'=>true,
-    'icao'=>$icao,
     'source'=>'AviationWeather.gov',
     'fetchedAt'=>gmdate('c'),
-    'metar'=>[
-        'available'=>(bool)$metar['available'],
-        'raw'=>$metar['raw'],
-        'source'=>$metar['source'],
-        'transport'=>$metar['transport'],
-    ],
-    'taf'=>[
-        'available'=>(bool)$taf['available'],
-        'raw'=>$taf['raw'],
-        'source'=>$taf['source'],
-        'transport'=>$taf['transport'],
-    ],
-    'cache'=>[
-        'metarHit'=>(bool)$metar['cacheHit'],
-        'tafHit'=>(bool)$taf['cacheHit'],
-    ],
-]);
+    'requested'=>['metar'=>$wantMetar,'taf'=>$wantTaf],
+    'stations'=>$stations,
+    'cache'=>['metarHit'=>(bool)$metarBatch['cacheHit'],'tafHit'=>(bool)$tafBatch['cacheHit']],
+];
+if (count($stations) === 1 && !empty($stations[0]['icao'])) {
+    $payload['icao'] = $stations[0]['icao'];
+    $payload['metar'] = $stations[0]['metar'];
+    $payload['taf'] = $stations[0]['taf'];
+}
+out(200, $payload);
