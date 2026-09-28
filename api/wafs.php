@@ -17,6 +17,44 @@ function ycSameOrigin(string $url): bool {
         && (!isset($parts['port']) || $parts['port'] === 443)
         && !isset($parts['user']) && !isset($parts['pass']);
 }
+function ycRateLimit(string $bucket, float $perSecond, int $burst): void {
+    $ip=(string)($_SERVER['REMOTE_ADDR']??'');
+    $packed=@inet_pton($ip);
+    $identity=$packed===false?'unknown':bin2hex(strlen($packed)===16?substr($packed,0,8):$packed);
+    $key=hash('sha256',$identity);
+    $dir=rtrim(sys_get_temp_dir(),DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'yulcaribe_nms';
+    if (is_link($dir) || (!is_dir($dir) && !@mkdir($dir,0700,true) && !is_dir($dir))) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $path=$dir.DIRECTORY_SEPARATOR.'limit_'.$bucket.'_'.$key[0].'.json';
+    if (is_link($path)) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $handle=@fopen($path,'c+b');
+    if (!$handle) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    @chmod($path,0600);$locked=false;$retry=0;$failed=false;
+    try {
+        for($i=0;$i<25;$i++){if(flock($handle,LOCK_EX|LOCK_NB)){$locked=true;break;}usleep(2000);}
+        if(!$locked) throw new RuntimeException('Limiter busy.');
+        $raw=stream_get_contents($handle,262145);
+        if($raw===false || strlen($raw)>262144) throw new RuntimeException('Limiter state too large.');
+        $state=$raw===''?[]:json_decode($raw,true);
+        if(!is_array($state)) throw new RuntimeException('Invalid limiter state.');
+        $now=microtime(true);
+        foreach($state as $id=>$value) if(!is_array($value) || ($now-(float)($value['at']??0))>1800) unset($state[$id]);
+        if(!isset($state[$key]) && count($state)>=512){$retry=60;}
+        else {
+            $old=$state[$key]??['tokens'=>$burst,'at'=>$now];
+            $tokens=min((float)$burst,(float)$old['tokens']+max(0.0,$now-(float)$old['at'])*$perSecond);
+            if($tokens<1.0)$retry=max(1,(int)ceil((1.0-$tokens)/$perSecond));
+            else $tokens-=1.0;
+            $state[$key]=['tokens'=>$tokens,'at'=>$now];
+            $json=json_encode($state,JSON_THROW_ON_ERROR);
+            rewind($handle);
+            if(!ftruncate($handle,0) || fwrite($handle,$json)!==strlen($json) || !fflush($handle)) throw new RuntimeException('Limiter write failed.');
+        }
+    } catch(Throwable $e) { error_log('[rate-limit] '.$e->getMessage());$failed=true; }
+    finally { if($locked)flock($handle,LOCK_UN);fclose($handle); }
+    if($failed){header('Retry-After: 1');ycRejectRequest(503,'İstek kontrolü kullanılamıyor; tekrar deneyin.');}
+    if($retry){header('Retry-After: '.$retry);ycRejectRequest(429,'Çok sık istek. '.$retry.' saniye sonra tekrar deneyin.');}
+}
+
 header('Vary: Origin, Sec-Fetch-Site, Referer');
 header('Cross-Origin-Resource-Policy: same-origin');
 $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
@@ -40,6 +78,7 @@ if (!in_array(strtolower(trim($_GET['action'] ?? 'image')), ['image','status','h
 
 
 header('X-YC-API-Resource: wafs');
+ycRateLimit('wafs',2,20);
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: private, max-age=900');
 
@@ -105,7 +144,7 @@ function fetchPng(string $url, bool $useCache = true): ?string {
     if (!function_exists('curl_init')) return null;
     $remaining = YC_WAFS_BUDGET - (microtime(true) - $ycWafsStarted);
     if ($remaining <= 0.4) return null;
-    if ($useCache && ($cached = cacheRead($url, 21600)) !== null) return $cached;
+    if ($useCache && ($cached = cacheRead($url, 1800)) !== null) return $cached;
 
     $body = '';
     $ch = curl_init($url);

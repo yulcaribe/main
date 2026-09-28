@@ -17,6 +17,44 @@ function ycSameOrigin(string $url): bool {
         && (!isset($parts['port']) || $parts['port'] === 443)
         && !isset($parts['user']) && !isset($parts['pass']);
 }
+function ycRateLimit(string $bucket, float $perSecond, int $burst): void {
+    $ip=(string)($_SERVER['REMOTE_ADDR']??'');
+    $packed=@inet_pton($ip);
+    $identity=$packed===false?'unknown':bin2hex(strlen($packed)===16?substr($packed,0,8):$packed);
+    $key=hash('sha256',$identity);
+    $dir=rtrim(sys_get_temp_dir(),DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'yulcaribe_nms';
+    if (is_link($dir) || (!is_dir($dir) && !@mkdir($dir,0700,true) && !is_dir($dir))) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $path=$dir.DIRECTORY_SEPARATOR.'limit_'.$bucket.'_'.$key[0].'.json';
+    if (is_link($path)) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $handle=@fopen($path,'c+b');
+    if (!$handle) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    @chmod($path,0600);$locked=false;$retry=0;$failed=false;
+    try {
+        for($i=0;$i<25;$i++){if(flock($handle,LOCK_EX|LOCK_NB)){$locked=true;break;}usleep(2000);}
+        if(!$locked) throw new RuntimeException('Limiter busy.');
+        $raw=stream_get_contents($handle,262145);
+        if($raw===false || strlen($raw)>262144) throw new RuntimeException('Limiter state too large.');
+        $state=$raw===''?[]:json_decode($raw,true);
+        if(!is_array($state)) throw new RuntimeException('Invalid limiter state.');
+        $now=microtime(true);
+        foreach($state as $id=>$value) if(!is_array($value) || ($now-(float)($value['at']??0))>1800) unset($state[$id]);
+        if(!isset($state[$key]) && count($state)>=512){$retry=60;}
+        else {
+            $old=$state[$key]??['tokens'=>$burst,'at'=>$now];
+            $tokens=min((float)$burst,(float)$old['tokens']+max(0.0,$now-(float)$old['at'])*$perSecond);
+            if($tokens<1.0)$retry=max(1,(int)ceil((1.0-$tokens)/$perSecond));
+            else $tokens-=1.0;
+            $state[$key]=['tokens'=>$tokens,'at'=>$now];
+            $json=json_encode($state,JSON_THROW_ON_ERROR);
+            rewind($handle);
+            if(!ftruncate($handle,0) || fwrite($handle,$json)!==strlen($json) || !fflush($handle)) throw new RuntimeException('Limiter write failed.');
+        }
+    } catch(Throwable $e) { error_log('[rate-limit] '.$e->getMessage());$failed=true; }
+    finally { if($locked)flock($handle,LOCK_UN);fclose($handle); }
+    if($failed){header('Retry-After: 1');ycRejectRequest(503,'İstek kontrolü kullanılamıyor; tekrar deneyin.');}
+    if($retry){header('Retry-After: '.$retry);ycRejectRequest(429,'Çok sık istek. '.$retry.' saniye sonra tekrar deneyin.');}
+}
+
 header('Vary: Origin, Sec-Fetch-Site, Referer');
 header('Cross-Origin-Resource-Policy: same-origin');
 $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
@@ -38,9 +76,12 @@ if (!in_array(strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET']
 }
 
 header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-store, max-age=0');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
 header('X-Content-Type-Options: nosniff');
 header('X-YC-API-Resource: metartaf');
+ycRateLimit('metartaf',2,30);
 
 function out(int $status, array $payload): never {
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
@@ -129,61 +170,66 @@ function resolveStation(string $input): array {
     ];
 }
 
-function cacheDir(): string {
-    $dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'yulcaribe_metartaf';
-    if (!is_dir($dir)) @mkdir($dir, 0700, true);
-    return $dir;
-}
-function batchCacheFile(string $product, array $icaos): string {
-    return cacheDir() . DIRECTORY_SEPARATOR . $product . '_' . sha1(implode(',', $icaos)) . '.json';
-}
-function cacheReadBatch(string $product, array $icaos, int $ttl): ?array {
-    $file = batchCacheFile($product, $icaos);
-    if (!is_file($file)) return null;
-    $age = time() - (int)@filemtime($file);
-    if ($age < 0 || $age > $ttl) return null;
-    $data = json_decode((string)@file_get_contents($file), true);
-    if (!is_array($data)) return null;
-    $data['cacheHit'] = true;
-    return $data;
-}
-function cacheWriteBatch(string $product, array $icaos, array $payload): void {
-    @file_put_contents(batchCacheFile($product, $icaos), json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
-}
-
-function fetchAwcBatch(string $product, array $icaos, int $ttl): array {
-    if (!$icaos) return ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-    if ($cached = cacheReadBatch($product, $icaos, $ttl)) return $cached;
-    if (!function_exists('curl_init')) return ['ok'=>false,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-
-    $url = 'https://aviationweather.gov/api/data/' . rawurlencode($product)
-        . '?ids=' . rawurlencode(implode(',', $icaos)) . '&format=raw';
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 2,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 12,
-        CURLOPT_ENCODING => '',
-        CURLOPT_USERAGENT => 'YulCaribe/1.0 (+https://yulcaribe.com)',
-        CURLOPT_HTTPHEADER => ['Accept: text/plain, */*;q=0.8'],
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2,
-    ]);
-    $body = curl_exec($ch);
-    $errno = curl_errno($ch);
-    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-
-    if ($errno !== 0 || $body === false || ($status !== 204 && ($status < 200 || $status >= 300))) {
-        error_log('[metartaf] '.$product.' '.implode(',', $icaos).' upstream failed: HTTP '.$status.' '.$error);
-        return ['ok'=>false,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+// Remove only this endpoint's obsolete weather cache. Never read or rewrite it.
+function removeLegacyWeatherCache(): void {
+    $dir=rtrim(sys_get_temp_dir(),DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'yulcaribe_metartaf';
+    if (!is_dir($dir) || is_link($dir)) return;
+    $seen=0;
+    try { foreach (new DirectoryIterator($dir) as $file) {
+        if ($file->isDot()) continue;
+        if (++$seen>100) break;
+        if ($file->isFile() && !$file->isLink() && preg_match('/^(?:metar|taf)_[A-Za-z0-9_-]+\.json$/D',$file->getFilename())) @unlink($file->getPathname());
     }
-    $payload = ['ok'=>true,'raw'=>trim((string)$body),'source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-    cacheWriteBatch($product, $icaos, $payload);
-    return $payload;
+    } catch(Throwable $e) { error_log('[metartaf-cleanup] '.$e->getMessage()); }
+    @rmdir($dir);
+}
+
+function fetchAwcProducts(array $icaos, array $products): array {
+    $results=[];
+    foreach ($products as $product) $results[$product]=['ok'=>!$icaos,'raw'=>'','fetchedAt'=>null];
+    if (!$icaos || !function_exists('curl_multi_init')) return $results;
+    $multi=curl_multi_init();$handles=[];$bodies=[];
+    try {
+        foreach ($products as $product) {
+            if (!in_array($product,['metar','taf'],true)) throw new InvalidArgumentException('Invalid weather product.');
+            $bodies[$product]='';
+            $url='https://aviationweather.gov/api/data/'.$product.'?ids='.rawurlencode(implode(',',$icaos)).'&format=raw';
+            $ch=curl_init($url);
+            curl_setopt_array($ch,[
+                CURLOPT_RETURNTRANSFER=>false,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>2,
+                CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_REDIR_PROTOCOLS=>CURLPROTO_HTTPS,
+                CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>12,CURLOPT_ENCODING=>'',
+                CURLOPT_USERAGENT=>'YulCaribe/1.0 (+https://yulcaribe.com)',
+                CURLOPT_HTTPHEADER=>['Accept: text/plain','Cache-Control: no-cache, no-store, max-age=0','Pragma: no-cache'],
+                CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,
+                CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk) use (&$bodies,$product):int {
+                    if (strlen($bodies[$product])+strlen($chunk)>1048576) return 0;
+                    $bodies[$product].=$chunk;return strlen($chunk);
+                },
+            ]);
+            $handles[$product]=$ch;curl_multi_add_handle($multi,$ch);
+        }
+        do {
+            $status=curl_multi_exec($multi,$running);
+            if ($status!==CURLM_OK) throw new RuntimeException('Weather HTTP transport failed.');
+            if ($running && curl_multi_select($multi,.25)===-1) usleep(10000);
+        } while($running);
+        foreach ($handles as $product=>$ch) {
+            $status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);
+            if (curl_errno($ch)!==0 || !in_array($status,[200,204],true)) {
+                error_log('[metartaf] '.$product.' upstream HTTP '.$status.' '.curl_error($ch));
+                continue;
+            }
+            $raw=$status===204?'':trim($bodies[$product]);
+            // HTML/error pages must not masquerade as successful empty reports.
+            if ($raw!=='' && !preg_match('/^(?:METAR\s+|SPECI\s+|TAF(?:\s+(?:AMD|COR))?\s+)?[A-Z][A-Z0-9]{3}\s+\d{6}Z\b/',$raw)) {
+                error_log('[metartaf] '.$product.' unexpected report format');continue;
+            }
+            $results[$product]=['ok'=>true,'raw'=>$raw,'fetchedAt'=>gmdate('c')];
+        }
+    } catch(Throwable $e) { error_log('[metartaf] '.$e->getMessage()); }
+    finally { foreach($handles as $ch){curl_multi_remove_handle($multi,$ch);curl_close($ch);}curl_multi_close($multi); }
+    return $results;
 }
 
 function splitReports(string $raw): array {
@@ -230,8 +276,11 @@ foreach ($tokens as $token) {
 }
 $icaos = array_values(array_map(fn($s) => $s['icao'], array_filter($stations, fn($s) => !empty($s['icao']))));
 
-$metarBatch = $wantMetar ? fetchAwcBatch('metar', $icaos, 60) : ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
-$tafBatch = $wantTaf ? fetchAwcBatch('taf', $icaos, 180) : ['ok'=>true,'raw'=>'','source'=>'AviationWeather.gov','transport'=>'HTTPS','cacheHit'=>false];
+removeLegacyWeatherCache();
+$products=array_values(array_filter([$wantMetar?'metar':null,$wantTaf?'taf':null]));
+$fresh=fetchAwcProducts($icaos,$products);
+$metarBatch=$fresh['metar']??['ok'=>true,'raw'=>'','fetchedAt'=>null];
+$tafBatch=$fresh['taf']??['ok'=>true,'raw'=>'','fetchedAt'=>null];
 if (($wantMetar && !$metarBatch['ok']) && ($wantTaf && !$tafBatch['ok'])) out(502, ['ok'=>false,'error'=>'Hava verisi alınamadı.']);
 if ($wantMetar && !$wantTaf && !$metarBatch['ok']) out(502, ['ok'=>false,'error'=>'METAR verisi alınamadı.']);
 if ($wantTaf && !$wantMetar && !$tafBatch['ok']) out(502, ['ok'=>false,'error'=>'TAF verisi alınamadı.']);
@@ -262,7 +311,7 @@ $payload = [
     'fetchedAt'=>gmdate('c'),
     'requested'=>['metar'=>$wantMetar,'taf'=>$wantTaf],
     'stations'=>$stations,
-    'cache'=>['metarHit'=>(bool)$metarBatch['cacheHit'],'tafHit'=>(bool)$tafBatch['cacheHit']],
+    'receivedAt'=>['metar'=>$metarBatch['fetchedAt'],'taf'=>$tafBatch['fetchedAt']],
 ];
 if (count($stations) === 1 && !empty($stations[0]['icao'])) {
     $payload['icao'] = $stations[0]['icao'];

@@ -17,6 +17,46 @@ function ycSameOrigin(string $url): bool {
         && (!isset($parts['port']) || $parts['port'] === 443)
         && !isset($parts['user']) && !isset($parts['pass']);
 }
+function ycRateLimit(string $bucket, float $perSecond, int $burst): void {
+    $ip=(string)($_SERVER['REMOTE_ADDR']??'');
+    $packed=@inet_pton($ip);
+    $identity=$packed===false?'unknown':bin2hex(strlen($packed)===16?substr($packed,0,8):$packed);
+    $key=hash('sha256',$identity);
+    $dir=rtrim(sys_get_temp_dir(),DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'yulcaribe_nms';
+    if (is_link($dir) || (!is_dir($dir) && !@mkdir($dir,0700,true) && !is_dir($dir))) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $path=$dir.DIRECTORY_SEPARATOR.'limit_'.$bucket.'_'.$key[0].'.json';
+    if (is_link($path)) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    $handle=@fopen($path,'c+b');
+    if (!$handle) ycRejectRequest(503,'İstek kontrolü kullanılamıyor.');
+    @chmod($path,0600);$locked=false;$retry=0;$failed=false;
+    try {
+        for($i=0;$i<25;$i++){if(flock($handle,LOCK_EX|LOCK_NB)){$locked=true;break;}usleep(2000);}
+        if(!$locked) throw new RuntimeException('Limiter busy.');
+        $raw=stream_get_contents($handle,262145);
+        if($raw===false || strlen($raw)>262144) throw new RuntimeException('Limiter state too large.');
+        $state=$raw===''?[]:json_decode($raw,true);
+        if(!is_array($state)) throw new RuntimeException('Invalid limiter state.');
+        $now=microtime(true);
+        foreach($state as $id=>$value) if(!is_array($value) || ($now-(float)($value['at']??0))>1800) unset($state[$id]);
+        if(!isset($state[$key]) && count($state)>=512){$retry=60;}
+        else {
+            $old=$state[$key]??['tokens'=>$burst,'at'=>$now];
+            $tokens=min((float)$burst,(float)$old['tokens']+max(0.0,$now-(float)$old['at'])*$perSecond);
+            if($tokens<1.0)$retry=max(1,(int)ceil((1.0-$tokens)/$perSecond));
+            else $tokens-=1.0;
+            $state[$key]=['tokens'=>$tokens,'at'=>$now];
+            $json=json_encode($state,JSON_THROW_ON_ERROR);
+            rewind($handle);
+            if(!ftruncate($handle,0) || fwrite($handle,$json)!==strlen($json) || !fflush($handle)) throw new RuntimeException('Limiter write failed.');
+        }
+    } catch(Throwable $e) { error_log('[rate-limit] '.$e->getMessage());$failed=true; }
+    finally { if($locked)flock($handle,LOCK_UN);fclose($handle); }
+    if($failed){header('Retry-After: 1');ycRejectRequest(503,'İstek kontrolü kullanılamıyor; tekrar deneyin.');}
+    if($retry){header('Retry-After: '.$retry);ycRejectRequest(429,'Çok sık istek. '.$retry.' saniye sonra tekrar deneyin.');}
+}
+
+// Cron reuses the exact map geometry/reference parsers without running HTTP dispatch.
+if (PHP_SAPI !== 'cli') {
 header('Vary: Origin, Sec-Fetch-Site, Referer');
 header('Cross-Origin-Resource-Policy: same-origin');
 $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
@@ -43,6 +83,8 @@ header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, max-age=0');
 header('X-YC-API-Resource: notam');
+ycRateLimit('notam',10,120);
+}
 
 const NOTAM_RETENTION_DAYS = 3;
 
@@ -136,7 +178,7 @@ function identKey(array $row): ?string {
 function columns(bool $text = true, bool $geometry = false): string {
     $cols = [
         'n.nms_id','n.series','n.number','n.year','n.notam_type','n.classification','n.affected_fir',
-        'n.location','n.icao_location','n.selection_code','n.traffic','n.purpose','n.scope',
+        'n.location','n.icao_location','n.account_id','n.selection_code','n.traffic','n.purpose','n.scope',
         'n.minimum_fl','n.maximum_fl','n.effective_start','n.effective_end','n.effective_end_raw','n.estimated',
         'n.schedule','n.lower_limit','n.upper_limit','n.coordinates_raw','n.radius_nm','n.status','n.last_updated'
     ];
@@ -340,55 +382,59 @@ function collectReplacementStrings(mixed $node, array &$out, bool $replacementCo
 }
 
 function replacementTargetKey(array $row): ?string {
-    $current=identKey($row);
-    foreach ([(string)($row['notam_text'] ?? ''),(string)($row['raw_json'] ?? '')] as $source) {
-        if ($source !== '' && preg_match('/\bNOTAMR\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$source,$m)) {
-            $candidate=strtoupper($m[1]);
-            if ($candidate !== $current) return $candidate;
-        }
-    }
-    $raw=(string)($row['raw_json'] ?? '');
-    if ($raw !== '') {
-        $json=json_decode($raw,true);
-        if (is_array($json)) {
-            $strings=[]; collectReplacementStrings($json,$strings,false);
-            foreach ($strings as $text) {
-                if (preg_match('/\b([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)) {
-                    $candidate=strtoupper($m[1]);
-                    if ($candidate !== $current) return $candidate;
-                }
-            }
-        }
-    }
-    return null;
+    $text=(string)($row['notam_text']??'');
+    return preg_match('/\bNOTAMR\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)&&strtoupper($m[1])!==identKey($row)?strtoupper($m[1]):null;
 }
 
 function cancellationTargetKey(array $row): ?string {
-    $current=identKey($row);
-    foreach ([(string)($row['notam_text'] ?? ''),(string)($row['raw_json'] ?? '')] as $source) {
-        if ($source !== '' && preg_match('/\bNOTAMC\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$source,$m)) {
-            $candidate=strtoupper($m[1]);
-            if ($candidate !== $current) return $candidate;
-        }
+    $text=(string)($row['notam_text']??'');
+    return preg_match('/\bNOTAMC\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)&&strtoupper($m[1])!==identKey($row)?strtoupper($m[1]):null;
+}
+function notamIssued(array $row): ?int {
+    $raw=json_decode((string)($row['raw_json']??''),true);
+    $issued=$raw['properties']['coreNOTAMData']['notam']['issued']??null;
+    if(!is_string($issued)||!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/D',$issued))return null;
+    try{$d=new DateTimeImmutable($issued);if(DateTimeImmutable::getLastErrors()!==false)return null;return $d->getTimestamp();}catch(Throwable){return null;}
+}
+function referenceChronology(array $event,array $target): bool {
+    $issued=notamIssued($event);$previous=notamIssued($target);
+    if($issued===null||$previous===null||$previous>=$issued||strtoupper((string)($target['notam_type']??''))==='C')return false;
+    $eventYear=(int)gmdate('Y',$issued);$targetYear=(int)gmdate('Y',$previous);
+    foreach([[$event,$eventYear],[$target,$targetYear]]as[$r,$y]){
+        $stored=$r['year']??null;if($stored===null||((int)$stored!==$y&&(int)$stored!==$y%100))return false;
     }
-    return null;
+    return $targetYear<=$eventYear;
+}
+function referencedFdcGeometry(PDO $pdo,array $row,string $environment,DateTimeImmutable $at): ?array {
+    if(!preg_match('/\bSEE\s+FDC\s+([0-9]\/\d{4})\b/i',(string)($row['notam_text']??''),$m))return null;
+    $issued=notamIssued($row);if($issued===null||$issued>$at->getTimestamp())return null;
+    $q=$pdo->prepare("SELECT nms_id,number,year,notam_type,account_id,notam_text,raw_json,effective_start,effective_end,effective_end_raw,status,ST_AsGeoJSON(geometry,6) geometry FROM notams WHERE source='FAA_NMS' AND environment=:environment AND UPPER(COALESCE(number,''))=:reference LIMIT 3");
+    $q->execute(['environment'=>$environment,'reference'=>$m[1]]);$matches=$q->fetchAll();
+    if(count($matches)!==1)return null;$target=$matches[0];$targetIssued=notamIssued($target);
+    if($targetIssued===null||$targetIssued>$issued||gmdate('y',$targetIssued)%10!==(int)$m[1][0]||strtoupper((string)($target['notam_type']??''))==='C'||($target['status']??'')==='cancelled')return null;
+    // FDC is an explicit national accountability, not an inferred country/airport.
+    if(strtoupper(trim((string)($target['account_id']??'')))!=='FDC'&&!preg_match('/^\s*!?FDC\s+'.preg_quote($m[1],'/').'\b/i',(string)($target['notam_text']??'')))return null;
+    $year=(int)($target['year']??-1);if($year!==(int)gmdate('Y',$targetIssued)&&$year!==(int)gmdate('y',$targetIssued))return null;
+    $start=empty($target['effective_start'])?false:strtotime((string)$target['effective_start'].' UTC');$end=empty($target['effective_end'])?false:strtotime((string)$target['effective_end'].' UTC');
+    if(!$start||$start>$at->getTimestamp()||($end!==false&&$end<$at->getTimestamp())||(!$end&&strtoupper((string)($target['effective_end_raw']??''))!=='PERM'))return null;
+    $g=json_decode((string)($target['geometry']??''),true);$raw=json_decode((string)($target['raw_json']??''),true);$fresh=$raw['geometry']??null;
+    return is_array($g)&&is_array($fresh)&&validGeoJson($fresh)?normalizeGeometry($g):null;
 }
 
-// Number/year is not globally unique. Require matching provider account and
-// operational location as conservative additional scope, then exactly one target.
-// Missing scope or ambiguous candidates must never cause automatic cancellation.
 function referenceScope(array $row): ?array {
     $account = trim((string)($row['account_id'] ?? ''));
     $fir = strtoupper(trim((string)($row['affected_fir'] ?? '')));
     $location = strtoupper(trim((string)(($row['icao_location'] ?? '') ?: ($row['location'] ?? ''))));
     if ($account === '' || $fir === '' || $location === '') return null;
+    $raw=json_decode((string)($row['raw_json']??''),true);$core=$raw['properties']['coreNOTAMData']['notam']??null;
+    if(!is_array($core)||trim((string)($core['accountId']??''))!==$account||strtoupper(trim((string)($core['affectedFir']??'')))!==$fir)return null;
     return ['account'=>$account,'fir'=>$fir,'reference_location'=>$location];
 }
 
 function resolveReferenceTargets(PDO $pdo, array $targets, string $metaIdKey): array {
     $index=[];
     if (!$targets) return $index;
-    $find=$pdo->prepare("SELECT nms_id,series,number,year,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND account_id=:account AND affected_fir=:fir AND COALESCE(NULLIF(icao_location,''),location)=:reference_location AND series=:series AND (number=:serial OR number=:serial_slash OR number=:target) AND (year=:year4 OR year=:year2 OR year IS NULL) LIMIT 3");
+    $find=$pdo->prepare("SELECT nms_id,series,number,year,notam_type,raw_json,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND account_id=:account AND affected_fir=:fir AND COALESCE(NULLIF(icao_location,''),location)=:reference_location AND series=:series AND (number=:serial OR number=:serial_slash OR number=:target) AND (year=:year4 OR year=:year2 OR year IS NULL) LIMIT 3");
     foreach($targets as $entry) {
         $target=$entry['target']; $meta=$entry['meta']; $scope=$entry['scope'];
         if(!preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/D',$target,$m)) continue;
@@ -396,7 +442,7 @@ function resolveReferenceTargets(PDO $pdo, array $targets, string $metaIdKey): a
         $rows=$find->fetchAll();
         if (count($rows)!==1) continue;
         $row=$rows[0]; $targetId=(string)$row['nms_id'];
-        if ($targetId==='' || $targetId===(string)($meta[$metaIdKey] ?? '') || identKey($row)!==$target || referenceScope($row)!==$scope) continue;
+        if ($targetId==='' || $targetId===(string)($meta[$metaIdKey] ?? '') || identKey($row)!==$target || referenceScope($row)!==$scope || !referenceChronology($entry['event'],$row)) continue;
         $index[$targetId]=$meta;
     }
     return $index;
@@ -416,7 +462,7 @@ function referenceIndex(PDO $pdo, DateTimeImmutable $at, string $type): array {
         if ($target===null || $scope===null) continue;
         $key=json_encode([$scope,$target],JSON_THROW_ON_ERROR);
         if (isset($targets[$key])) continue;
-        $targets[$key]=['target'=>$target,'scope'=>$scope,'meta'=>[$prefix.'Id'=>(string)$row['nms_id'],$prefix.'Ident'=>ident($row),'effectiveStart'=>$row['effective_start'] ?? $row['last_updated'] ?? null]];
+        $targets[$key]=['target'=>$target,'scope'=>$scope,'event'=>$row,'meta'=>[$prefix.'Id'=>(string)$row['nms_id'],$prefix.'Ident'=>ident($row),'effectiveStart'=>$row['effective_start'] ?? $row['last_updated'] ?? null]];
     }
     return $cache[$cacheKey]=resolveReferenceTargets($pdo,$targets,$prefix.'Id');
 }
@@ -558,31 +604,88 @@ function circlePolygon(float $lon, float $lat, float $radiusNm, int $steps = 60)
     for ($i = 0; $i <= $steps; $i++) {$bearing = deg2rad(($i / $steps) * 360.0);$sinLat2 = sin($latRad) * cos($angularDistance) + cos($latRad) * sin($angularDistance) * cos($bearing);$lat2 = asin(max(-1.0, min(1.0, $sinLat2)));$lon2 = $lonRad + atan2(sin($bearing) * sin($angularDistance) * cos($latRad),cos($angularDistance) - sin($latRad) * sin($lat2));$ring[] = [round(normalizeLon(rad2deg($lon2)),6), round(rad2deg($lat2),6)];}
     return ['type'=>'Polygon','coordinates'=>[$ring]];
 }
-function coordinateRegex(): string {return '/(?:[0-9]{6}(?:\.[0-9]+)?[NS][ \t]*[0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][ \t]*[0-9]{5}(?:\.[0-9]+)?[EW]|[0-9]{2}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[NS]\s+[0-9]{3}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[EW])/i';}
+function coordinateRegex(): string {return '/(?<![A-Z0-9.])(?:[0-9]{6}(?:\.[0-9]+)?[NS][ \t]*[0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][ \t]*[0-9]{5}(?:\.[0-9]+)?[EW]|[0-9]{2}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[NS]\s+[0-9]{3}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[EW])(?![A-Z0-9.])/i';}
 function parseCoordinate(string $token): ?array {
-    $token = strtoupper(trim($token));
-    $normalized = preg_replace('/([NS])[ \t]+(?=[0-9])/', '$1', $token);
-    if (!is_string($normalized)) return null;
-    $token = $normalized;
-    if (preg_match('/^([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2}(?:\.[0-9]+)?)([EW])$/', $token, $m)) {$lat = (float)$m[1] + (float)$m[2] / 60.0;$lon = (float)$m[4] + (float)$m[5] / 60.0;if ($m[3] === 'S') $lat *= -1;if ($m[6] === 'W') $lon *= -1;return [$lon,$lat];}
-    if (preg_match('/^([0-9]{2})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([EW])$/', $token, $m)) {$lat = (float)$m[1] + (float)$m[2] / 60.0 + (float)$m[3] / 3600.0;$lon = (float)$m[5] + (float)$m[6] / 60.0 + (float)$m[7] / 3600.0;if ($m[4] === 'S') $lat *= -1;if ($m[8] === 'W') $lon *= -1;return [$lon,$lat];}
-    if (preg_match('/^([0-9]{2})\s+([0-9]{2})\s+([0-9]{2}(?:\.[0-9]+)?)([NS])\s+([0-9]{3})\s+([0-9]{2})\s+([0-9]{2}(?:\.[0-9]+)?)([EW])$/', $token, $m)) {$lat=(float)$m[1]+(float)$m[2]/60.0+(float)$m[3]/3600.0;$lon=(float)$m[5]+(float)$m[6]/60.0+(float)$m[7]/3600.0;if($m[4]==='S')$lat*=-1;if($m[8]==='W')$lon*=-1;return[$lon,$lat];}
-    return null;
+    $token=preg_replace('/\s+/', '', strtoupper(trim($token)));
+    if (!is_string($token)) return null;
+    if (preg_match('/^([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2}(?:\.[0-9]+)?)([EW])$/D',$token,$m)) {
+        $dLat=(int)$m[1];$mLat=(float)$m[2];$sLat=0.0;$ns=$m[3];$dLon=(int)$m[4];$mLon=(float)$m[5];$sLon=0.0;$ew=$m[6];
+    } elseif (preg_match('/^([0-9]{2})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([NS])([0-9]{3})([0-9]{2})([0-9]{2}(?:\.[0-9]+)?)([EW])$/D',$token,$m)) {
+        $dLat=(int)$m[1];$mLat=(float)$m[2];$sLat=(float)$m[3];$ns=$m[4];$dLon=(int)$m[5];$mLon=(float)$m[6];$sLon=(float)$m[7];$ew=$m[8];
+    } else return null;
+    if ($mLat>=60 || $mLon>=60 || $sLat>=60 || $sLon>=60) return null;
+    $lat=$dLat+$mLat/60+$sLat/3600;$lon=$dLon+$mLon/60+$sLon/3600;
+    if (!is_finite($lat) || !is_finite($lon) || $lat>90 || $lon>180) return null;
+    return [$ew==='W'?-$lon:$lon,$ns==='S'?-$lat:$lat];
 }
-function extractCoordinates(?string $text, bool $dedupe = true): array {$text = strtoupper(trim((string)$text));if ($text === '' || !preg_match_all(coordinateRegex(), $text, $matches)) return [];$coords = [];$seen = [];foreach ($matches[0] as $token) {$coord = parseCoordinate((string)$token);if ($coord === null) continue;if (!$dedupe) { $coords[] = $coord; continue; }$key = sprintf('%.6F,%.6F', $coord[0], $coord[1]);if (!isset($seen[$key])) { $seen[$key] = true; $coords[] = $coord; }}return $coords;}
-function polygonFromCoordinates(array $coords): ?array {if (count($coords) < 3) return null;$ring = array_values($coords);$first = $ring[0];$last = $ring[count($ring)-1];if (abs((float)$first[0]-(float)$last[0]) > 0.000001 || abs((float)$first[1]-(float)$last[1]) > 0.000001) $ring[] = $first;return ['type'=>'Polygon','coordinates'=>[$ring]];}
-function radiusToNm(float $value, string $unit): ?float {if ($value <= 0.0) return null;return match (strtoupper(trim($unit))) {'NM'=>$value,'KM'=>$value/1.852,'M'=>$value/1852.0,default=>null};}
+
+function extractCoordinates(?string $text, bool $dedupe = true): array {$text = strtoupper(trim((string)$text));if ($text === '' || !preg_match_all(coordinateRegex(), $text, $matches)) return [];$coords = [];$seen = [];foreach ($matches[0] as $token) {$coord = parseCoordinate((string)$token);if ($coord === null) return [];if (!$dedupe) { $coords[] = $coord; continue; }$key = sprintf('%.6F,%.6F', $coord[0], $coord[1]);if (!isset($seen[$key])) { $seen[$key] = true; $coords[] = $coord; }}return $coords;}
+function polygonFromCoordinates(array $coords): ?array {
+    if (count($coords)<3 || count($coords)>256) return null;
+    $ring=array_values($coords);
+    if ($ring[0]!==$ring[count($ring)-1]) $ring[]=$ring[0];
+    $n=count($ring)-1;$seen=[];$plane=[];$area=0.0;
+    foreach($ring as $i=>$p){
+        if(!validPosition($p))return null;
+        $x=(float)$p[0];if($i>0){while($x-$plane[$i-1][0]>180)$x-=360;while($x-$plane[$i-1][0]<-180)$x+=360;}
+        $plane[]=[$x,(float)$p[1]];
+        if($i<$n){$key=sprintf('%.7F,%.7F',$p[0],$p[1]);if(isset($seen[$key]))return null;$seen[$key]=true;}
+    }
+    if(count($seen)<3 || abs($plane[0][0]-$plane[$n][0])>0.000001)return null;
+    $cross=static fn(array$a,array$b,array$c):float=>($b[0]-$a[0])*($c[1]-$a[1])-($b[1]-$a[1])*($c[0]-$a[0]);
+    $on=static fn(array$a,array$b,array$p):bool=>$p[0]>=min($a[0],$b[0])-1e-10&&$p[0]<=max($a[0],$b[0])+1e-10&&$p[1]>=min($a[1],$b[1])-1e-10&&$p[1]<=max($a[1],$b[1])+1e-10;
+    for($i=0;$i<$n;$i++){
+        $a=$plane[$i];$b=$plane[$i+1];$area+=$a[0]*$b[1]-$b[0]*$a[1];
+        for($j=$i+2;$j<$n;$j++){
+            if($i===0&&$j===$n-1)continue;
+            $c=$plane[$j];$d=$plane[$j+1];$abC=$cross($a,$b,$c);$abD=$cross($a,$b,$d);$cdA=$cross($c,$d,$a);$cdB=$cross($c,$d,$b);
+            if(($abC*$abD<0&&$cdA*$cdB<0)||(abs($abC)<1e-10&&$on($a,$b,$c))||(abs($abD)<1e-10&&$on($a,$b,$d))||(abs($cdA)<1e-10&&$on($c,$d,$a))||(abs($cdB)<1e-10&&$on($c,$d,$b)))return null;
+        }
+    }
+    return abs($area)>1e-10?['type'=>'Polygon','coordinates'=>[$ring]]:null;
+}
+function validPosition(mixed $position): bool {
+    return is_array($position)&&array_is_list($position)&&count($position)>=2
+        && (is_int($position[0])||is_float($position[0]))&&(is_int($position[1])||is_float($position[1]))
+        && is_finite((float)$position[0])&&is_finite((float)$position[1])&&abs($position[0])<=180&&abs($position[1])<=90;
+}
+function validGeoJson(array $g, int $depth=0, ?int &$remaining=null): bool {
+    if($remaining===null)$remaining=50000;
+    if($depth>8 || --$remaining<0)return false;
+    $type=$g['type']??null;
+    if($type==='GeometryCollection'){
+        $items=$g['geometries']??null;if(!is_array($items)||!array_is_list($items)||!$items)return false;
+        foreach($items as$item)if(!is_array($item)||!validGeoJson($item,$depth+1,$remaining))return false;
+        return true;
+    }
+    $c=$g['coordinates']??null;
+    if($type==='Point')return validPosition($c);
+    if(!is_array($c)||!array_is_list($c)||!$c)return false;
+    $line=static function(mixed$v,int$min,bool$closed=false)use(&$remaining):bool{
+        if(!is_array($v)||!array_is_list($v)||count($v)<$min)return false;
+        foreach($v as$p)if(--$remaining<0||!validPosition($p))return false;
+        return !$closed||array_slice($v[0],0,2)===array_slice($v[count($v)-1],0,2);
+    };
+    if($type==='MultiPoint')return $line($c,1);
+    if($type==='LineString')return $line($c,2);
+    if($type==='MultiLineString'){foreach($c as$v)if(!$line($v,2))return false;return true;}
+    if($type==='Polygon'){foreach($c as$v)if(!$line($v,4,true))return false;return true;}
+    if($type==='MultiPolygon'){foreach($c as$poly){if(!is_array($poly)||!array_is_list($poly)||!$poly)return false;foreach($poly as$v)if(!$line($v,4,true))return false;}return true;}
+    return false;
+}
+
+function radiusToNm(float $value, string $unit): ?float {if (!is_finite($value) || $value <= 0.0) return null;$nm=match (strtoupper(trim($unit))) {'NM'=>$value,'KM'=>$value/1.852,'M'=>$value/1852.0,default=>null};return $nm!==null&&$nm<=1000?$nm:null;}
 function destinationPoint(float $lon, float $lat, float $bearingDeg, float $distanceNm): array {$earthRadiusNm = 3440.065;$distance = max(0.0,$distanceNm)/$earthRadiusNm;$bearing = deg2rad($bearingDeg);$lat1 = deg2rad($lat);$lon1 = deg2rad($lon);$sinLat2 = sin($lat1)*cos($distance) + cos($lat1)*sin($distance)*cos($bearing);$lat2 = asin(max(-1.0,min(1.0,$sinLat2)));$lon2 = $lon1 + atan2(sin($bearing)*sin($distance)*cos($lat1), cos($distance)-sin($lat1)*sin($lat2));return [round(normalizeLon(rad2deg($lon2)),6),round(rad2deg($lat2),6)];}
 function initialBearing(array $from, array $to): float {$lat1 = deg2rad((float)$from[1]);$lat2 = deg2rad((float)$to[1]);$dLon = deg2rad((float)$to[0]-(float)$from[0]);$y = sin($dLon)*cos($lat2);$x = cos($lat1)*sin($lat2)-sin($lat1)*cos($lat2)*cos($dLon);return fmod(rad2deg(atan2($y,$x))+360.0,360.0);}
 function corridorGeometry(array $coords, float $halfWidthNm): ?array {if (count($coords) < 2 || $halfWidthNm <= 0.0) return null;$polygons = [];for ($i=0; $i<count($coords)-1; $i++) {$a=$coords[$i]; $b=$coords[$i+1];if (abs((float)$a[0]-(float)$b[0])<0.000001 && abs((float)$a[1]-(float)$b[1])<0.000001) continue;$bearing=initialBearing($a,$b);$aLeft=destinationPoint((float)$a[0],(float)$a[1],$bearing-90,$halfWidthNm);$bLeft=destinationPoint((float)$b[0],(float)$b[1],$bearing-90,$halfWidthNm);$bRight=destinationPoint((float)$b[0],(float)$b[1],$bearing+90,$halfWidthNm);$aRight=destinationPoint((float)$a[0],(float)$a[1],$bearing+90,$halfWidthNm);$polygons[]=[[$aLeft,$bLeft,$bRight,$aRight,$aLeft]];}if (!$polygons) return null;return count($polygons)===1 ? ['type'=>'Polygon','coordinates'=>$polygons[0]] : ['type'=>'MultiPolygon','coordinates'=>$polygons];}
 function qSubject(array $row): string {$q = strtoupper(trim((string)($row['selection_code'] ?? '')));return preg_match('/^Q([A-Z]{2})[A-Z]{2}$/',$q,$m) ? $m[1] : '';}
 function semantic(array $row): array {$subject = qSubject($row);$class = match ($subject) {'RD','RP','RR','RT'=>'RESTRICTED_AIRSPACE','WY'=>'AERIAL_SURVEY','WE'=>'EXERCISE','WF'=>'AIR_REFUELING','WM'=>'FIRING','WU'=>'UAV_ACTIVITY','WG','WL','WP','WT'=>'AERIAL_SPORT_ACTIVITY','OB'=>'OBSTACLE','AC'=>'CONTROLLED_AIRSPACE','MR'=>'RUNWAY',default=>'OTHER'};$group = match ($subject) {'WG','WL','WP','WT'=>'AERIAL_SPORT','RD','RP','RR','RT'=>'RESTRICTED_AIRSPACE','WY'=>'AERIAL_SURVEY','WE','WF','WM','WU'=>'TRAINING_MILITARY',default=>'OTHER'};return ['q_subject'=>$subject,'semantic_class'=>$class,'display_group'=>$group];}
 function spatialTextSegment(string $text): ?string {foreach (['/\bWI(?:THIN)?\s+AREA\b\s*:?\s*/i','/\bAREA\s+BOUNDED\s+BY\b\s*:?\s*/i','/\bBOUNDED\s+BY\b\s*:?\s*/i','/\bBOUNDARY\b\s*:?\s*/i','/\bLATERAL\s+LIMITS?\b\s*:?\s*/i','/\bAREA\b\s*:?\s*/i'] as $pattern) {if (!preg_match($pattern,$text,$m,PREG_OFFSET_CAPTURE)) continue;$offset=(int)$m[0][1]+strlen((string)$m[0][0]);$segment=substr($text,$offset);if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b|NOTE\b)/i',$segment,$stop,PREG_OFFSET_CAPTURE)) $segment=substr($segment,0,(int)$stop[0][1]);return $segment;}return null;}
-function explicitPolygon(array $row): ?array {$text=(string)($row['notam_text'] ?? '');$segment=spatialTextSegment($text);if ($segment===null) {$s=semantic($row);$area=in_array($s['semantic_class'],['RESTRICTED_AIRSPACE','AERIAL_SURVEY','EXERCISE','AIR_REFUELING','FIRING','UAV_ACTIVITY','AERIAL_SPORT_ACTIVITY','CONTROLLED_AIRSPACE'],true);if ($area) {foreach (['/\bWI\s*:\s*/i','/\bCOORDS?\s*:\s*/i','/\bCOORDINATES?\s*:\s*/i'] as $pattern) {if (!preg_match($pattern,$text,$m,PREG_OFFSET_CAPTURE)) continue;$offset=(int)$m[0][1]+strlen((string)$m[0][0]);$segment=substr($text,$offset);if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b|NOTE\b|VERTICAL\s+LIMITS?\b)/i',$segment,$stop,PREG_OFFSET_CAPTURE)) $segment=substr($segment,0,(int)$stop[0][1]);break;}}}if ($segment===null) return null;$geometry=polygonFromCoordinates(extractCoordinates($segment,true));if ($geometry===null) return null;return ['geometry'=>$geometry,'source'=>'e-text-polygon','render_type'=>'AREA','confidence'=>'EXPLICIT','explicit_radius_nm'=>null];}
+function explicitPolygon(array $row): ?array {$text=(string)($row['notam_text'] ?? '');$segment=spatialTextSegment($text);if ($segment===null) {$s=semantic($row);$area=in_array($s['semantic_class'],['RESTRICTED_AIRSPACE','AERIAL_SURVEY','EXERCISE','AIR_REFUELING','FIRING','UAV_ACTIVITY','AERIAL_SPORT_ACTIVITY','CONTROLLED_AIRSPACE'],true);if ($area) {foreach (['/\bWI\s*:\s*/i','/\bCOORDS?\s*:\s*/i','/\bCOORDINATES?\s*:\s*/i'] as $pattern) {if (!preg_match($pattern,$text,$m,PREG_OFFSET_CAPTURE)) continue;$offset=(int)$m[0][1]+strlen((string)$m[0][0]);$segment=substr($text,$offset);if (preg_match('/(?:\r?\n|\s)(?:F\)|G\)|SCHEDULE\b|REMARKS?\b|RMK\b|NOTE\b|VERTICAL\s+LIMITS?\b)/i',$segment,$stop,PREG_OFFSET_CAPTURE)) $segment=substr($segment,0,(int)$stop[0][1]);break;}}}if ($segment===null) return null;$residue=preg_replace(coordinateRegex(),'',$segment);if(!is_string($residue)||preg_match('/\b(?:ARC|CLOCKWISE|COUNTERCLOCKWISE|EXCLUDING|EXCEPT|AREA\s+[0-9])\b/i',$residue))return null;$geometry=polygonFromCoordinates(extractCoordinates($segment,false));if ($geometry===null) return null;return ['geometry'=>$geometry,'source'=>'e-text-polygon','render_type'=>'AREA','confidence'=>'EXPLICIT','explicit_radius_nm'=>null];}
 function explicitCircle(array $row): ?array {$text=strtoupper((string)($row['notam_text'] ?? ''));if($text==='')return null;$coord='(?:[0-9]{6}(?:\.[0-9]+)?[NS][ \t]*[0-9]{7}(?:\.[0-9]+)?[EW]|[0-9]{4}(?:\.[0-9]+)?[NS][ \t]*[0-9]{5}(?:\.[0-9]+)?[EW]|[0-9]{2}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[NS]\s+[0-9]{3}\s+[0-9]{2}\s+[0-9]{2}(?:\.[0-9]+)?[EW])';if(preg_match('/\bWI(?:THIN)?\s+([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+OF\s+COORD(?:INATE)?S?\s*:?\s*('.$coord.')/is',$text,$m)){$radius=radiusToNm((float)$m[1],$m[2]);$point=parseCoordinate($m[3]);if($radius!==null&&$point!==null)return['geometry'=>circlePolygon((float)$point[0],(float)$point[1],$radius),'source'=>'e-text-circle','render_type'=>'CIRCLE','confidence'=>'EXPLICIT','explicit_radius_nm'=>round($radius,3)];}if(stripos($text,'RADIUS')===false)return null;$patterns=['/('.$coord.').{0,180}?\bRADIUS(?:\s+OF)?\s*([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\b/is','/([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+RADIUS.{0,180}?('.$coord.')/is','/\bRADIUS(?:\s+OF)?\s*([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M).{0,180}?('.$coord.')/is'];foreach($patterns as$i=>$pattern){if(!preg_match($pattern,$text,$m))continue;if($i===0){$token=$m[1];$value=(float)$m[2];$unit=$m[3];}else{$value=(float)$m[1];$unit=$m[2];$token=$m[3];}$point=parseCoordinate($token);$radius=radiusToNm($value,$unit);if($point===null||$radius===null)continue;return['geometry'=>circlePolygon((float)$point[0],(float)$point[1],$radius),'source'=>'e-text-circle','render_type'=>'CIRCLE','confidence'=>'EXPLICIT','explicit_radius_nm'=>round($radius,3)];}return null;}
 function explicitCorridor(array $row): ?array {$text=strtoupper((string)($row['notam_text'] ?? ''));if ($text==='' || stripos($text,'EITHER SIDE')===false) return null;if (!preg_match('/([0-9]+(?:\.[0-9]+)?)\s*(NM|KM|M)\s+EITHER\s+SIDE\s+OF(?:\s+A)?\s+LINE/i',$text,$m)) return null;$width=radiusToNm((float)$m[1],$m[2]);if ($width===null) return null;$coords=extractCoordinates($text,false);$geometry=corridorGeometry($coords,$width);if ($geometry===null) return null;return ['geometry'=>$geometry,'source'=>'e-text-corridor','render_type'=>'CORRIDOR','confidence'=>'EXPLICIT','explicit_radius_nm'=>round($width,3)];}
 function explicitGeometry(array $row): ?array {$polygon=explicitPolygon($row); if ($polygon!==null) return $polygon;$corridor=explicitCorridor($row); if ($corridor!==null) return $corridor;return explicitCircle($row);}
-function normalizeGeometry(array $geometry): ?array {$type=(string)($geometry['type'] ?? '');if ($type!=='GeometryCollection') return $type!=='' ? $geometry : null;$items=$geometry['geometries'] ?? null;if (!is_array($items) || !$items) return null;$points=[];$lines=[];$polygons=[];foreach ($items as $item) {if (!is_array($item)) continue;$g=normalizeGeometry($item); if ($g===null) continue;$t=(string)($g['type'] ?? ''); $c=$g['coordinates'] ?? null;if ($t==='Point' && is_array($c)) $points[]=$c;elseif ($t==='MultiPoint' && is_array($c)) foreach($c as $p) if(is_array($p))$points[]=$p;elseif ($t==='LineString' && is_array($c)) $lines[]=$c;elseif ($t==='MultiLineString' && is_array($c)) foreach($c as $line) if(is_array($line))$lines[]=$line;elseif ($t==='Polygon' && is_array($c)) $polygons[]=$c;elseif ($t==='MultiPolygon' && is_array($c)) foreach($c as $poly) if(is_array($poly))$polygons[]=$poly;}if ($polygons) return count($polygons)===1 ? ['type'=>'Polygon','coordinates'=>$polygons[0]] : ['type'=>'MultiPolygon','coordinates'=>$polygons];if ($lines) return count($lines)===1 ? ['type'=>'LineString','coordinates'=>$lines[0]] : ['type'=>'MultiLineString','coordinates'=>$lines];if ($points) return count($points)===1 ? ['type'=>'Point','coordinates'=>$points[0]] : ['type'=>'MultiPoint','coordinates'=>$points];return null;}
+function normalizeGeometry(array $geometry): ?array {if(!validGeoJson($geometry))return null;$type=(string)($geometry['type'] ?? '');if ($type!=='GeometryCollection') return $type!=='' ? $geometry : null;$items=$geometry['geometries'] ?? null;if (!is_array($items) || !$items) return null;$points=[];$lines=[];$polygons=[];foreach ($items as $item) {if (!is_array($item)) continue;$g=normalizeGeometry($item); if ($g===null) continue;$t=(string)($g['type'] ?? ''); $c=$g['coordinates'] ?? null;if ($t==='Point' && is_array($c)) $points[]=$c;elseif ($t==='MultiPoint' && is_array($c)) foreach($c as $p) if(is_array($p))$points[]=$p;elseif ($t==='LineString' && is_array($c)) $lines[]=$c;elseif ($t==='MultiLineString' && is_array($c)) foreach($c as $line) if(is_array($line))$lines[]=$line;elseif ($t==='Polygon' && is_array($c)) $polygons[]=$c;elseif ($t==='MultiPolygon' && is_array($c)) foreach($c as $poly) if(is_array($poly))$polygons[]=$poly;}if ($polygons) return count($polygons)===1 ? ['type'=>'Polygon','coordinates'=>$polygons[0]] : ['type'=>'MultiPolygon','coordinates'=>$polygons];if ($lines) return count($lines)===1 ? ['type'=>'LineString','coordinates'=>$lines[0]] : ['type'=>'MultiLineString','coordinates'=>$lines];if ($points) return count($points)===1 ? ['type'=>'Point','coordinates'=>$points[0]] : ['type'=>'MultiPoint','coordinates'=>$points];return null;}
 function pointRenderable(array $row, string $source, array $semantic): bool {if (($semantic['semantic_class'] ?? '')==='OBSTACLE') return true;$scope=strtoupper((string)($row['scope'] ?? ''));return in_array($source,['airport-location','faa-geometry','referenced-notam'],true) && str_contains($scope,'A');}
 function category(array $semantic): string {return match ($semantic['semantic_class'] ?? 'OTHER') {'RESTRICTED_AIRSPACE','AERIAL_SURVEY','EXERCISE','AIR_REFUELING','FIRING','AERIAL_SPORT_ACTIVITY','CONTROLLED_AIRSPACE'=>'AIRSPACE','UAV_ACTIVITY'=>'UAV','OBSTACLE'=>'OBSTACLE','RUNWAY'=>'RWY',default=>'GENERAL'};}
 function feature(array $row, ?array $activity = null): ?array {$geometry=is_array($row['geometry'] ?? null) ? $row['geometry'] : json_decode((string)($row['geometry'] ?? ''),true);if (!is_array($geometry)) return null;$geometry=normalizeGeometry($geometry); if ($geometry===null) return null;$source=(string)($row['geometry_source'] ?? 'faa-geometry');$semantic=semantic($row);$explicit=null;$type=(string)($geometry['type'] ?? '');if (in_array($type,['Point','MultiPoint'],true)) {$explicit=explicitGeometry($row);if ($explicit!==null) {$geometry=$explicit['geometry'];$source=$explicit['source'];$type=(string)$geometry['type'];} else {if (($semantic['semantic_class'] ?? '')==='OBSTACLE') {$coords=extractCoordinates((string)($row['notam_text'] ?? ''),true);if ($coords) {$geometry=['type'=>'Point','coordinates'=>[(float)$coords[0][0],(float)$coords[0][1]]];$source='e-text-point';$type='Point';}}if (!pointRenderable($row,$source,$semantic)) return null;}}$renderType=match($type) {'Polygon','MultiPolygon'=>$explicit['render_type'] ?? 'AREA','LineString','MultiLineString'=>'LINE','Point','MultiPoint'=>$source==='airport-location' ? 'ENTITY' : 'POINT',default=>'NONE'};$accuracy=match($source) {'faa-geometry'=>'authoritative FAA geometry','e-text-polygon'=>'explicit NOTAM boundary','e-text-circle'=>'explicit NOTAM circle','e-text-corridor'=>'explicit NOTAM corridor','e-text-point'=>'explicit NOTAM point','qline-coordinate'=>'coordinate point fallback','airport-location'=>'airport entity location','referenced-notam'=>'referenced FAA NOTAM geometry',default=>'derived'};return ['type'=>'Feature','id'=>'n-' . (string)$row['nms_id'],'geometry'=>$geometry,'properties'=>['layer'=>'notam','nms_id'=>(string)$row['nms_id'],'ident'=>ident($row),'classification'=>$row['classification'] ?? null,'location'=>$row['location'] ?? null,'icao_location'=>$row['icao_location'] ?? null,'selection_code'=>$row['selection_code'] ?? null,'effective_start'=>$row['effective_start'] ?? null,'effective_end'=>$row['effective_end'] ?? null,'effective_end_raw'=>$row['effective_end_raw'] ?? null,'estimated_end'=>estimatedEnd($row),'schedule'=>$row['schedule'] ?? null,'schedule_state'=>$activity['state'] ?? null,'schedule_parsed'=>$activity['parsed'] ?? null,'lower_limit'=>$row['lower_limit'] ?? null,'upper_limit'=>$row['upper_limit'] ?? null,'qline_radius_nm'=>isset($row['radius_nm']) && is_numeric((string)$row['radius_nm']) ? (float)$row['radius_nm'] : null,'explicit_radius_nm'=>$explicit['explicit_radius_nm'] ?? null,'q_subject'=>$semantic['q_subject'],'semantic_class'=>$semantic['semantic_class'],'display_group'=>$semantic['display_group'],'category'=>category($semantic),'map_render_type'=>$renderType,'geometry_source'=>$source,'geometry_accuracy'=>$accuracy]];}
@@ -608,16 +711,19 @@ function mapAction(PDO $pdo): never {
     header('Cache-Control: private, max-age=60, stale-while-revalidate=120');
     $time=$at->format('Y-m-d H:i:s');$features=[];$seenIds=[];$seenFeatures=[];$truncated=false;$replacementIndex=replacementIndex($pdo,$at);$cancellationIndex=cancellationIndex($pdo,$at);$mapStats=['outsideSchedule'=>0,'scheduleUnknown'=>0,'replaced'=>count($replacementIndex),'cancelled'=>count($cancellationIndex)];
     $params=['at_start'=>$time,'at_end'=>$time];$bbox=bboxSql($west,$south,$east,$north,$params);$sql='SELECT '.columns(true,true).",'faa-geometry' AS geometry_source FROM notams n WHERE ".validWhere()." AND n.geometry IS NOT NULL AND $bbox ORDER BY n.effective_start DESC LIMIT 5000";$stmt=$pdo->prepare($sql); $stmt->execute($params);while($row=$stmt->fetch()) addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);if($stmt->rowCount()>=5000)$truncated=true;
-    try {$ids=geometryDiagnosticIds('resolvedFallbackItems');if($ids){$holders=[];$qp=['at_start'=>$time,'at_end'=>$time];foreach(array_slice($ids,0,200)as$i=>$id){$key='gid'.$i;$holders[]=':'.$key;$qp[$key]=$id;}$q=$pdo->prepare('SELECT '.columns(true,false).' FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL AND n.nms_id IN ('.implode(',',$holders).')');$q->execute($qp);while($row=$q->fetch()){$explicit=explicitGeometry($row);if($explicit===null||!geometryInView($explicit['geometry'],$west,$south,$east,$north))continue;$row['geometry']=$explicit['geometry'];$row['geometry_source']=$explicit['source'];addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}catch(Throwable$e){error_log('[notam-map-explicit] '.$e->getMessage());}
-    try {$ids=geometryDiagnosticIds('resolvedReferenceItems');if($ids){$holders=[];$qp=['at_start'=>$time,'at_end'=>$time];foreach(array_slice($ids,0,200)as$i=>$id){$key='rid'.$i;$holders[]=':'.$key;$qp[$key]=$id;}$q=$pdo->prepare('SELECT '.columns(true,false).' FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL AND n.nms_id IN ('.implode(',',$holders).')');$q->execute($qp);$ref=$pdo->prepare("SELECT ST_AsGeoJSON(n.geometry,6) geometry FROM notams n WHERE n.source='FAA_NMS' AND n.environment='production' AND n.geometry IS NOT NULL AND UPPER(COALESCE(n.number,''))=:reference ORDER BY n.last_updated DESC LIMIT 2");while($row=$q->fetch()){if(!preg_match('/\bSEE\s+FDC\s+([0-9]{1,2}\/[0-9]{4})\b/i',(string)($row['notam_text']??''),$m))continue;$ref->execute(['reference'=>strtoupper($m[1])]);$matches=$ref->fetchAll();if(count($matches)!==1)continue;$geometry=json_decode((string)($matches[0]['geometry']??''),true);if(!is_array($geometry)||!geometryInView($geometry,$west,$south,$east,$north))continue;$row['geometry']=$geometry;$row['geometry_source']='referenced-notam';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}catch(Throwable$e){error_log('[notam-map-reference] '.$e->getMessage());}
+    try {$ids=geometryDiagnosticIds('resolvedFallbackItems');if($ids){$holders=[];$qp=['at_start'=>$time,'at_end'=>$time];foreach(array_slice($ids,0,200)as$i=>$id){$key='gid'.$i;$holders[]=':'.$key;$qp[$key]=$id;}$q=$pdo->prepare('SELECT '.columns(true,false).',n.raw_json FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL AND n.nms_id IN ('.implode(',',$holders).')');$q->execute($qp);while($row=$q->fetch()){$explicit=explicitGeometry($row);if($explicit===null||!geometryInView($explicit['geometry'],$west,$south,$east,$north))continue;$row['geometry']=$explicit['geometry'];$row['geometry_source']=$explicit['source'];addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}catch(Throwable$e){error_log('[notam-map-explicit] '.$e->getMessage());}
+    try {$ids=geometryDiagnosticIds('resolvedReferenceItems');if($ids){$holders=[];$qp=['at_start'=>$time,'at_end'=>$time];foreach(array_slice($ids,0,200)as$i=>$id){$key='rid'.$i;$holders[]=':'.$key;$qp[$key]=$id;}$q=$pdo->prepare('SELECT '.columns(true,false).',n.raw_json FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL AND n.nms_id IN ('.implode(',',$holders).')');$q->execute($qp);while($row=$q->fetch()){$geometry=referencedFdcGeometry($pdo,$row,'production',$at);if($geometry===null||!geometryInView($geometry,$west,$south,$east,$north))continue;$row['geometry']=$geometry;$row['geometry_source']='referenced-notam';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}catch(Throwable$e){error_log('[notam-map-reference] '.$e->getMessage());}
     try {$lonWhere=$west<=$east ? 'lon BETWEEN :west AND :east' : '(lon>=:west OR lon<=:east)';$ap=$pdo->prepare("SELECT ident,lat,lon FROM nav_points WHERE kind='airport' AND lat BETWEEN :south AND :north AND $lonWhere LIMIT 2500");$ap->execute(['south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);$airports=[];while($r=$ap->fetch()){$id=strtoupper(trim((string)$r['ident']));if($id!=='')$airports[$id]=['lon'=>(float)$r['lon'],'lat'=>(float)$r['lat']];}if($airports){foreach(array_chunk(array_keys($airports),400) as$chunk){$marks=implode(',',array_fill(0,count($chunk),'?'));$q=$pdo->prepare('SELECT '.columns(true,false).' FROM notams n WHERE '.str_replace([':at_start',':at_end'],['?','?'],validWhere())." AND n.geometry IS NULL AND (UPPER(COALESCE(n.icao_location,'')) IN ($marks) OR UPPER(COALESCE(n.location,'')) IN ($marks)) ORDER BY n.effective_start DESC LIMIT 5000");$values=[$time,$time,...$chunk,...$chunk]; $q->execute($values);while($row=$q->fetch()){$anchor=strtoupper(trim((string)($row['icao_location'] ?: $row['location']))); $point=$airports[$anchor] ?? null; if(!$point)continue;$row['geometry']=['type'=>'Point','coordinates'=>[$point['lon'],$point['lat']]]; $row['geometry_source']='airport-location';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}} catch(Throwable $e){ error_log('[notam-map-airport] '.$e->getMessage()); }
     try {$coordToken="REGEXP_SUBSTR(UPPER(COALESCE(n.coordinates_raw,'')),'([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])')";$lonWhere=$west<=$east ? 'q.lon BETWEEN :west AND :east' : '(q.lon>=:west OR q.lon<=:east)';$sql='SELECT q.* FROM (SELECT p.*,CASE WHEN LENGTH(p.coord_token)=11 THEN (CAST(SUBSTRING(p.coord_token,1,2) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,3,2) AS DECIMAL(10,6))/60)*IF(SUBSTRING(p.coord_token,5,1)=\'S\',-1,1) WHEN LENGTH(p.coord_token)=15 THEN (CAST(SUBSTRING(p.coord_token,1,2) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,3,2) AS DECIMAL(10,6))/60+CAST(SUBSTRING(p.coord_token,5,2) AS DECIMAL(10,6))/3600)*IF(SUBSTRING(p.coord_token,7,1)=\'S\',-1,1) END lat,CASE WHEN LENGTH(p.coord_token)=11 THEN (CAST(SUBSTRING(p.coord_token,6,3) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,9,2) AS DECIMAL(10,6))/60)*IF(SUBSTRING(p.coord_token,11,1)=\'W\',-1,1) WHEN LENGTH(p.coord_token)=15 THEN (CAST(SUBSTRING(p.coord_token,8,3) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,11,2) AS DECIMAL(10,6))/60+CAST(SUBSTRING(p.coord_token,13,2) AS DECIMAL(10,6))/3600)*IF(SUBSTRING(p.coord_token,15,1)=\'W\',-1,1) END lon FROM (SELECT '.columns(true,false).','.$coordToken.' coord_token FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL) p WHERE p.coord_token IS NOT NULL AND p.coord_token<>\'\') q WHERE q.lat BETWEEN :south AND :north AND '.$lonWhere.' ORDER BY q.effective_start DESC LIMIT 5000';$q=$pdo->prepare($sql);$q->execute(['at_start'=>$time,'at_end'=>$time,'south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);while($row=$q->fetch()){$row['geometry']=['type'=>'Point','coordinates'=>[(float)$row['lon'],(float)$row['lat']]];$row['geometry_source']='qline-coordinate';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}} catch(Throwable $e){ error_log('[notam-map-qline] '.$e->getMessage()); }
     if(count($features)>=5000)$truncated=true;
     out(200,['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>$coverage,'data'=>['type'=>'FeatureCollection','features'=>$features],'counts'=>['notam'=>count($features)],'total'=>count($features),'truncated'=>$truncated,'schedule'=>['outside'=>$mapStats['outsideSchedule'],'unknown'=>$mapStats['scheduleUnknown']],'temporal'=>['replaced'=>$mapStats['replaced'],'cancelled'=>$mapStats['cancelled']]]);
 }
 
+if (PHP_SAPI !== 'cli') {
 try {
     if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'GET') {header('Allow: GET');out(405,['ok'=>false,'error'=>'HTTP method not allowed.']);}
     $pdo=db();$action=strtolower((string)($_GET['action'] ?? 'list'));
     if($action==='list')listAction($pdo);if($action==='filters')filtersAction($pdo);if($action==='detail')detailAction($pdo);if($action==='map')mapAction($pdo);if($action==='health')out(200,['ok'=>true,'resource'=>'notam','displaySource'=>'FAA.GOV NOTAM SERVICE','records'=>(int)$pdo->query("SELECT COUNT(*) FROM notams WHERE source='FAA_NMS' AND environment='production'")->fetchColumn()]);out(400,['ok'=>false,'error'=>'Bilinmeyen action.']);
 } catch(Throwable $e) {error_log('[notam] ' . $e->getMessage());out(500,['ok'=>false,'error'=>'NOTAM isteği işlenemedi.']);}
+
+}
