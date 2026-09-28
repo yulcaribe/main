@@ -7,24 +7,19 @@ function ycAdsbSameOrigin(string $url): bool {
         && ($parts['scheme'] ?? '') === 'https'
         && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
         && (!isset($parts['port']) || (int)$parts['port'] === 443)
-        && !isset($parts['user'])
-        && !isset($parts['pass']);
+        && !isset($parts['user']) && !isset($parts['pass']);
 }
 
 function ycAdsbRequireSameOrigin(): void {
     header('Vary: Origin, Sec-Fetch-Site, Referer');
     header('Cross-Origin-Resource-Policy: same-origin');
-
     $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
     $referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
     $fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
-
-    $blocked = ($fetchSite !== '' && $fetchSite !== 'same-origin')
+    if (($fetchSite !== '' && $fetchSite !== 'same-origin')
         || ($origin !== ''
-            ? !in_array($origin, ['https://yulcaribe.com', 'https://yulcaribe.com:443'], true)
-            : !ycAdsbSameOrigin($referer));
-
-    if ($blocked) {
+            ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
+            : !ycAdsbSameOrigin($referer))) {
         http_response_code(403);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store, max-age=0');
@@ -34,39 +29,32 @@ function ycAdsbRequireSameOrigin(): void {
     }
 }
 
-ycAdsbRequireSameOrigin();
-
-require_once __DIR__ . '/adsbtat.php';
-require_once __DIR__ . '/adsblol.php';
-require_once __DIR__ . '/adsbfi.php';
-
-header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-store, max-age=0');
-header('X-Content-Type-Options: nosniff');
-
-$icao = strtolower(trim((string)($_GET['icao'] ?? '')));
-if (!preg_match('/^[0-9a-f]{6}$/', $icao)) {
-    http_response_code(400);
-    echo json_encode(['ok'=>false,'error'=>'Geçerli 6 haneli ICAO HEX gerekli.']);
+function ycAdsbJson(int $status, array $payload): never {
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
-if (!function_exists('curl_multi_init')) {
-    http_response_code(503);
-    echo json_encode(['ok'=>false,'error'=>'ADS-B motoru kullanılamıyor.']);
-    exit;
+function ycAdsbParseBox(string $raw): array {
+    $raw = trim($raw);
+    if (!preg_match('/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/', $raw)) {
+        throw new InvalidArgumentException('Geçersiz ADS-B box.');
+    }
+    [$south,$north,$west,$east] = array_map('floatval', explode(',', $raw));
+    if ($south < -90 || $north > 90 || $west < -180 || $east > 180 || $south >= $north || $west >= $east) {
+        throw new InvalidArgumentException('ADS-B box sınır dışında.');
+    }
+    if (($north - $south) > 60 || ($east - $west) > 120) {
+        throw new InvalidArgumentException('ADS-B görünümü çok geniş.');
+    }
+    return [$south,$north,$west,$east];
 }
 
-$providers = [
-    'tat' => ['url'=>ycAdsbTatEndpoint($icao), 'parse'=>'ycAdsbTatParse'],
-    'adsblol' => ['url'=>ycAdsbLolEndpoint($icao), 'parse'=>'ycAdsbLolParse'],
-    'adsbfi' => ['url'=>ycAdsbFiEndpoint($icao), 'parse'=>'ycAdsbFiParse'],
-];
-
-$multi = curl_multi_init();
-$handles = [];
-foreach ($providers as $name => $provider) {
-    $ch = curl_init($provider['url']);
+function ycAdsbCurl(string $url): CurlHandle {
+    $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
@@ -80,71 +68,197 @@ foreach ($providers as $name => $provider) {
         CURLOPT_USERAGENT => 'YulCaribe/1.0 ADS-B',
         CURLOPT_HTTPHEADER => ['Accept: application/json'],
     ]);
-    curl_multi_add_handle($multi, $ch);
-    $handles[$name] = $ch;
+    return $ch;
 }
 
-do {
-    $status = curl_multi_exec($multi, $running);
-    if ($running) curl_multi_select($multi, 1.0);
-} while ($running && $status === CURLM_OK);
-
-$observations = [];
-$sourceStatus = [];
-foreach ($handles as $name => $ch) {
-    $body = curl_multi_getcontent($ch);
-    $http = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    $error = curl_error($ch);
-    $sourceStatus[$name] = $http;
-
-    if (is_string($body) && $http === 200 && $error === '') {
-        $payload = json_decode($body, true);
-        if (is_array($payload)) {
-            try {
-                $parse = $providers[$name]['parse'];
-                $row = $parse($payload);
-                if (($row['icao'] ?? null) === $icao) $observations[$name] = $row;
-            } catch (Throwable $e) {
-                error_log('[adsb '.$name.' parse] '.$e->getMessage());
-            }
-        }
-    } elseif ($error !== '') {
-        error_log('[adsb '.$name.'] '.$error);
+function ycAdsbRunProviders(array $providers, callable $onComplete): void {
+    if (!function_exists('curl_multi_init')) throw new RuntimeException('PHP cURL multi aktif değil.');
+    $multi = curl_multi_init();
+    $handles = [];
+    foreach ($providers as $name => $provider) {
+        $ch = ycAdsbCurl($provider['url']);
+        $id = spl_object_id($ch);
+        $handles[$id] = ['name'=>$name,'handle'=>$ch,'parse'=>$provider['parse']];
+        curl_multi_add_handle($multi, $ch);
     }
 
-    curl_multi_remove_handle($multi, $ch);
-    curl_close($ch);
-}
-curl_multi_close($multi);
+    $running = null;
+    do {
+        do {
+            $mrc = curl_multi_exec($multi, $running);
+        } while ($mrc === CURLM_CALL_MULTI_PERFORM);
 
-if ($observations === []) {
-    http_response_code(404);
-    echo json_encode([
-        'ok'=>false,
-        'icao'=>$icao,
-        'aircraft'=>null,
-        'availableSources'=>[],
+        while ($info = curl_multi_info_read($multi)) {
+            $ch = $info['handle'];
+            $id = spl_object_id($ch);
+            $meta = $handles[$id] ?? null;
+            if ($meta === null) continue;
+
+            $body = curl_multi_getcontent($ch);
+            $http = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            $error = curl_error($ch);
+            $rows = [];
+
+            if (is_string($body) && $http === 200 && $error === '') {
+                $payload = json_decode($body, true);
+                if (is_array($payload)) {
+                    try {
+                        $parse = $meta['parse'];
+                        $rows = $parse($payload);
+                    } catch (Throwable $e) {
+                        error_log('[adsb '.$meta['name'].' parse] '.$e->getMessage());
+                    }
+                }
+            } elseif ($error !== '') {
+                error_log('[adsb '.$meta['name'].'] '.$error);
+            }
+
+            $onComplete($meta['name'], $http, $rows);
+            curl_multi_remove_handle($multi, $ch);
+            curl_close($ch);
+            unset($handles[$id]);
+        }
+
+        if ($running > 0) {
+            $selected = curl_multi_select($multi, 0.5);
+            if ($selected === -1) usleep(10000);
+        }
+    } while ($running > 0 || $handles !== []);
+
+    curl_multi_close($multi);
+}
+
+function ycAdsbSeenPos(array $row): float {
+    return is_numeric($row['seenPos'] ?? null) ? max(0.0, (float)$row['seenPos']) : INF;
+}
+
+function ycAdsbMergeRows(array &$best, array $rows, ?string $onlyIcao = null): array {
+    $changed = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) continue;
+        $icao = strtolower((string)($row['icao'] ?? ''));
+        if (!preg_match('/^[0-9a-f]{6}$/', $icao)) continue;
+        if ($onlyIcao !== null && $icao !== $onlyIcao) continue;
+        if (!isset($best[$icao]) || ycAdsbSeenPos($row) < ycAdsbSeenPos($best[$icao])) {
+            $best[$icao] = $row;
+            $changed[] = $row;
+        }
+    }
+    return $changed;
+}
+
+function ycAdsbStreamLine(array $payload): void {
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)."\n";
+    if (function_exists('ob_flush')) @ob_flush();
+    flush();
+}
+
+ycAdsbRequireSameOrigin();
+
+require_once __DIR__ . '/adsbtat.php';
+require_once __DIR__ . '/adsblol.php';
+require_once __DIR__ . '/adsbfi.php';
+
+$icao = strtolower(trim((string)($_GET['icao'] ?? '')));
+$boxRaw = trim((string)($_GET['box'] ?? ''));
+$stream = ($_GET['stream'] ?? '') === '1';
+
+if ($icao !== '' && $boxRaw !== '') {
+    ycAdsbJson(400, ['ok'=>false,'error'=>'icao ve box aynı anda kullanılamaz.']);
+}
+
+try {
+    if ($icao !== '') {
+        if (!preg_match('/^[0-9a-f]{6}$/', $icao)) throw new InvalidArgumentException('Geçerli 6 haneli ICAO HEX gerekli.');
+        $providers = [
+            'tat' => ['url'=>ycAdsbTatIcaoEndpoint($icao), 'parse'=>'ycAdsbTatParseList'],
+            'adsblol' => ['url'=>ycAdsbLolIcaoEndpoint($icao), 'parse'=>'ycAdsbLolParseList'],
+            'adsbfi' => ['url'=>ycAdsbFiIcaoEndpoint($icao), 'parse'=>'ycAdsbFiParseList'],
+        ];
+        $best = [];
+        $sourceStatus = [];
+        $available = [];
+        ycAdsbRunProviders($providers, static function(string $name, int $http, array $rows) use (&$best, &$sourceStatus, &$available, $icao): void {
+            $sourceStatus[$name] = $http;
+            $changed = ycAdsbMergeRows($best, $rows, $icao);
+            if ($changed !== []) $available[] = $name;
+        });
+        if (!isset($best[$icao])) {
+            ycAdsbJson(404, [
+                'ok'=>false,
+                'icao'=>$icao,
+                'aircraft'=>null,
+                'availableSources'=>array_values(array_unique($available)),
+                'sourceStatus'=>$sourceStatus,
+                'error'=>'Uçak bulunamadı.',
+            ]);
+        }
+        ycAdsbJson(200, [
+            'ok'=>true,
+            'icao'=>$icao,
+            'positionSource'=>$best[$icao]['provider'],
+            'availableSources'=>array_values(array_unique($available)),
+            'sourceStatus'=>$sourceStatus,
+            'aircraft'=>$best[$icao],
+        ]);
+    }
+
+    if ($boxRaw === '') throw new InvalidArgumentException('icao veya box gerekli.');
+    $box = ycAdsbParseBox($boxRaw);
+    $providers = [
+        'tat' => ['url'=>ycAdsbTatAreaEndpoint($box), 'parse'=>'ycAdsbTatParseList'],
+        'adsblol' => ['url'=>ycAdsbLolAreaEndpoint($box), 'parse'=>'ycAdsbLolParseList'],
+        'adsbfi' => ['url'=>ycAdsbFiAreaEndpoint($box), 'parse'=>'ycAdsbFiParseList'],
+    ];
+
+    if ($stream) {
+        http_response_code(200);
+        header('Content-Type: application/x-ndjson; charset=utf-8');
+        header('Cache-Control: no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Accel-Buffering: no');
+        @ini_set('zlib.output_compression', '0');
+        @ini_set('output_buffering', 'off');
+        ob_implicit_flush(true);
+
+        $best = [];
+        $sourceStatus = [];
+        ycAdsbRunProviders($providers, static function(string $name, int $http, array $rows) use (&$best, &$sourceStatus): void {
+            $sourceStatus[$name] = $http;
+            $changed = ycAdsbMergeRows($best, $rows);
+            ycAdsbStreamLine([
+                'type'=>'batch',
+                'source'=>$name,
+                'status'=>$http,
+                'at'=>round(microtime(true) * 1000),
+                'aircraft'=>$changed,
+            ]);
+        });
+        ycAdsbStreamLine([
+            'type'=>'end',
+            'at'=>round(microtime(true) * 1000),
+            'count'=>count($best),
+            'sourceStatus'=>$sourceStatus,
+        ]);
+        exit;
+    }
+
+    $best = [];
+    $sourceStatus = [];
+    ycAdsbRunProviders($providers, static function(string $name, int $http, array $rows) use (&$best, &$sourceStatus): void {
+        $sourceStatus[$name] = $http;
+        ycAdsbMergeRows($best, $rows);
+    });
+    ycAdsbJson(200, [
+        'ok'=>true,
+        'box'=>$box,
+        'count'=>count($best),
         'sourceStatus'=>$sourceStatus,
-        'error'=>'Uçak bulunamadı.',
-    ], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
-    exit;
+        'aircraft'=>array_values($best),
+    ]);
+} catch (InvalidArgumentException $e) {
+    ycAdsbJson(400, ['ok'=>false,'error'=>$e->getMessage()]);
+} catch (Throwable $e) {
+    error_log('[adsb] '.$e->getMessage());
+    ycAdsbJson(503, ['ok'=>false,'error'=>'ADS-B motoru kullanılamıyor.']);
 }
-
-$ranked = array_values($observations);
-usort($ranked, static function(array $a, array $b): int {
-    $aPos = is_numeric($a['seenPos'] ?? null) ? (float)$a['seenPos'] : INF;
-    $bPos = is_numeric($b['seenPos'] ?? null) ? (float)$b['seenPos'] : INF;
-    return $aPos <=> $bPos;
-});
-
-$winner = $ranked[0];
-
-http_response_code(200);
-echo json_encode([
-    'ok'=>true,
-    'icao'=>$icao,
-    'positionSource'=>$winner['provider'],
-    'availableSources'=>array_keys($observations),
-    'sourceStatus'=>$sourceStatus,
-    'aircraft'=>$winner,
-], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
