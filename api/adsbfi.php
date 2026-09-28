@@ -70,18 +70,87 @@ function ycAdsbFiStandardize(?array $a, string $provider): array {
 
 function ycAdsbFiHttpJson(string $url): array {
     if (!function_exists('curl_init')) throw new RuntimeException('PHP cURL aktif değil.');
-    $ch=curl_init($url);curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>2,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>7,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_REDIR_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_USERAGENT=>'YulCaribe/1.0 ADS-B',CURLOPT_HTTPHEADER=>['Accept: application/json']]);
-    $body=curl_exec($ch);$status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);$error=curl_error($ch);curl_close($ch);
-    if(!is_string($body)||$status!==200)throw new RuntimeException('adsb.fi erişilemedi'.($error?': '.$error:'.'));
-    $json=json_decode($body,true);if(!is_array($json))throw new RuntimeException('adsb.fi geçersiz JSON döndürdü.');return $json;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 2,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT => 7,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'YulCaribe/1.0 ADS-B',
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+    ]);
+    $body = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    if (!is_string($body) || $status !== 200) throw new RuntimeException('adsb.fi erişilemedi'.($error ? ': '.$error : '.'));
+    $json = json_decode($body, true);
+    if (!is_array($json)) throw new RuntimeException('adsb.fi geçersiz JSON döndürdü.');
+    return $json;
 }
-function ycAdsbFiString(mixed $v): ?string { if(!is_string($v)&&!is_numeric($v))return null;$s=trim((string)$v);return $s===''?null:$s; }
-function ycAdsbFiNumber(mixed $v): int|float|null { return is_numeric($v)?$v+0:null; }
-function ycAdsbFiAltitude(mixed $v): int|float|string|null { if(is_string($v)&&strtolower(trim($v))==='ground')return 'ground';return ycAdsbFiNumber($v); }
+
+function ycAdsbFiString(mixed $v): ?string {
+    if (!is_string($v) && !is_numeric($v)) return null;
+    $s = trim((string)$v);
+    return $s === '' ? null : $s;
+}
+function ycAdsbFiNumber(mixed $v): int|float|null { return is_numeric($v) ? $v + 0 : null; }
+function ycAdsbFiAltitude(mixed $v): int|float|string|null {
+    if (is_string($v) && strtolower(trim($v)) === 'ground') return 'ground';
+    return ycAdsbFiNumber($v);
+}
+
+function ycAdsbFiSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts)
+        && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || (int)$parts['port'] === 443)
+        && !isset($parts['user'])
+        && !isset($parts['pass']);
+}
+
+function ycAdsbFiRequireSameOrigin(): void {
+    header('Vary: Origin, Sec-Fetch-Site, Referer');
+    header('Cross-Origin-Resource-Policy: same-origin');
+    $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+    $referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    $fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+    if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+        || ($origin !== ''
+            ? !in_array($origin, ['https://yulcaribe.com', 'https://yulcaribe.com:443'], true)
+            : !ycAdsbFiSameOrigin($referer))) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
+        echo json_encode(['ok'=>false,'error'=>'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        exit;
+    }
+}
 
 if (realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
-    header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store, max-age=0');
-    $icao=strtolower(trim((string)($_GET['icao']??'')));
-    if(!preg_match('/^[0-9a-f]{6}$/',$icao)){http_response_code(400);echo json_encode(['ok'=>false,'error'=>'Geçerli 6 haneli ICAO HEX gerekli.']);exit;}
-    try{$aircraft=ycAdsbFiFetch($icao);echo json_encode(['ok'=>true,'provider'=>'adsbfi','aircraft'=>$aircraft],JSON_UNESCAPED_SLASHES|JSON_INVALID_UTF8_SUBSTITUTE);}catch(Throwable $e){error_log('[adsbfi] '.$e->getMessage());http_response_code(502);echo json_encode(['ok'=>false,'provider'=>'adsbfi','aircraft'=>null,'error'=>'ADS-B kaynağına erişilemedi.']);}
+    ycAdsbFiRequireSameOrigin();
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
+    $icao = strtolower(trim((string)($_GET['icao'] ?? '')));
+    if (!preg_match('/^[0-9a-f]{6}$/', $icao)) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false,'error'=>'Geçerli 6 haneli ICAO HEX gerekli.']);
+        exit;
+    }
+    try {
+        $aircraft = ycAdsbFiFetch($icao);
+        echo json_encode(['ok'=>true,'provider'=>'adsbfi','aircraft'=>$aircraft], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    } catch (Throwable $e) {
+        error_log('[adsbfi] '.$e->getMessage());
+        http_response_code(502);
+        echo json_encode(['ok'=>false,'provider'=>'adsbfi','aircraft'=>null,'error'=>'ADS-B kaynağına erişilemedi.']);
+    }
 }
