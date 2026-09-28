@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#000000">
   <meta name="description" content="YulCaribe aviation tools: METAR, TAF, NOTAM, navigation map, WAFS and live aircraft.">
   <title>YulCaribe</title>
-  <link rel="stylesheet" href="/main/app.css?v=2">
+  <link rel="stylesheet" href="/main/app.css?v=3">
 </head>
 <body data-page="home">
   <header class="app-header">
@@ -17,44 +17,34 @@
     <section class="page-section weather-tool" aria-labelledby="weather-title">
       <div class="section-title-row">
         <h1 id="weather-title">METAR / TAF</h1>
-        <div class="segmented" role="group" aria-label="Yorum dili">
-          <button type="button" data-weather-language="tr" aria-pressed="true">TR</button>
-          <button type="button" data-weather-language="en" aria-pressed="false">EN</button>
-        </div>
       </div>
 
       <form id="weather-search-form" class="search-row" autocomplete="off">
-        <input id="weather-icao" name="icao" type="text" inputmode="text" maxlength="4" minlength="4" pattern="[A-Za-z0-9]{4}" placeholder="ICAO" aria-label="ICAO kodu" spellcheck="false" required>
-        <button type="submit">Sorgula</button>
+        <input id="weather-stations" name="stations" type="text" inputmode="text" maxlength="100" placeholder="ICAO / IATA · ör. LTAI AYT LTFM" aria-label="ICAO veya IATA kodları" spellcheck="false" required>
+        <button id="weather-search-submit" type="submit">Sorgula</button>
       </form>
 
+      <div class="weather-query-options" role="group" aria-label="Weather products">
+        <label><input id="weather-type-metar" type="checkbox" checked> <span>METAR</span></label>
+        <label><input id="weather-type-taf" type="checkbox" checked> <span>TAF</span></label>
+      </div>
+
       <div class="quick-row" aria-label="Hızlı havalimanı seçimi">
-        <button type="button" data-weather-icao="LTAI">LTAI</button>
-        <button type="button" data-weather-icao="LTFM">LTFM</button>
-        <button type="button" data-weather-icao="LTAC">LTAC</button>
-        <button type="button" data-weather-icao="LTBJ">LTBJ</button>
+        <button type="button" data-weather-code="LTAI">LTAI</button>
+        <button type="button" data-weather-code="LTFM">LTFM</button>
+        <button type="button" data-weather-code="LTAC">LTAC</button>
+        <button type="button" data-weather-code="LTBJ">LTBJ</button>
       </div>
 
       <div id="weather-feedback" class="status-line" aria-live="polite"></div>
 
       <div id="weather-results" class="weather-results" hidden>
-        <section class="plain-block">
-          <div class="plain-block-head"><strong>METAR</strong><button type="button" data-copy-weather="metar">Kopyala</button></div>
-          <pre id="weather-metar">—</pre>
-          <div id="weather-metar-decode" class="decode-list" hidden></div>
-        </section>
-
-        <section class="plain-block">
-          <div class="plain-block-head"><strong>TAF</strong><button type="button" data-copy-weather="taf">Kopyala</button></div>
-          <pre id="weather-taf">—</pre>
-          <div id="weather-taf-decode" class="decode-list" hidden></div>
-        </section>
-
-        <section id="weather-interpretation" class="plain-block" hidden>
-          <div class="plain-block-head"><strong id="weather-interpretation-title">Hava Durumu Yorumu</strong></div>
-          <div id="weather-interpretation-content"></div>
-        </section>
-
+        <div class="weather-result-actions">
+          <button id="weather-copy" type="button">Kopyala</button>
+          <button id="weather-share" type="button">Paylaş</button>
+        </div>
+        <section id="weather-raw" class="weather-raw" aria-label="Raw weather data"></section>
+        <section id="weather-decoded" class="weather-decoded" aria-label="Decoded weather data" hidden></section>
         <div id="weather-source-line" class="source-line"></div>
       </div>
     </section>
@@ -66,6 +56,7 @@
     <a href="/main/notam/" data-nav="notam">NOTAM</a>
   </nav>
 
-  <script src="/main/app.js?v=1" defer></script>
+  <script src="/main/i18n.js?v=1" defer></script>
+  <script src="/main/app.js?v=3" defer></script>
 </body>
 </html>
