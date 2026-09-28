@@ -53,7 +53,7 @@ function ycAdsbParseBox(string $raw): array {
     return [$south,$north,$west,$east];
 }
 
-function ycAdsbCurl(string $url): CurlHandle {
+function ycAdsbCurl(string $url, array $headers = [], ?string $referer = null): CurlHandle {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -66,8 +66,9 @@ function ycAdsbCurl(string $url): CurlHandle {
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
         CURLOPT_USERAGENT => 'YulCaribe/1.0 ADS-B',
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_HTTPHEADER => array_merge(['Accept: application/json'], $headers),
     ]);
+    if ($referer !== null) curl_setopt($ch, CURLOPT_REFERER, $referer);
     return $ch;
 }
 
@@ -76,7 +77,7 @@ function ycAdsbRunProviders(array $providers, callable $onComplete): void {
     $multi = curl_multi_init();
     $handles = [];
     foreach ($providers as $name => $provider) {
-        $ch = ycAdsbCurl($provider['url']);
+        $ch = ycAdsbCurl($provider['url'], $provider['headers'] ?? [], $provider['referer'] ?? null);
         $id = spl_object_id($ch);
         $handles[$id] = ['name'=>$name,'handle'=>$ch,'parse'=>$provider['parse']];
         curl_multi_add_handle($multi, $ch);
@@ -171,7 +172,7 @@ try {
     if ($icao !== '') {
         if (!preg_match('/^[0-9a-f]{6}$/', $icao)) throw new InvalidArgumentException('Geçerli 6 haneli ICAO HEX gerekli.');
         $providers = [
-            'tat' => ['url'=>ycAdsbTatIcaoEndpoint($icao), 'parse'=>'ycAdsbTatParseList'],
+            'tat' => ['url'=>ycAdsbTatIcaoEndpoint($icao), 'parse'=>'ycAdsbTatParseList', 'referer'=>'https://globe.theairtraffic.com/', 'headers'=>['Cache-Control: no-cache','Pragma: no-cache','X-Requested-With: XMLHttpRequest']],
             'adsblol' => ['url'=>ycAdsbLolIcaoEndpoint($icao), 'parse'=>'ycAdsbLolParseList'],
             'adsbfi' => ['url'=>ycAdsbFiIcaoEndpoint($icao), 'parse'=>'ycAdsbFiParseList'],
         ];
@@ -206,7 +207,7 @@ try {
     if ($boxRaw === '') throw new InvalidArgumentException('icao veya box gerekli.');
     $box = ycAdsbParseBox($boxRaw);
     $providers = [
-        'tat' => ['url'=>ycAdsbTatAreaEndpoint($box), 'parse'=>'ycAdsbTatParseList'],
+        'tat' => ['url'=>ycAdsbTatAreaEndpoint($box), 'parse'=>'ycAdsbTatParseList', 'referer'=>'https://globe.theairtraffic.com/', 'headers'=>['Cache-Control: no-cache','Pragma: no-cache','X-Requested-With: XMLHttpRequest']],
         'adsblol' => ['url'=>ycAdsbLolAreaEndpoint($box), 'parse'=>'ycAdsbLolParseList'],
         'adsbfi' => ['url'=>ycAdsbFiAreaEndpoint($box), 'parse'=>'ycAdsbFiParseList'],
     ];
