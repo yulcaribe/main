@@ -99,7 +99,8 @@ function ycAdsbTatHttpJson(string $url): array {
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
         CURLOPT_USERAGENT => 'YulCaribe/1.0 ADS-B',
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_REFERER => 'https://globe.theairtraffic.com/',
+        CURLOPT_HTTPHEADER => ['Accept: application/json','Cache-Control: no-cache','Pragma: no-cache','X-Requested-With: XMLHttpRequest'],
     ]);
     $body = curl_exec($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
