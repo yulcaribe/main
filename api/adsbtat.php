@@ -105,9 +105,40 @@ function ycAdsbTatAltitude(mixed $v): int|float|string|null {
     return ycAdsbTatNumber($v);
 }
 
+function ycAdsbTatSameOrigin(string $url): bool {
+    $parts = parse_url($url);
+    return is_array($parts)
+        && ($parts['scheme'] ?? '') === 'https'
+        && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
+        && (!isset($parts['port']) || (int)$parts['port'] === 443)
+        && !isset($parts['user'])
+        && !isset($parts['pass']);
+}
+
+function ycAdsbTatRequireSameOrigin(): void {
+    header('Vary: Origin, Sec-Fetch-Site, Referer');
+    header('Cross-Origin-Resource-Policy: same-origin');
+    $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+    $referer = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    $fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+    if (($fetchSite !== '' && $fetchSite !== 'same-origin')
+        || ($origin !== ''
+            ? !in_array($origin, ['https://yulcaribe.com', 'https://yulcaribe.com:443'], true)
+            : !ycAdsbTatSameOrigin($referer))) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
+        echo json_encode(['ok'=>false,'error'=>'Bu API yalnızca yulcaribe.com üzerinden kullanılabilir.'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        exit;
+    }
+}
+
 if (realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
+    ycAdsbTatRequireSameOrigin();
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, max-age=0');
+    header('X-Content-Type-Options: nosniff');
     $icao = strtolower(trim((string)($_GET['icao'] ?? '')));
     if (!preg_match('/^[0-9a-f]{6}$/', $icao)) {
         http_response_code(400);
