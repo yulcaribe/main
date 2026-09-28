@@ -1,27 +1,51 @@
 <?php
 declare(strict_types=1);
 
-const YC_ADSB_LOL_URL = 'https://api.adsb.lol/v2/hex/';
+const YC_ADSB_LOL_URL = 'https://api.adsb.lol';
 
-function ycAdsbLolEndpoint(string $icao): string {
-    return YC_ADSB_LOL_URL . rawurlencode($icao);
+function ycAdsbLolIcaoEndpoint(string $icao): string {
+    return YC_ADSB_LOL_URL . '/v2/hex/' . rawurlencode($icao);
 }
 
-function ycAdsbLolParse(array $payload): array {
-    $aircraft = is_array($payload['ac'] ?? null) ? $payload['ac'] : [];
-    $row = is_array($aircraft[0] ?? null) ? $aircraft[0] : null;
-    return ycAdsbLolStandardize($row, 'adsblol');
+function ycAdsbLolAreaEndpoint(array $box): string {
+    [$south,$north,$west,$east] = $box;
+    $lat = ($south + $north) / 2.0;
+    $lon = ($west + $east) / 2.0;
+    $earthNm = 3440.065;
+    $maxNm = 1.0;
+    foreach ([[$south,$west],[$south,$east],[$north,$west],[$north,$east]] as [$clat,$clon]) {
+        $p1 = deg2rad($lat); $p2 = deg2rad($clat);
+        $dLat = $p2 - $p1; $dLon = deg2rad($clon - $lon);
+        $h = sin($dLat/2)**2 + cos($p1)*cos($p2)*sin($dLon/2)**2;
+        $nm = 2*$earthNm*asin(min(1.0, sqrt($h)));
+        $maxNm = max($maxNm, $nm);
+    }
+    $radius = min(250.0, ceil($maxNm * 1.05));
+    return YC_ADSB_LOL_URL . '/v2/point/' . rawurlencode(number_format($lat, 6, '.', '')) . '/' . rawurlencode(number_format($lon, 6, '.', '')) . '/' . rawurlencode((string)$radius);
 }
 
-function ycAdsbLolFetch(string $icao): array {
-    return ycAdsbLolParse(ycAdsbLolHttpJson(ycAdsbLolEndpoint($icao)));
+function ycAdsbLolParseList(array $payload): array {
+    $raw = $payload['ac'] ?? null;
+    if (!is_array($raw)) return [];
+    $out = [];
+    foreach ($raw as $item) {
+        if (!is_array($item)) continue;
+        $row = ycAdsbLolStandardize($item);
+        if ($row['icao'] !== null) $out[] = $row;
+    }
+    return $out;
 }
 
-function ycAdsbLolStandardize(?array $a, string $provider): array {
+function ycAdsbLolParseOne(array $payload): ?array {
+    $rows = ycAdsbLolParseList($payload);
+    return $rows[0] ?? null;
+}
+
+function ycAdsbLolStandardize(array $a): array {
     $icao = strtolower(trim((string)($a['hex'] ?? '')));
-    if (str_starts_with($icao, '~')) $icao = '';
+    if ($icao === '' || str_starts_with($icao, '~') || !preg_match('/^[0-9a-f]{6}$/', $icao)) $icao = null;
     return [
-        'icao' => $icao !== '' ? $icao : null,
+        'icao' => $icao,
         'callsign' => ycAdsbLolString($a['flight'] ?? null),
         'reg' => ycAdsbLolString($a['r'] ?? null),
         'aircraftType' => ycAdsbLolString($a['t'] ?? null),
@@ -47,7 +71,6 @@ function ycAdsbLolStandardize(?array $a, string $provider): array {
         'navAltitudeMcp' => ycAdsbLolNumber($a['nav_altitude_mcp'] ?? null),
         'navAltitudeFms' => ycAdsbLolNumber($a['nav_altitude_fms'] ?? null),
         'navHeading' => ycAdsbLolNumber($a['nav_heading'] ?? null),
-        'navModes' => is_array($a['nav_modes'] ?? null) ? array_values($a['nav_modes']) : [],
         'nic' => ycAdsbLolNumber($a['nic'] ?? null),
         'rc' => ycAdsbLolNumber($a['rc'] ?? null),
         'nicBaro' => ycAdsbLolNumber($a['nic_baro'] ?? null),
@@ -64,7 +87,8 @@ function ycAdsbLolStandardize(?array $a, string $provider): array {
         'seenPos' => ycAdsbLolNumber($a['seen_pos'] ?? null),
         'messages' => ycAdsbLolNumber($a['messages'] ?? null),
         'rssi' => ycAdsbLolNumber($a['rssi'] ?? null),
-        'provider' => $provider,
+        'navModes' => is_array($a['nav_modes'] ?? null) ? array_values($a['nav_modes']) : [],
+        'provider' => 'adsblol',
     ];
 }
 
@@ -88,9 +112,9 @@ function ycAdsbLolHttpJson(string $url): array {
     $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $error = curl_error($ch);
     curl_close($ch);
-    if (!is_string($body) || $status !== 200) throw new RuntimeException('ADSB.lol erişilemedi'.($error ? ': '.$error : '.'));
+    if (!is_string($body) || $status !== 200) throw new RuntimeException('adsblol erişilemedi'.($error ? ': '.$error : '.'));
     $json = json_decode($body, true);
-    if (!is_array($json)) throw new RuntimeException('ADSB.lol geçersiz JSON döndürdü.');
+    if (!is_array($json)) throw new RuntimeException('adsblol geçersiz JSON döndürdü.');
     return $json;
 }
 
@@ -99,7 +123,11 @@ function ycAdsbLolString(mixed $v): ?string {
     $s = trim((string)$v);
     return $s === '' ? null : $s;
 }
-function ycAdsbLolNumber(mixed $v): int|float|null { return is_numeric($v) ? $v + 0 : null; }
+
+function ycAdsbLolNumber(mixed $v): int|float|null {
+    return is_numeric($v) ? $v + 0 : null;
+}
+
 function ycAdsbLolAltitude(mixed $v): int|float|string|null {
     if (is_string($v) && strtolower(trim($v)) === 'ground') return 'ground';
     return ycAdsbLolNumber($v);
@@ -111,8 +139,7 @@ function ycAdsbLolSameOrigin(string $url): bool {
         && ($parts['scheme'] ?? '') === 'https'
         && strtolower((string)($parts['host'] ?? '')) === 'yulcaribe.com'
         && (!isset($parts['port']) || (int)$parts['port'] === 443)
-        && !isset($parts['user'])
-        && !isset($parts['pass']);
+        && !isset($parts['user']) && !isset($parts['pass']);
 }
 
 function ycAdsbLolRequireSameOrigin(): void {
@@ -123,7 +150,7 @@ function ycAdsbLolRequireSameOrigin(): void {
     $fetchSite = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
     if (($fetchSite !== '' && $fetchSite !== 'same-origin')
         || ($origin !== ''
-            ? !in_array($origin, ['https://yulcaribe.com', 'https://yulcaribe.com:443'], true)
+            ? !in_array($origin, ['https://yulcaribe.com','https://yulcaribe.com:443'], true)
             : !ycAdsbLolSameOrigin($referer))) {
         http_response_code(403);
         header('Content-Type: application/json; charset=utf-8');
@@ -134,23 +161,41 @@ function ycAdsbLolRequireSameOrigin(): void {
     }
 }
 
+function ycAdsbLolParseBox(string $raw): array {
+    if (!preg_match('/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/', trim($raw))) {
+        throw new InvalidArgumentException('Geçersiz ADS-B box.');
+    }
+    [$south,$north,$west,$east] = array_map('floatval', explode(',', $raw));
+    if ($south < -90 || $north > 90 || $west < -180 || $east > 180 || $south >= $north || $west >= $east) {
+        throw new InvalidArgumentException('ADS-B box sınır dışında.');
+    }
+    return [$south,$north,$west,$east];
+}
+
 if (realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
     ycAdsbLolRequireSameOrigin();
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, max-age=0');
     header('X-Content-Type-Options: nosniff');
-    $icao = strtolower(trim((string)($_GET['icao'] ?? '')));
-    if (!preg_match('/^[0-9a-f]{6}$/', $icao)) {
-        http_response_code(400);
-        echo json_encode(['ok'=>false,'error'=>'Geçerli 6 haneli ICAO HEX gerekli.']);
-        exit;
-    }
     try {
-        $aircraft = ycAdsbLolFetch($icao);
-        echo json_encode(['ok'=>true,'provider'=>'adsblol','aircraft'=>$aircraft], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        $icao = strtolower(trim((string)($_GET['icao'] ?? '')));
+        $boxRaw = trim((string)($_GET['box'] ?? ''));
+        if ($icao !== '') {
+            if (!preg_match('/^[0-9a-f]{6}$/', $icao)) throw new InvalidArgumentException('Geçerli 6 haneli ICAO HEX gerekli.');
+            $rows = ycAdsbLolParseList(ycAdsbLolHttpJson(ycAdsbLolIcaoEndpoint($icao)));
+        } elseif ($boxRaw !== '') {
+            $box = ycAdsbLolParseBox($boxRaw);
+            $rows = ycAdsbLolParseList(ycAdsbLolHttpJson(ycAdsbLolAreaEndpoint($box)));
+        } else {
+            throw new InvalidArgumentException('icao veya box gerekli.');
+        }
+        echo json_encode(['ok'=>true,'provider'=>'adsblol','aircraft'=>$rows], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    } catch (InvalidArgumentException $e) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false,'provider'=>'adsblol','aircraft'=>[],'error'=>$e->getMessage()], JSON_UNESCAPED_UNICODE);
     } catch (Throwable $e) {
-        error_log('[adsblol] '.$e->getMessage());
+        error_log('[adsb adsblol] '.$e->getMessage());
         http_response_code(502);
-        echo json_encode(['ok'=>false,'provider'=>'adsblol','aircraft'=>null,'error'=>'ADS-B kaynağına erişilemedi.']);
+        echo json_encode(['ok'=>false,'provider'=>'adsblol','aircraft'=>[],'error'=>'ADS-B kaynağına erişilemedi.']);
     }
 }
