@@ -33,12 +33,6 @@
     <span class="dot" id="status-dot"></span><strong id="status-text">CHARTS</strong>
   </section>
 
-  <aside class="tool-panel" id="flights-panel">
-    <div class="tool-head"><div><strong>FLIGHTS</strong><small>Canlı ADS-B</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
-    <label class="master-row"><span>Canlı uçuşlar</span><input id="flights-enabled" type="checkbox"></label>
-    <div class="flight-health" id="flights-status" role="status" aria-live="polite" hidden><span class="flight-health-dot"></span><span class="flight-health-label">Yükleniyor</span></div>
-  </aside>
-
   <aside class="tool-panel" id="chart-panel">
     <div class="tool-head"><div><strong>CHARTS</strong><small>Navdata</small></div><button type="button" data-panel-close aria-label="Paneli kapat">×</button></div>
     <label class="master-row"><span>Tüm chart katmanları</span><input id="charts-toggle-all" type="checkbox" checked></label>
@@ -86,6 +80,8 @@
       <input id="map-time" type="datetime-local" step="60" aria-label="UTC zamanı">
     </div>
   </section>
+
+  <input id="flights-enabled" type="checkbox" hidden aria-hidden="true">
 
   <div class="map-mode-dock" role="toolbar" aria-label="Harita katmanları">
     <button class="mode-btn" type="button" data-panel-target="flights-panel">FLIGHTS</button>
