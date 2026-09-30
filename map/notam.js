@@ -124,12 +124,15 @@
       }
 
       function renderCoverage(payload) {
+        const unresolved = Number(payload?.referenceResolution?.unresolved) || 0;
+        const note = (message) => setNote(message + (unresolved > 0
+          ? ` ${unresolved} unresolved cancellation/replacement references across the dataset; related NOTAMs may still appear.` : ""));
         const selected = payload?.atUtc
           ? String(payload.atUtc).slice(0,16).replace("T"," ") + "Z"
           : selectedLabel();
         const coverage = payload?.coverage || {};
         if (coverage.mode === "future") {
-          setNote(`Future view · ${selected} · currently published NOTAMs only.`);
+          note(`Future view · ${selected} · currently published NOTAMs only.`);
           return;
         }
         if (coverage.mode === "historical") {
@@ -137,15 +140,15 @@
             const from = coverage.completeFromUtc
               ? String(coverage.completeFromUtc).slice(0,16).replace("T"," ") + "Z"
               : null;
-            setNote(from
+            note(from
               ? `Historical view · ${selected} · coverage may be incomplete before ${from}.`
               : `Historical view · ${selected} · coverage may be incomplete.`);
           } else {
-            setNote(`Historical view · ${selected} · validity, cancellation, replacement and schedule evaluated for this UTC.`);
+            note(`Historical view · ${selected} · validity, cancellation, replacement and schedule evaluated for this UTC.`);
           }
           return;
         }
-        setNote(`${selected} · valid and schedule-active NOTAM geometries.`);
+        note(`${selected} · valid and schedule-active NOTAM geometries.`);
       }
 
       async function load(){

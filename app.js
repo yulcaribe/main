@@ -404,7 +404,11 @@
         if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
         currentPage = Number(payload.paging?.page) || 1;
         renderItems(payload); renderPaging(payload);
-        if (fields.status) fields.status.textContent = `${String(payload.state || "").toUpperCase()} · ${fmt(payload.atUtc)}`;
+        if (fields.status) {
+          const unresolved = Number(payload.referenceResolution?.unresolved) || 0;
+          fields.status.textContent = `${String(payload.state || "").toUpperCase()} · ${fmt(payload.atUtc)}`
+            + (unresolved > 0 ? ` · Veri genelinde ${unresolved} iptal/değiştirme referansı doğrulanamadı; ilgili kayıtlar bu referanslarla gizlenmedi.` : "");
+        }
       } catch (error) {
         if (error?.name === "AbortError") return;
         results.innerHTML = `<div class="error-box">${esc(error?.message || "NOTAM listesi yüklenemedi.")}</div>`;

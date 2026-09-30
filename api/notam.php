@@ -167,12 +167,11 @@ function identKey(array $row): ?string {
     $series = strtoupper(trim((string)($row['series'] ?? '')));
     $number = strtoupper(trim((string)($row['number'] ?? '')));
     $year = trim((string)($row['year'] ?? ''));
-    if ($series === '' || !preg_match('/([0-9]{4})/', $number, $m)) return null;
-    $serial = $m[1];
-    if (preg_match('/\/([0-9]{2})\b/', $number, $ym)) $year2 = $ym[1];
-    elseif ($year !== '' && preg_match('/([0-9]{2})$/', $year, $ym)) $year2 = $ym[1];
-    else return null;
-    return substr($series, 0, 1) . $serial . '/' . $year2;
+    if (!preg_match('/^[A-Z]$/D',$series) || !preg_match('/^(?:'.$series.')?([0-9]{4})(?:\/([0-9]{2}))?$/D',$number,$m)) return null;
+    if ($year!=='' && !preg_match('/^(?:[0-9]{2}|[0-9]{4})$/D',$year)) return null;
+    $year2=$year!==''?substr($year,-2):($m[2]??null);
+    if ($year2===null || (isset($m[2]) && $m[2]!==$year2)) return null;
+    return $series.$m[1].'/'.$year2;
 }
 
 function columns(bool $text = true, bool $geometry = false): string {
@@ -366,29 +365,17 @@ function scheduleActivity(array $row, DateTimeImmutable $at): array {
     return ['state'=>'inactive','active'=>false,'parsed'=>true,'raw'=>$raw,'reason'=>'outside_schedule'];
 }
 
-function collectReplacementStrings(mixed $node, array &$out, bool $replacementContext = false): void {
-    if (is_array($node)) {
-        foreach ($node as $key=>$value) {
-            $keyText=strtolower((string)$key);
-            $context=$replacementContext || str_contains($keyText,'replac') || str_contains($keyText,'supersed') || str_contains($keyText,'previous');
-            collectReplacementStrings($value,$out,$context);
-        }
-        return;
-    }
-    if ($replacementContext && is_scalar($node)) {
-        $text=trim((string)$node);
-        if ($text!=='') $out[]=$text;
-    }
-}
-
 function replacementTargetKey(array $row): ?string {
-    $text=(string)($row['notam_text']??'');
-    return preg_match('/\bNOTAMR\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)&&strtoupper($m[1])!==identKey($row)?strtoupper($m[1]):null;
+    return notamReferenceKey($row,'R');
 }
 
 function cancellationTargetKey(array $row): ?string {
-    $text=(string)($row['notam_text']??'');
-    return preg_match('/\bNOTAMC\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',$text,$m)&&strtoupper($m[1])!==identKey($row)?strtoupper($m[1]):null;
+    return notamReferenceKey($row,'C');
+}
+function notamReferenceKey(array $row,string $type): ?string {
+    preg_match_all('/\bNOTAM'.$type.'\s+([A-Z][0-9]{4}\/[0-9]{2})\b/i',(string)($row['notam_text']??''),$matches);
+    $targets=array_values(array_unique(array_map('strtoupper',$matches[1]??[])));
+    return count($targets)===1 && $targets[0]!==identKey($row)?$targets[0]:null;
 }
 function notamIssued(array $row): ?int {
     $raw=json_decode((string)($row['raw_json']??''),true);
@@ -421,53 +408,165 @@ function referencedFdcGeometry(PDO $pdo,array $row,string $environment,DateTimeI
     return is_array($g)&&is_array($fresh)&&validGeoJson($fresh)?normalizeGeometry($g):null;
 }
 
+// Publisher identity must be explicit provider metadata, never inferred from an airport/FIR/account.
+function notamPublisherKey(mixed $value): ?string {
+    $isLink=is_array($value);
+    if (is_array($value)) {
+        $links=[];
+        foreach (['href','xlink:href','@href','@xlink:href'] as $key) {
+            if (array_key_exists($key,$value)) {
+                if (!is_string($value[$key])) return null;
+                $links[]=trim($value[$key]);
+            }
+        }
+        $links=array_values(array_unique($links));
+        if (count($links)!==1) return null;
+        $value=$links[0]; // A display title alone is not an identity.
+    }
+    if (!is_string($value)) return null;
+    $value=trim($value);
+    if ($value==='' || strlen($value)>512 || preg_match('/[\x00-\x20\x7f<>"\'\\\\]/',$value)) return null;
+    if (in_array(strtoupper($value),['NONE','NULL','NIL','UNKN','UNKNOWN','XXXX','ZZZZ'],true)) return null;
+    if (!$isLink && preg_match('/^[A-Z]{4}(?:[A-Z]{4})?$/D',$value)) return 'nof:'.$value;
+    if (preg_match('/^urn:([a-z0-9][a-z0-9-]{0,31}):([^?#]+)$/iD',$value,$m)) {
+        // Only the URN scheme/namespace are case insensitive; preserve the identifier itself.
+        if (strtolower($m[1])==='uuid' && !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iD',$m[2])) return null;
+        $id=strtolower($m[1])==='uuid'?strtolower($m[2]):$m[2];
+        return 'urn:'.strtolower($m[1]).':'.$id;
+    }
+    if (preg_match('~^https?://~i',$value) && filter_var($value,FILTER_VALIDATE_URL)) {
+        $url=parse_url($value);
+        if (isset($url['user']) || isset($url['pass'])) return null;
+        return strtolower($url['scheme']).'://'.strtolower($url['host']).(isset($url['port'])?':'.$url['port']:'').($url['path']??'').(isset($url['query'])?'?'.$url['query']:'').(isset($url['fragment'])?'#'.$url['fragment']:'');
+    }
+    // Document-local #ids are not globally unique. No remote URL is ever dereferenced here.
+    return null;
+}
+
+function notamXmlPublisher(DOMElement $notam): mixed {
+    if (!in_array($notam->namespaceURI,['http://www.aixm.aero/schema/5.1','http://www.aixm.aero/schema/5.1/event'],true)) return null;
+    $publisher=null;$count=0;
+    foreach ($notam->childNodes as $child) {
+        if (!$child instanceof DOMElement || $child->localName!=='publisherNOF' || $child->namespaceURI!==$notam->namespaceURI) continue;
+        $count++;
+        $href=$child->getAttributeNS('http://www.w3.org/1999/xlink','href');
+        $publisher=$href!==''?['href'=>$href]:null;
+    }
+    return $count===1?$publisher:null;
+}
+
+function notamLegacyPublisher(array $raw,array $row): ?string {
+    $xml=$raw['aixm']??null;
+    if (!is_string($xml) || strlen($xml)>16777216 || !str_contains($xml,'publisherNOF') || !class_exists(DOMDocument::class)) return null;
+    if (stripos($xml,'<!DOCTYPE')!==false || stripos($xml,'<!ENTITY')!==false) return null;
+    $wrapped='<nmswrap xmlns="http://www.aixm.aero/schema/5.1/message" xmlns:aixm="http://www.aixm.aero/schema/5.1" xmlns:event="http://www.aixm.aero/schema/5.1/event" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:gml="http://www.opengis.net/gml/3.2" xmlns:fnse="http://www.aixm.aero/schema/5.1/extensions/FAA/FNSE" xmlns:fns="urn:us.gov.dot.faa.aim.fns">'.$xml.'</nmswrap>';
+    $previous=libxml_use_internal_errors(true);
+    try {
+        $doc=new DOMDocument();
+        if (!$doc->loadXML($wrapped,LIBXML_NONET|LIBXML_COMPACT)) return null;
+        $xp=new DOMXPath($doc);$messages=$xp->query('//*[local-name()="AIXMBasicMessage"]');
+        if (!$messages || $messages->length!==1) return null;
+        $message=$messages->item(0);
+        if (!$message instanceof DOMElement || $message->getAttributeNS('http://www.opengis.net/gml/3.2','id')!==(string)$row['nms_id']) return null;
+        $nodes=$xp->query('.//*[local-name()="NOTAM"]',$message);
+        if (!$nodes || $nodes->length!==1 || !($nodes->item(0) instanceof DOMElement)) return null;
+        $notam=$nodes->item(0);$fields=[];
+        foreach ($notam->childNodes as $child) if ($child instanceof DOMElement) $fields[$child->localName]=trim($child->textContent);
+        if (identKey($fields)!==identKey($row) || ($fields['type']??'')!==strtoupper((string)$row['notam_type'])) return null;
+        return notamPublisherKey(notamXmlPublisher($notam));
+    } finally { libxml_clear_errors();libxml_use_internal_errors($previous); }
+}
+
 function referenceScope(array $row): ?array {
-    $account = trim((string)($row['account_id'] ?? ''));
-    $fir = strtoupper(trim((string)($row['affected_fir'] ?? '')));
-    $location = strtoupper(trim((string)(($row['icao_location'] ?? '') ?: ($row['location'] ?? ''))));
-    if ($account === '' || $fir === '' || $location === '') return null;
+    $account=trim((string)($row['account_id']??''));
+    $fir=strtoupper(trim((string)($row['affected_fir']??'')));
+    $location=strtoupper(trim((string)(($row['icao_location']??'')?:($row['location']??''))));
+    if ($account==='' || $fir==='' || $location==='') return null;
     $raw=json_decode((string)($row['raw_json']??''),true);$core=$raw['properties']['coreNOTAMData']['notam']??null;
-    if(!is_array($core)||trim((string)($core['accountId']??''))!==$account||strtoupper(trim((string)($core['affectedFir']??'')))!==$fir)return null;
-    return ['account'=>$account,'fir'=>$fir,'reference_location'=>$location];
+    if (!is_array($core)) return null;
+    foreach (['id','series','number','year','type','accountId','affectedFir','icaoLocation','location'] as $key) if (isset($core[$key])&&!is_scalar($core[$key])) return null;
+    $coreLocation=strtoupper(trim((string)(($core['icaoLocation']??'')?:($core['location']??''))));
+    if (empty($row['nms_id']) || (string)($core['id']??'')!==(string)$row['nms_id'] || identKey($core)===null || identKey($core)!==identKey($row) || strtoupper((string)($core['type']??''))!==strtoupper((string)($row['notam_type']??'')) || trim((string)($core['accountId']??''))!==$account || strtoupper(trim((string)($core['affectedFir']??'')))!==$fir || $coreLocation!==$location) return null;
+    $publisher=notamPublisherKey($core['publisherNOF']??null);
+    // Older full imports flattened hyperlink attributes to empty text; recover only from their own raw message.
+    if ($publisher===null && (!isset($core['publisherNOF']) || $core['publisherNOF']==='')) $publisher=notamLegacyPublisher($raw,$row);
+    return $publisher===null?null:['account'=>$account,'fir'=>$fir,'reference_location'=>$location,'publisher'=>$publisher];
 }
 
-function resolveReferenceTargets(PDO $pdo, array $targets, string $metaIdKey): array {
-    $index=[];
-    if (!$targets) return $index;
-    $find=$pdo->prepare("SELECT nms_id,series,number,year,notam_type,raw_json,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND account_id=:account AND affected_fir=:fir AND COALESCE(NULLIF(icao_location,''),location)=:reference_location AND series=:series AND (number=:serial OR number=:serial_slash OR number=:target) AND (year=:year4 OR year=:year2 OR year IS NULL) LIMIT 3");
-    foreach($targets as $entry) {
-        $target=$entry['target']; $meta=$entry['meta']; $scope=$entry['scope'];
-        if(!preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/D',$target,$m)) continue;
-        $find->execute($scope+['series'=>$m[1],'serial'=>$m[2],'serial_slash'=>$m[2].'/'.$m[3],'target'=>$target,'year4'=>2000+(int)$m[3],'year2'=>(int)$m[3]]);
-        $rows=$find->fetchAll();
-        if (count($rows)!==1) continue;
-        $row=$rows[0]; $targetId=(string)$row['nms_id'];
-        if ($targetId==='' || $targetId===(string)($meta[$metaIdKey] ?? '') || identKey($row)!==$target || referenceScope($row)!==$scope || !referenceChronology($entry['event'],$row)) continue;
-        $index[$targetId]=$meta;
-    }
-    return $index;
+function unresolvedReference(array &$result,array $row,?string $target,string $reason): void {
+    $d=&$result['diagnostics'];$d['unresolved']++;$d['reasons'][$reason]=($d['reasons'][$reason]??0)+1;
+    if (count($d['items'])<20) $d['items'][]=['nmsId'=>(string)($row['nms_id']??''),'ident'=>ident($row),'reference'=>$target,'reason'=>$reason];
 }
 
-function referenceIndex(PDO $pdo, DateTimeImmutable $at, string $type): array {
-    static $cache=[];
-    $cacheKey=$type.'|'.$at->format('Y-m-d H:i:s');
-    if (isset($cache[$cacheKey])) return $cache[$cacheKey];
-    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_text,raw_json,effective_start,last_updated,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND UPPER(COALESCE(notam_type,''))=:type AND COALESCE(effective_start,last_updated)<=:at ORDER BY COALESCE(effective_start,last_updated),nms_id");
-    $stmt->execute(['type'=>$type,'at'=>$at->format('Y-m-d H:i:s')]);
-    $targets=[];
-    $prefix=$type==='R'?'replacement':'cancellation';
-    while($row=$stmt->fetch()) {
+function resolveNotamReferences(PDO $pdo,array $events,string $environment,DateTimeImmutable $at): array {
+    $result=['replacement'=>[],'cancellation'=>[],'byEvent'=>[],'diagnostics'=>['total'=>0,'resolved'=>0,'unresolved'=>0,'reasons'=>[],'items'=>[]]];
+    $groups=[];
+    foreach ($events as $row) {
+        $type=strtoupper((string)($row['notam_type']??''));
+        if (!in_array($type,['R','C'],true)) continue;
+        $effective=$row['effective_start']??$row['last_updated']??null;
+        $stamp=is_string($effective)?strtotime($effective.' UTC'):false;
+        if ($stamp!==false && $stamp>$at->getTimestamp()) continue;
+        $result['diagnostics']['total']++;
         $target=$type==='R'?replacementTargetKey($row):cancellationTargetKey($row);
+        if ($target===null || !preg_match('/^([A-Z])([0-9]{4})\/([0-9]{2})$/D',$target,$m)) { unresolvedReference($result,$row,$target,'unsupported_reference');continue; }
+        if ($stamp===false || (isset($row['environment']) && $row['environment']!==$environment)) { unresolvedReference($result,$row,$target,'event_scope_invalid');continue; }
+        $issued=notamIssued($row);
+        if ($issued===null || $issued>$at->getTimestamp()) { unresolvedReference($result,$row,$target,'chronology_invalid');continue; }
         $scope=referenceScope($row);
-        if ($target===null || $scope===null) continue;
-        $key=json_encode([$scope,$target],JSON_THROW_ON_ERROR);
-        if (isset($targets[$key])) continue;
-        $targets[$key]=['target'=>$target,'scope'=>$scope,'event'=>$row,'meta'=>[$prefix.'Id'=>(string)$row['nms_id'],$prefix.'Ident'=>ident($row),'effectiveStart'=>$row['effective_start'] ?? $row['last_updated'] ?? null]];
+        if ($scope===null) { unresolvedReference($result,$row,$target,'publisher_or_scope_unverified');continue; }
+        $key=json_encode([$scope['account'],$scope['fir'],$scope['reference_location'],$target],JSON_THROW_ON_ERROR);
+        if (!isset($groups[$key])) $groups[$key]=['lookup'=>[$scope['account'],$scope['fir'],$scope['reference_location'],$m[1],$m[2],$m[2].'/'.$m[3],$target,2000+(int)$m[3],(int)$m[3]],'events'=>[]];
+        $groups[$key]['events'][]=['row'=>$row,'target'=>$target,'scope'=>$scope,'prefix'=>$type==='R'?'replacement':'cancellation'];
     }
-    return $cache[$cacheKey]=resolveReferenceTargets($pdo,$targets,$prefix.'Id');
+    foreach (array_chunk(array_values($groups),100) as $chunk) {
+        $wanted=[];$params=[];
+        foreach ($chunk as $i=>$group) {
+            $wanted[]='SELECT ? lookup_id,? account,? fir,? reference_location,? series,? serial,? serial_slash,? target,? year4,? year2';
+            array_push($params,$i,...$group['lookup']);
+        }
+        $params[]=$environment;
+        // A bounded batch replaces one SELECT per reference. A truncated batch cannot prove uniqueness.
+        $limit=count($chunk)*4;
+        $sql="SELECT w.lookup_id,n.nms_id,n.series,n.number,n.year,n.notam_type,n.raw_json,n.account_id,n.affected_fir,n.location,n.icao_location FROM (".implode(' UNION ALL ',$wanted).") w JOIN notams n ON n.account_id=w.account AND n.affected_fir=w.fir AND COALESCE(NULLIF(n.icao_location,''),n.location)=w.reference_location AND n.series=w.series AND (n.number=w.serial OR n.number=w.serial_slash OR n.number=w.target) AND (n.year=w.year4 OR n.year=w.year2 OR n.year IS NULL) WHERE n.source='FAA_NMS' AND n.environment=? LIMIT ".($limit+1);
+        $stmt=$pdo->prepare($sql);$stmt->execute($params);$rows=$stmt->fetchAll(PDO::FETCH_ASSOC);$overflow=count($rows)>$limit;$candidates=[];
+        if (!$overflow) foreach ($rows as $row) $candidates[(int)$row['lookup_id']][]=['row'=>$row,'scope'=>referenceScope($row)];
+        foreach ($chunk as $i=>$group) foreach ($group['events'] as $entry) {
+            $event=$entry['row'];$target=$entry['target'];$matches=[];$unknown=false;
+            foreach ($candidates[$i]??[] as $candidate) {
+                if ($candidate['scope']===null || identKey($candidate['row'])!==$target) { $unknown=true;continue; }
+                if ($candidate['scope']===$entry['scope']) $matches[]=$candidate['row'];
+            }
+            $reason=$overflow?'candidate_limit':($unknown?'candidate_unverified':(count($matches)>1?'ambiguous_target':null));
+            if ($reason===null && !$matches) $reason=empty($candidates[$i])?'target_missing':'publisher_or_scope_mismatch';
+            if ($reason===null && ((string)$matches[0]['nms_id']===(string)$event['nms_id'] || !referenceChronology($event,$matches[0]))) $reason='chronology_invalid';
+            if ($reason!==null) { unresolvedReference($result,$event,$target,$reason);continue; }
+            $id=(string)$matches[0]['nms_id'];$prefix=$entry['prefix'];
+            $meta=[$prefix.'Id'=>(string)$event['nms_id'],$prefix.'Ident'=>ident($event),'effectiveStart'=>$event['effective_start']??$event['last_updated']??null];
+            $result[$prefix][$id]??=$meta;
+            $result['byEvent'][(string)$event['nms_id']]=['id'=>$id,'ident'=>$target];
+            $result['diagnostics']['resolved']++;
+        }
+    }
+    return $result;
 }
-function replacementIndex(PDO $pdo, DateTimeImmutable $at): array { return referenceIndex($pdo,$at,'R'); }
-function cancellationIndex(PDO $pdo, DateTimeImmutable $at): array { return referenceIndex($pdo,$at,'C'); }
+
+function referenceBundle(PDO $pdo,DateTimeImmutable $at): array {
+    static $cachedPdo=null,$cachedAt=null,$cached=null;
+    $time=$at->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    if ($cachedPdo===$pdo && $cachedAt===$time && $cached!==null) return $cached;
+    $stmt=$pdo->prepare("SELECT nms_id,series,number,year,notam_type,notam_text,raw_json,effective_start,last_updated,account_id,affected_fir,location,icao_location FROM notams WHERE source='FAA_NMS' AND environment='production' AND UPPER(COALESCE(notam_type,'')) IN ('R','C') AND COALESCE(effective_start,last_updated)<=:at ORDER BY COALESCE(effective_start,last_updated),nms_id");
+    $stmt->execute(['at'=>$time]);
+    $cached=resolveNotamReferences($pdo,$stmt->fetchAll(PDO::FETCH_ASSOC),'production',$at);
+    $cachedPdo=$pdo;$cachedAt=$time;
+    return $cached;
+}
+function replacementIndex(PDO $pdo,DateTimeImmutable $at): array { return referenceBundle($pdo,$at)['replacement']; }
+function cancellationIndex(PDO $pdo,DateTimeImmutable $at): array { return referenceBundle($pdo,$at)['cancellation']; }
+function referenceSummary(PDO $pdo,DateTimeImmutable $at): array {
+    $summary=referenceBundle($pdo,$at)['diagnostics'];unset($summary['items']);
+    return ['scope'=>'dataset']+$summary;
+}
 
 function addIndexExclusion(array $index, array &$where, array &$params, string $prefix): void {
     if (!$index) return;
@@ -539,9 +638,9 @@ function listAction(PDO $pdo): never {
         $where[] = "UPPER(COALESCE(n.notam_type,''))<>'C'";$where[] = "UPPER(COALESCE(n.effective_end_raw,''))<>'PERM'";$where[] = 'n.effective_end<:at_end';$params['at_end'] = $time;
         addIndexExclusion($replacements,$where,$params,'repl');addIndexExclusion($cancellations,$where,$params,'cancel');
     } elseif ($state === 'cancelled') {
-        if(!addIndexOnly($cancellations,$where,$params,'only_cancel')) out(200,['ok'=>true,'source'=>'FAA NMS','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'items'=>[],'paging'=>['page'=>1,'limit'=>$limit,'returned'=>0,'total'=>0,'pages'=>0,'hasPrevious'=>false,'hasNext'=>false]]);
+        if(!addIndexOnly($cancellations,$where,$params,'only_cancel')) out(200,['ok'=>true,'source'=>'FAA NMS','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'referenceResolution'=>referenceSummary($pdo,$at),'items'=>[],'paging'=>['page'=>1,'limit'=>$limit,'returned'=>0,'total'=>0,'pages'=>0,'hasPrevious'=>false,'hasNext'=>false]]);
     } elseif ($state === 'replaced') {
-        if(!addIndexOnly($replacements,$where,$params,'only_repl')) out(200,['ok'=>true,'source'=>'FAA NMS','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'items'=>[],'paging'=>['page'=>1,'limit'=>$limit,'returned'=>0,'total'=>0,'pages'=>0,'hasPrevious'=>false,'hasNext'=>false]]);
+        if(!addIndexOnly($replacements,$where,$params,'only_repl')) out(200,['ok'=>true,'source'=>'FAA NMS','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'referenceResolution'=>referenceSummary($pdo,$at),'items'=>[],'paging'=>['page'=>1,'limit'=>$limit,'returned'=>0,'total'=>0,'pages'=>0,'hasPrevious'=>false,'hasNext'=>false]]);
     }
 
     addExact($where,$params,"UPPER(COALESCE(n.affected_fir,''))",'fir',(string)($_GET['fir'] ?? ''),'/^[A-Z0-9]{4}$/');
@@ -572,7 +671,7 @@ function listAction(PDO $pdo): never {
         $id=(string)$row['nms_id'];if(isset($replacements[$id])) $entry['replacedBy']=$replacements[$id];if(isset($cancellations[$id])) $entry['cancelledBy']=$cancellations[$id];$items[] = $entry;
     }
     $pages = $total > 0 ? (int)ceil($total / $limit) : 0;
-    out(200, ['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'items'=>$items,'paging'=>['page'=>$page,'limit'=>$limit,'returned'=>count($items),'total'=>$total,'pages'=>$pages,'hasPrevious'=>$page>1,'hasNext'=>$page<$pages]]);
+    out(200, ['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','state'=>$state,'atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'referenceResolution'=>referenceSummary($pdo,$at),'items'=>$items,'paging'=>['page'=>$page,'limit'=>$limit,'returned'=>count($items),'total'=>$total,'pages'=>$pages,'hasPrevious'=>$page>1,'hasNext'=>$page<$pages]]);
 }
 
 function filtersAction(PDO $pdo): never {
@@ -591,7 +690,7 @@ function detailAction(PDO $pdo): never {
     $replacements=replacementIndex($pdo,$at);$cancellations=cancellationIndex($pdo,$at);$entry=item($row,true);$entry['temporalState']=temporalState($row,$at,$replacements,$cancellations);
     $activity=scheduleActivity($row,$at);$entry['activityState']=$activity['state'];$entry['activityActive']=$activity['active'];$entry['scheduleInterpreted']=$activity['parsed'];
     if(isset($replacements[$id]))$entry['replacedBy']=$replacements[$id];if(isset($cancellations[$id]))$entry['cancelledBy']=$cancellations[$id];
-    out(200, ['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'notam'=>$entry]);
+    out(200, ['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>coverageInfo($pdo,$at),'referenceResolution'=>referenceSummary($pdo,$at),'notam'=>$entry]);
 }
 
 function normalizeLon(float $lon): float {
@@ -716,7 +815,7 @@ function mapAction(PDO $pdo): never {
     try {$lonWhere=$west<=$east ? 'lon BETWEEN :west AND :east' : '(lon>=:west OR lon<=:east)';$ap=$pdo->prepare("SELECT ident,lat,lon FROM nav_points WHERE kind='airport' AND lat BETWEEN :south AND :north AND $lonWhere LIMIT 2500");$ap->execute(['south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);$airports=[];while($r=$ap->fetch()){$id=strtoupper(trim((string)$r['ident']));if($id!=='')$airports[$id]=['lon'=>(float)$r['lon'],'lat'=>(float)$r['lat']];}if($airports){foreach(array_chunk(array_keys($airports),400) as$chunk){$marks=implode(',',array_fill(0,count($chunk),'?'));$q=$pdo->prepare('SELECT '.columns(true,false).' FROM notams n WHERE '.str_replace([':at_start',':at_end'],['?','?'],validWhere())." AND n.geometry IS NULL AND (UPPER(COALESCE(n.icao_location,'')) IN ($marks) OR UPPER(COALESCE(n.location,'')) IN ($marks)) ORDER BY n.effective_start DESC LIMIT 5000");$values=[$time,$time,...$chunk,...$chunk]; $q->execute($values);while($row=$q->fetch()){$anchor=strtoupper(trim((string)($row['icao_location'] ?: $row['location']))); $point=$airports[$anchor] ?? null; if(!$point)continue;$row['geometry']=['type'=>'Point','coordinates'=>[$point['lon'],$point['lat']]]; $row['geometry_source']='airport-location';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}}}} catch(Throwable $e){ error_log('[notam-map-airport] '.$e->getMessage()); }
     try {$coordToken="REGEXP_SUBSTR(UPPER(COALESCE(n.coordinates_raw,'')),'([0-9]{6}[NS][0-9]{7}[EW]|[0-9]{4}[NS][0-9]{5}[EW])')";$lonWhere=$west<=$east ? 'q.lon BETWEEN :west AND :east' : '(q.lon>=:west OR q.lon<=:east)';$sql='SELECT q.* FROM (SELECT p.*,CASE WHEN LENGTH(p.coord_token)=11 THEN (CAST(SUBSTRING(p.coord_token,1,2) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,3,2) AS DECIMAL(10,6))/60)*IF(SUBSTRING(p.coord_token,5,1)=\'S\',-1,1) WHEN LENGTH(p.coord_token)=15 THEN (CAST(SUBSTRING(p.coord_token,1,2) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,3,2) AS DECIMAL(10,6))/60+CAST(SUBSTRING(p.coord_token,5,2) AS DECIMAL(10,6))/3600)*IF(SUBSTRING(p.coord_token,7,1)=\'S\',-1,1) END lat,CASE WHEN LENGTH(p.coord_token)=11 THEN (CAST(SUBSTRING(p.coord_token,6,3) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,9,2) AS DECIMAL(10,6))/60)*IF(SUBSTRING(p.coord_token,11,1)=\'W\',-1,1) WHEN LENGTH(p.coord_token)=15 THEN (CAST(SUBSTRING(p.coord_token,8,3) AS DECIMAL(10,6))+CAST(SUBSTRING(p.coord_token,11,2) AS DECIMAL(10,6))/60+CAST(SUBSTRING(p.coord_token,13,2) AS DECIMAL(10,6))/3600)*IF(SUBSTRING(p.coord_token,15,1)=\'W\',-1,1) END lon FROM (SELECT '.columns(true,false).','.$coordToken.' coord_token FROM notams n WHERE '.validWhere().' AND n.geometry IS NULL) p WHERE p.coord_token IS NOT NULL AND p.coord_token<>\'\') q WHERE q.lat BETWEEN :south AND :north AND '.$lonWhere.' ORDER BY q.effective_start DESC LIMIT 5000';$q=$pdo->prepare($sql);$q->execute(['at_start'=>$time,'at_end'=>$time,'south'=>$south,'north'=>$north,'west'=>$west,'east'=>$east]);while($row=$q->fetch()){$row['geometry']=['type'=>'Point','coordinates'=>[(float)$row['lon'],(float)$row['lat']]];$row['geometry_source']='qline-coordinate';addFeature($row,$features,$seenIds,$seenFeatures,$at,$replacementIndex,$cancellationIndex,$mapStats);}} catch(Throwable $e){ error_log('[notam-map-qline] '.$e->getMessage()); }
     if(count($features)>=5000)$truncated=true;
-    out(200,['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>$coverage,'data'=>['type'=>'FeatureCollection','features'=>$features],'counts'=>['notam'=>count($features)],'total'=>count($features),'truncated'=>$truncated,'schedule'=>['outside'=>$mapStats['outsideSchedule'],'unknown'=>$mapStats['scheduleUnknown']],'temporal'=>['replaced'=>$mapStats['replaced'],'cancelled'=>$mapStats['cancelled']]]);
+    out(200,['ok'=>true,'source'=>'FAA NMS','displaySource'=>'FAA.GOV NOTAM SERVICE','atUtc'=>$at->format('c'),'coverage'=>$coverage,'referenceResolution'=>referenceSummary($pdo,$at),'data'=>['type'=>'FeatureCollection','features'=>$features],'counts'=>['notam'=>count($features)],'total'=>count($features),'truncated'=>$truncated,'schedule'=>['outside'=>$mapStats['outsideSchedule'],'unknown'=>$mapStats['scheduleUnknown']],'temporal'=>['replaced'=>$mapStats['replaced'],'cancelled'=>$mapStats['cancelled']]]);
 }
 
 if (PHP_SAPI !== 'cli') {
