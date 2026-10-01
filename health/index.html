@@ -9,17 +9,10 @@
   <link rel="stylesheet" href="/main/app.css?v=3">
 </head>
 <body data-page="health">
-  <header class="app-header">
-    <a class="app-brand" href="/main/">YulCaribe</a>
-  </header>
-
+  <header class="app-header"><a class="app-brand" href="/main/">YulCaribe</a></header>
   <main class="app-main">
     <section class="page-section">
-      <div class="section-title-row">
-        <h1>System Health</h1>
-        <span id="health-time" class="source-line"></span>
-      </div>
-
+      <div class="section-title-row"><h1>System Health</h1><span id="health-time" class="source-line"></span></div>
       <section id="health-login" class="plain-block" hidden>
         <div class="plain-block-head"><strong>Maintenance Login</strong></div>
         <p class="source-line">Protected system, database and integration console.</p>
@@ -38,14 +31,20 @@
         </div>
 
         <details class="plain-block" open>
+          <summary class="plain-block-head"><strong>System Overview</strong><span id="health-overall-badge" class="badge">UNKNOWN</span></summary>
+          <div id="health-overall" class="decode-list"></div>
+          <div class="plain-block-head"><strong>Recent Issues · 3 days</strong></div>
+          <div id="health-recent-issues" class="results"></div>
+        </details>
+
+        <details class="plain-block" open>
           <summary class="plain-block-head"><strong>API</strong><span id="health-api-badge" class="badge">UNKNOWN</span></summary>
           <div id="health-api" class="decode-list"></div>
         </details>
 
         <details class="plain-block">
           <summary class="plain-block-head"><strong>MariaDB / Navdata</strong><span id="health-db-badge" class="badge">UNKNOWN</span></summary>
-          <div id="health-db" class="decode-list"></div>
-          <pre id="health-db-counts">Loading…</pre>
+          <div id="health-db" class="decode-list"></div><pre id="health-db-counts">Loading…</pre>
         </details>
 
         <details class="plain-block">
@@ -65,15 +64,10 @@
 
         <details id="health-notam-section" class="plain-block">
           <summary class="plain-block-head"><strong>FAA NMS / NOTAM</strong><span id="health-notam-badge" class="badge">UNKNOWN</span></summary>
-          <div class="filter-actions">
-            <button id="health-delta" type="button">Delta Sync</button>
-          </div>
-          <div id="health-nms" class="decode-list"></div>
-          <pre id="health-nms-detail">Loading…</pre>
-          <div class="plain-block-head"><strong>Unresolved Geometry Issues</strong></div>
-          <div id="health-geometry-issues" class="results"></div>
-          <div class="plain-block-head"><strong>Latest NOTAMs</strong></div>
-          <div id="health-notam-list" class="results"></div>
+          <div class="filter-actions"><button id="health-delta" type="button">Delta Sync</button></div>
+          <div id="health-nms" class="decode-list"></div><pre id="health-nms-detail">Loading…</pre>
+          <div class="plain-block-head"><strong>Unresolved Geometry Issues</strong></div><div id="health-geometry-issues" class="results"></div>
+          <div class="plain-block-head"><strong>Latest NOTAMs</strong></div><div id="health-notam-list" class="results"></div>
           <div class="weather-results">
             <section class="plain-block"><div class="plain-block-head"><strong>Parsed</strong></div><pre id="health-notam-parsed">Select a NOTAM.</pre></section>
             <section class="plain-block"><div class="plain-block-head"><strong>RAW FAA</strong></div><pre id="health-notam-raw">Select a NOTAM.</pre></section>
@@ -86,14 +80,11 @@
         </details>
 
         <details id="health-logs-section" class="plain-block">
-          <summary class="plain-block-head"><strong>Logs</strong><span class="badge valid">OK</span></summary>
-          <div class="filter-actions">
-            <button id="health-logs-refresh" type="button">Refresh logs</button>
-            <button id="health-logs-download" type="button">Download .log</button>
-            <button id="health-json-download" type="button">Download JSON</button>
-          </div>
+          <summary class="plain-block-head"><strong>Log Files</strong><span class="badge valid">3 DAYS</span></summary>
+          <p class="source-line">Files are listed by date. Contents are not loaded into this page; downloads are streamed directly from disk.</p>
+          <div class="filter-actions"><button id="health-log-files-refresh" type="button">Refresh files</button></div>
           <div id="health-log-status" class="status-line" aria-live="polite"></div>
-          <pre id="health-logs" style="max-height:460px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;word-break:break-word;">Open this section to load logs.</pre>
+          <div id="health-log-files" class="results"><div class="empty-box">Open this section to list log files.</div></div>
         </details>
 
         <details id="health-settings-section" class="plain-block">
@@ -111,9 +102,7 @@
             <label><span>DB Password</span><input id="health-db-password" type="password" autocomplete="off" placeholder="hidden"></label>
           </div>
           <div class="filter-actions">
-            <button id="health-reveal-faa" type="button">Reveal FAA secret</button>
-            <button id="health-reveal-db" type="button">Reveal DB password</button>
-            <button id="health-save" type="button">Test &amp; save</button>
+            <button id="health-reveal-faa" type="button">Reveal FAA secret</button><button id="health-reveal-db" type="button">Reveal DB password</button><button id="health-save" type="button">Test &amp; save</button>
           </div>
           <div id="health-save-status" class="status-line" aria-live="polite"></div>
         </details>
@@ -121,11 +110,7 @@
     </section>
   </main>
 
-  <nav class="bottom-nav" aria-label="Main navigation">
-    <a href="/main/" data-nav="home">HOME</a>
-    <a href="/main/map/" data-nav="map">MAP</a>
-    <a href="/main/notam/" data-nav="notam">NOTAM</a>
-  </nav>
+  <nav class="bottom-nav" aria-label="Main navigation"><a href="/main/" data-nav="home">HOME</a><a href="/main/map/" data-nav="map">MAP</a><a href="/main/notam/" data-nav="notam">NOTAM</a></nav>
 
 <script>
 (() => {
@@ -133,239 +118,71 @@
   const API = "/main/api/health.php";
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? "").replace(/[&<>\"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;"}[c]));
-  let snapshot = null;
-  let notamsLoaded = false;
-  let logsLoaded = false;
-  let settingsTouched = false;
-  let latestNotams = [];
+  let snapshot=null,notamsLoaded=false,logFilesLoaded=false,settingsTouched=false,latestNotams=[];
 
-  async function req(action, options = {}) {
-    const response = await fetch(`${API}?action=${action}`, {cache:"no-store", credentials:"same-origin", ...options});
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
+  async function req(action,options={}) {
+    const response=await fetch(`${API}?action=${action}`,{cache:"no-store",credentials:"same-origin",...options});
+    const data=await response.json().catch(()=>null);
+    if(!response.ok||!data?.ok)throw new Error(data?.error||`HTTP ${response.status}`);return data;
+  }
+  const row=(label,value)=>`<div class="decode-row"><span>${esc(label)}</span><strong>${value??"—"}</strong></div>`;
+  function probeState(probe){if(!probe)return"unknown";if(probe.ok)return"ok";if(Number(probe.status)===429)return"warn";return"error";}
+  function combine(states){if(states.includes("error"))return"error";if(states.includes("warn")||states.includes("warning"))return"warn";if(states.includes("unknown"))return"unknown";return"ok";}
+  function label(state){return state==="ok"?"OK":state==="warn"||state==="warning"?"WARNING":state==="error"?"ERROR":"UNKNOWN";}
+  function badge(id,state){const el=$(id);if(!el)return;el.textContent=label(state);el.className=`badge ${state==="ok"?"valid":state==="error"?"cancelled":state==="warn"||state==="warning"?"future":""}`;}
+  function probeLabel(probe){if(!probe)return"Not tested";return[label(probeState(probe)),probe.status?`HTTP ${probe.status}`:"",probe.ms!=null?`${probe.ms} ms`:""].filter(Boolean).join(" · ");}
+  function showLogin(message=""){$("health-login").hidden=false;$("health-dashboard").hidden=true;$("health-login-status").textContent=message;}
+  function showDashboard(){$("health-login").hidden=true;$("health-dashboard").hidden=false;}
+  function bytes(value){const n=Number(value||0);if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`;}
+
+  function render(data){
+    snapshot=data;$("health-time").textContent=data.generatedAt||"";
+    const net=data.network||{},api=net.api||{},files=data.apiFiles||{},db=data.database||{},local=data.nms||{},nmsConfig=data.nmsConfig||{},jobs=data.jobs||{},cron=local.cronState||{};
+    const geometryWarnings=Number(cron.geometryWarnings||0),geometryDiagnostics=cron.geometryDiagnostics||{},unresolvedGeometry=Number(geometryDiagnostics.unresolvedCount||0),skipped=Number(cron.skipped||0),recentIssues=Array.isArray(cron.recentIssues)?cron.recentIssues:[];
+    const apiState=combine(Object.values(files).map(v=>v?"ok":"error").concat(Object.values(api).map(probeState)));
+    const dbState=db.ok?"ok":"error",mapState=combine([probeState(net.mapPage),probeState(net.mapScript),probeState(net.maplibre),probeState(net.osm),probeState(api.navdata),probeState(api.notam)]),weatherState=combine([probeState(api.metartaf),probeState(api.wafs),probeState(net.wafsFeed)]),adsbState=probeState(api.adsb);
+    let currentNotamState=nmsConfig.credentialsConfigured===false?"error":local.syncHealth==="stale"?"warn":local.state?.last_error?"error":cron.ok===false&&!cron.rateLimitedLocally?"error":unresolvedGeometry>0||skipped>0||geometryWarnings>0?"warn":"ok";
+    if(net.faa)currentNotamState=combine([currentNotamState,probeState(net.faa)]);
+    const notamState=recentIssues.length&&currentNotamState==="ok"?"warn":currentNotamState;
+    const jobsState=jobs.cron?.status||"unknown";
+    const currentOverall=combine([apiState,dbState,mapState,weatherState,adsbState,currentNotamState,jobsState==="warning"&&recentIssues.length?"ok":jobsState]);
+    const overallState=recentIssues.length&&currentOverall==="ok"?"warn":combine([currentOverall,jobsState]);
+
+    badge("health-overall-badge",overallState);badge("health-api-badge",apiState);badge("health-db-badge",dbState);badge("health-map-badge",mapState);badge("health-weather-badge",weatherState);badge("health-adsb-badge",adsbState);badge("health-notam-badge",notamState);badge("health-jobs-badge",jobsState);
+    $("health-overall").innerHTML=[row("Overall",label(overallState)),row("Current operation",label(currentOverall)),row("Recent issues · 3 days",esc(recentIssues.length)),row("Last cron",cron.updatedAt?esc(cron.updatedAt):"—")].join("");
+    $("health-recent-issues").innerHTML=recentIssues.length?recentIssues.map(issue=>`<div class="notam-card"><strong>${esc(String(issue.severity||"warning").toUpperCase())} · ${esc(issue.type||"issue")}</strong><span class="source-line">${esc(issue.summary||"Issue recorded")}</span><span class="source-line">Last: ${esc(issue.lastAt||"—")} · occurrences: ${esc(issue.occurrences||1)}</span></div>`).join(""):'<div class="empty-box">No issues recorded in the last 3 days.</div>';
+
+    $("health-api").innerHTML=Object.keys(files).map(name=>row(name,`${files[name]?"FILE OK":"FILE MISSING"}${api[name]?" · "+esc(probeLabel(api[name])):""}`)).join("");
+    $("health-db").innerHTML=[row("Connection",label(dbState)),row("Server",esc(db.serverVersion||"—")),row("Host",esc(db.host||"—")),row("Port",esc(db.port||"—")),row("Database",esc(db.database||"—")),row("DB User",esc(db.user||"—")),row("Latency",db.latencyMs!=null?esc(db.latencyMs+" ms"):"—")].join("");$("health-db-counts").textContent=JSON.stringify(db.counts||{},null,2);
+    $("health-map").innerHTML=[row("/main/map/",esc(probeLabel(net.mapPage))),row("map.js",esc(probeLabel(net.mapScript))),row("MapLibre",esc(probeLabel(net.maplibre))),row("OSM Tiles",esc(probeLabel(net.osm))),row("Navdata layer",esc(probeLabel(api.navdata))),row("NOTAM layer",esc(probeLabel(api.notam)))].join("");
+    $("health-weather").innerHTML=[row("METAR / TAF API",esc(probeLabel(api.metartaf))),row("WAFS API",esc(probeLabel(api.wafs))),row("AWC WAFS feed",esc(probeLabel(net.wafsFeed)))].join("");
+    $("health-adsb").innerHTML=[row("ADS-B API",esc(probeLabel(api.adsb))),row("Source",esc(api.adsb?.meta?.source||"TheAirTraffic")),row("Mode",esc(api.adsb?.meta?.mode||"binCraft+zstd")),row("Upstream HTTP",esc(api.adsb?.meta?.upstreamStatus??"—"))].join("");
+    $("health-nms").innerHTML=[row("Environment",esc(nmsConfig.environment||"—")),row("FAA Credentials",nmsConfig.credentialsConfigured?"Configured":"Missing"),row("FAA Auth",esc(probeLabel(net.faa))),row("Sync Health",esc(local.syncHealth||"—")),row("Sync Age",local.syncAgeSeconds!=null?esc(local.syncAgeSeconds+" s"):"—"),row("Latest NOTAM",esc(local.latestNotamUpdate||"—")),row("Last batch received",cron.received!=null?esc(cron.received):"—"),row("Last batch processed",cron.processed!=null?esc(cron.processed):"—"),row("Last batch skipped",cron.skipped!=null?esc(cron.skipped):"—"),row("Last batch geometry warnings",esc(geometryWarnings)),row("Recent issues · 3 days",esc(recentIssues.length)),row("Unresolved geometry issues",esc(unresolvedGeometry)),row("Resolved by text fallback",esc(geometryDiagnostics.resolvedByFallback??0)),row("Resolved by referenced NOTAM",esc(geometryDiagnostics.resolvedByReference??0)),row("Geometry not applicable",esc(geometryDiagnostics.notApplicable??0)),row("Last geometry warning",esc(geometryDiagnostics.lastWarningAt||"—")),row("Total",esc(local.counts?.total??"—")),row("Active",esc(local.counts?.active??"—")),row("Future",esc(local.counts?.future??"—")),row("Expired",esc(local.counts?.expired??"—")),row("Cancelled",esc(local.counts?.cancelled??"—")),row("PERM",esc(local.counts?.permanent??"—"))].join("");
+    $("health-nms-detail").textContent=JSON.stringify({state:local.state,currentCron:{ok:cron.ok,mode:cron.mode,updatedAt:cron.updatedAt,received:cron.received,processed:cron.processed,skipped:cron.skipped,geometryWarnings:cron.geometryWarnings,error:cron.error},recentIssues},null,2);
+    const unresolvedItems=Array.isArray(geometryDiagnostics.unresolved)?geometryDiagnostics.unresolved:[];$("health-geometry-issues").innerHTML=unresolvedItems.length?unresolvedItems.map(issue=>`<div class="notam-card"><strong>${esc(issue.ident||issue.nmsId||"Unknown NOTAM")}</strong><span class="notam-location">${esc(issue.location||"")}</span><span class="source-line">${esc(issue.geometryType||"geometry")} · ${esc(issue.time||"")}</span><span class="source-line">${esc(issue.reference?`Reference ${issue.reference} unresolved`:issue.error||"Geometry unresolved")}</span></div>`).join(""):'<div class="empty-box">No unresolved geometry issues.</div>';
+    $("health-jobs").textContent=JSON.stringify(jobs,null,2);
+
+    const settings=data.settings||{};if(!settingsTouched){const pairs=[["health-nms-env",settings.nms?.environment||"production"],["health-nms-client",settings.nms?.clientId||""],["health-db-host",settings.db?.host||""],["health-db-port",settings.db?.port||3306],["health-db-name",settings.db?.database||""],["health-db-user",settings.db?.user||""]];pairs.forEach(([id,value])=>{const el=$(id);el.value=value;el.dataset.original=String(value);});$("health-nms-secret").value="";$("health-nms-secret").dataset.original="";$("health-nms-secret").placeholder=settings.nms?.clientSecretConfigured?"secret configured":"secret missing";$("health-db-password").value="";$("health-db-password").dataset.original="";$("health-db-password").placeholder=settings.db?.passwordConfigured?"password configured":"password missing";}
   }
 
-  const row = (label, value) => `<div class="decode-row"><span>${esc(label)}</span><strong>${value ?? "—"}</strong></div>`;
-  function probeState(probe) {
-    if (!probe) return "unknown";
-    if (probe.ok) return "ok";
-    if (Number(probe.status) === 429) return "warn";
-    return "error";
-  }
-  function combine(states) {
-    if (states.includes("error")) return "error";
-    if (states.includes("warn") || states.includes("warning")) return "warn";
-    if (states.includes("unknown")) return "unknown";
-    return "ok";
-  }
-  function label(state) { return state === "ok" ? "OK" : state === "warn" || state === "warning" ? "WARNING" : state === "error" ? "ERROR" : "UNKNOWN"; }
-  function badge(id, state) {
-    const el = $(id); if (!el) return;
-    el.textContent = label(state);
-    el.className = `badge ${state === "ok" ? "valid" : state === "error" ? "cancelled" : state === "warn" || state === "warning" ? "future" : ""}`;
-  }
-  function probeLabel(probe) {
-    if (!probe) return "Not tested";
-    return [label(probeState(probe)), probe.status ? `HTTP ${probe.status}` : "", probe.ms != null ? `${probe.ms} ms` : ""].filter(Boolean).join(" · ");
-  }
+  async function load(probe=false){$("health-refresh").disabled=$("health-probe").disabled=true;try{render(await req(`snapshot${probe?"&probe=1":""}`));}catch(error){if(String(error.message).includes("authentication")){showLogin("Session expired.");return;}alert(error.message);}finally{$("health-refresh").disabled=$("health-probe").disabled=false;}}
+  function healthNotamIdent(item){const n=item?.raw?.properties?.coreNOTAMData?.notam||{},series=String(n.series||"").trim().toUpperCase(),number=String(n.number||"").trim().toUpperCase(),year=String(n.year||"").trim();let ident=number&&series&&number.startsWith(series)?number:series+number;if(!ident)ident=String(item?.parsed?.ident||item?.parsed?.id||"NOTAM");if(year&&!/\/\d{2}$/.test(ident))ident+="/"+year.slice(-2);return ident;}
+  async function loadNotams(){if(notamsLoaded)return;const data=await req("notams&limit=20");latestNotams=data.items||[];latestNotams.forEach(x=>{if(x?.parsed)x.parsed.ident=healthNotamIdent(x);});notamsLoaded=true;$("health-notam-list").innerHTML=latestNotams.map((x,i)=>`<button type="button" class="notam-card" data-health-notam="${i}"><strong>${esc(x.parsed.ident)}</strong><span class="notam-location">${esc(x.parsed.location||"")}</span><span class="source-line">${esc(x.parsed.status||"")} · ${esc(x.parsed.lastUpdated||"")}</span></button>`).join("")||'<div class="empty-box">No NOTAM records.</div>';document.querySelectorAll("[data-health-notam]").forEach(button=>button.addEventListener("click",()=>{const x=latestNotams[Number(button.dataset.healthNotam)];$("health-notam-parsed").textContent=JSON.stringify(x.parsed,null,2);$("health-notam-raw").textContent=typeof x.raw==="string"?x.raw:JSON.stringify(x.raw,null,2);}));}
 
-  function showLogin(message = "") {
-    $("health-login").hidden = false;
-    $("health-dashboard").hidden = true;
-    $("health-login-status").textContent = message;
-  }
-  function showDashboard() {
-    $("health-login").hidden = true;
-    $("health-dashboard").hidden = false;
-  }
+  async function loadLogFiles(){const status=$("health-log-status");status.textContent="Loading file list…";const data=await req("log-files");logFilesLoaded=true;const files=data.files||[];$("health-log-files").innerHTML=files.length?files.map(file=>`<div class="notam-card"><strong>${esc(file.file)}</strong><span class="source-line">${esc(file.type)} · ${esc(file.date)} · ${esc(bytes(file.bytes))}</span><button type="button" data-log-type="${esc(file.type)}" data-log-file="${esc(file.file)}">Download</button></div>`).join(""):'<div class="empty-box">No log files yet.</div>';document.querySelectorAll("[data-log-file]").forEach(button=>button.addEventListener("click",()=>{const type=button.dataset.logType||"",file=button.dataset.logFile||"";const link=document.createElement("a");link.href=`${API}?action=log-download&type=${encodeURIComponent(type)}&file=${encodeURIComponent(file)}`;link.download=file;document.body.appendChild(link);link.click();link.remove();}));status.textContent=`${files.length} file(s) · ${data.retentionDays||3} day retention.`;}
+  async function reveal(kind,target){const password=prompt("Enter Health password again:");if(password===null)return;const data=await req("secret-reveal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind,password})});const input=$(target);input.value=data.secret||"";input.dataset.original=input.value;input.type="text";setTimeout(()=>{input.type="password";},30000);}
 
-  function render(data) {
-    snapshot = data;
-    $("health-time").textContent = data.generatedAt || "";
-    const net = data.network || {};
-    const api = net.api || {};
-    const files = data.apiFiles || {};
-    const db = data.database || {};
-    const local = data.nms || {};
-    const nmsConfig = data.nmsConfig || {};
-    const jobs = data.jobs || {};
-    const cron = local.cronState || {};
-    const geometryWarnings = Number(cron.geometryWarnings || 0);
-    const geometryDiagnostics = cron.geometryDiagnostics || {};
-    const unresolvedGeometry = Number(geometryDiagnostics.unresolvedCount || 0);
-
-    const apiState = combine(Object.values(files).map(v => v ? "ok" : "error").concat(Object.values(api).map(probeState)));
-    const dbState = db.ok ? "ok" : "error";
-    const mapState = combine([probeState(net.mapPage), probeState(net.mapScript), probeState(net.maplibre), probeState(net.osm), probeState(api.navdata), probeState(api.notam)]);
-    const weatherState = combine([probeState(api.metartaf), probeState(api.wafs), probeState(net.wafsFeed)]);
-    const adsbState = probeState(api.adsb);
-    let notamState = nmsConfig.credentialsConfigured === false ? "error" : local.syncHealth === "stale" ? "warn" : local.state?.last_error ? "error" : unresolvedGeometry > 0 ? "warn" : "ok";
-    if (net.faa) notamState = combine([notamState, probeState(net.faa)]);
-    const jobsState = jobs.cron?.status || "unknown";
-
-    badge("health-api-badge", apiState); badge("health-db-badge", dbState); badge("health-map-badge", mapState);
-    badge("health-weather-badge", weatherState); badge("health-adsb-badge", adsbState); badge("health-notam-badge", notamState); badge("health-jobs-badge", jobsState);
-
-    $("health-api").innerHTML = Object.keys(files).map(name => row(name, `${files[name] ? "FILE OK" : "FILE MISSING"}${api[name] ? " · " + esc(probeLabel(api[name])) : ""}`)).join("");
-    $("health-db").innerHTML = [row("Connection", label(dbState)),row("Server",esc(db.serverVersion || "—")),row("Host",esc(db.host || "—")),row("Port",esc(db.port || "—")),row("Database",esc(db.database || "—")),row("DB User",esc(db.user || "—")),row("Latency",db.latencyMs != null ? esc(db.latencyMs + " ms") : "—")].join("");
-    $("health-db-counts").textContent = JSON.stringify(db.counts || {}, null, 2);
-
-    $("health-map").innerHTML = [row("/main/map/",esc(probeLabel(net.mapPage))),row("map.js",esc(probeLabel(net.mapScript))),row("MapLibre",esc(probeLabel(net.maplibre))),row("OSM Tiles",esc(probeLabel(net.osm))),row("Navdata layer",esc(probeLabel(api.navdata))),row("NOTAM layer",esc(probeLabel(api.notam)))].join("");
-    $("health-weather").innerHTML = [row("METAR / TAF API",esc(probeLabel(api.metartaf))),row("WAFS API",esc(probeLabel(api.wafs))),row("AWC WAFS feed",esc(probeLabel(net.wafsFeed)))].join("");
-    $("health-adsb").innerHTML = [row("ADS-B API",esc(probeLabel(api.adsb))),row("Source",esc(api.adsb?.meta?.source || "TheAirTraffic")),row("Mode",esc(api.adsb?.meta?.mode || "binCraft+zstd")),row("Upstream HTTP",esc(api.adsb?.meta?.upstreamStatus ?? "—"))].join("");
-
-    $("health-nms").innerHTML = [
-      row("Environment",esc(nmsConfig.environment || "—")),row("FAA Credentials",nmsConfig.credentialsConfigured ? "Configured" : "Missing"),row("FAA Auth",esc(probeLabel(net.faa))),
-      row("Sync Health",esc(local.syncHealth || "—")),row("Sync Age",local.syncAgeSeconds != null ? esc(local.syncAgeSeconds + " s") : "—"),row("Latest NOTAM",esc(local.latestNotamUpdate || "—")),
-      row("Last batch received",cron.received != null ? esc(cron.received) : "—"),row("Last batch processed",cron.processed != null ? esc(cron.processed) : "—"),row("Last batch geometry warnings",esc(geometryWarnings)),
-      row("Unresolved geometry issues",esc(unresolvedGeometry)),row("Resolved by text fallback",esc(geometryDiagnostics.resolvedByFallback ?? 0)),row("Resolved by referenced NOTAM",esc(geometryDiagnostics.resolvedByReference ?? 0)),row("Geometry not applicable",esc(geometryDiagnostics.notApplicable ?? 0)),row("Last geometry warning",esc(geometryDiagnostics.lastWarningAt || "—")),
-      row("Total",esc(local.counts?.total ?? "—")),row("Active",esc(local.counts?.active ?? "—")),row("Future",esc(local.counts?.future ?? "—")),row("Expired",esc(local.counts?.expired ?? "—")),row("Cancelled",esc(local.counts?.cancelled ?? "—")),row("PERM",esc(local.counts?.permanent ?? "—"))
-    ].join("");
-    $("health-nms-detail").textContent = JSON.stringify({state:local.state,cronState:local.cronState,unresolvedGeometryIssues:geometryDiagnostics.unresolved || []},null,2);
-    const unresolvedItems = Array.isArray(geometryDiagnostics.unresolved) ? geometryDiagnostics.unresolved : [];
-    $("health-geometry-issues").innerHTML = unresolvedItems.length ? unresolvedItems.map(issue => `<div class="notam-card"><strong>${esc(issue.ident || issue.nmsId || "Unknown NOTAM")}</strong><span class="notam-location">${esc(issue.location || "")}</span><span class="source-line">${esc(issue.geometryType || "geometry")} · ${esc(issue.time || "")}</span><span class="source-line">${esc(issue.reference ? `Reference ${issue.reference} unresolved` : issue.error || "Geometry unresolved")}</span></div>`).join("") : '<div class="empty-box">No unresolved geometry issues.</div>';
-    $("health-jobs").textContent = JSON.stringify(jobs,null,2);
-
-    const settings = data.settings || {};
-    if (!settingsTouched) {
-      const pairs = [
-        ["health-nms-env",settings.nms?.environment || "production"],["health-nms-client",settings.nms?.clientId || ""],
-        ["health-db-host",settings.db?.host || ""],["health-db-port",settings.db?.port || 3306],["health-db-name",settings.db?.database || ""],["health-db-user",settings.db?.user || ""]
-      ];
-      pairs.forEach(([id,value]) => { const el=$(id); el.value=value; el.dataset.original=String(value); });
-      $("health-nms-secret").value=""; $("health-nms-secret").dataset.original=""; $("health-nms-secret").placeholder=settings.nms?.clientSecretConfigured ? "secret configured" : "secret missing";
-      $("health-db-password").value=""; $("health-db-password").dataset.original=""; $("health-db-password").placeholder=settings.db?.passwordConfigured ? "password configured" : "password missing";
-    }
-  }
-
-  async function load(probe = false) {
-    $("health-refresh").disabled = $("health-probe").disabled = true;
-    try { render(await req(`snapshot${probe ? "&probe=1" : ""}`)); }
-    catch (error) {
-      if (String(error.message).includes("authentication")) { showLogin("Session expired."); return; }
-      alert(error.message);
-    } finally { $("health-refresh").disabled = $("health-probe").disabled = false; }
-  }
-
-  function healthNotamIdent(item) {
-    const n=item?.raw?.properties?.coreNOTAMData?.notam || {};
-    const series=String(n.series || "").trim().toUpperCase();
-    const number=String(n.number || "").trim().toUpperCase();
-    const year=String(n.year || "").trim();
-    let ident=number && series && number.startsWith(series) ? number : series + number;
-    if (!ident) ident=String(item?.parsed?.ident || item?.parsed?.id || "NOTAM");
-    if (year && !/\/\d{2}$/.test(ident)) ident += "/" + year.slice(-2);
-    return ident;
-  }
-
-  async function loadNotams() {
-    if (notamsLoaded) return;
-    const data = await req("notams&limit=20"); latestNotams=data.items || [];
-    latestNotams.forEach(x=>{if(x?.parsed)x.parsed.ident=healthNotamIdent(x);});
-    notamsLoaded=true;
-    $("health-notam-list").innerHTML = latestNotams.map((x,i) => `<button type="button" class="notam-card" data-health-notam="${i}"><strong>${esc(x.parsed.ident)}</strong><span class="notam-location">${esc(x.parsed.location || "")}</span><span class="source-line">${esc(x.parsed.status || "")} · ${esc(x.parsed.lastUpdated || "")}</span></button>`).join("") || '<div class="empty-box">No NOTAM records.</div>';
-    document.querySelectorAll("[data-health-notam]").forEach(button => button.addEventListener("click", () => {
-      const x=latestNotams[Number(button.dataset.healthNotam)];
-      $("health-notam-parsed").textContent=JSON.stringify(x.parsed,null,2);
-      $("health-notam-raw").textContent=typeof x.raw === "string" ? x.raw : JSON.stringify(x.raw,null,2);
-    }));
-  }
-
-  async function loadLogs() {
-    const data=await req("logs&lines=1000");
-    logsLoaded=true;
-    const lines=(data.lines || []).slice();
-    lines.sort((a,b)=>{
-      const ta=String(a).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
-      const tb=String(b).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
-      return tb.localeCompare(ta);
-    });
-    $("health-logs").textContent=lines.join("\n") || "No logs.";
-    $("health-logs").scrollTop=0;
-    return {...data,lines};
-  }
-
-  function downloadBlob(name, type, text) {
-    const blob=new Blob([text],{type});
-    const url=URL.createObjectURL(blob);
-    const link=document.createElement("a");
-    link.href=url; link.download=name; document.body.appendChild(link); link.click(); link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-  }
-
-  function safeDiagnosticSnapshot() {
-    if (!snapshot) return null;
-    return {
-      generatedAt:snapshot.generatedAt || null,
-      php:snapshot.php || null,
-      database:{ok:snapshot.database?.ok ?? null,latencyMs:snapshot.database?.latencyMs ?? null,serverVersion:snapshot.database?.serverVersion ?? null,counts:snapshot.database?.counts || {}},
-      nms:snapshot.nms || null,
-      nmsConfig:{environment:snapshot.nmsConfig?.environment || null,credentialsConfigured:snapshot.nmsConfig?.credentialsConfigured ?? null,managedByEnv:snapshot.nmsConfig?.managedByEnv ?? null},
-      network:snapshot.network || null,
-      apiFiles:snapshot.apiFiles || null,
-      jobs:snapshot.jobs || null
-    };
-  }
-
-  async function downloadLogs(format) {
-    const status=$("health-log-status"); status.textContent="Preparing export…";
-    const data=await req("logs&lines=1000");
-    const lines=(data.lines || []).slice().sort((a,b)=>{
-      const ta=String(a).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
-      const tb=String(b).match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/)?.[1] || "";
-      return tb.localeCompare(ta);
-    });
-    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
-    if(format==="log"){
-      downloadBlob(`yulcaribe-health-${stamp}.log`,"text/plain;charset=utf-8",lines.join("\n")+"\n");
-    }else{
-      const payload={exportedAt:new Date().toISOString(),health:safeDiagnosticSnapshot(),logRetentionDays:data.retentionDays ?? null,logs:lines};
-      downloadBlob(`yulcaribe-health-${stamp}.json`,"application/json;charset=utf-8",JSON.stringify(payload,null,2));
-    }
-    status.textContent=`Exported ${data.lines?.length || 0} log lines.`;
-  }
-
-  async function reveal(kind,target) {
-    const password=prompt("Enter Health password again:"); if(password===null)return;
-    const data=await req("secret-reveal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind,password})});
-    const input=$(target); input.value=data.secret || ""; input.dataset.original=input.value; input.type="text";
-    setTimeout(() => { input.type="password"; },30000);
-  }
-
-  $("health-login-form").addEventListener("submit",async event => {
-    event.preventDefault(); $("health-login-status").textContent="Checking…";
-    try { await req("login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("health-login-password").value})}); $("health-login-password").value=""; showDashboard(); await load(true); }
-    catch(error){ $("health-login-status").textContent=error.message; }
-  });
-  $("health-refresh").onclick=()=>load(false); $("health-probe").onclick=()=>load(true);
-  $("health-logout").onclick=async()=>{await req("logout",{method:"POST",body:"{}"});showLogin();};
-  $("health-logs-refresh").onclick=()=>loadLogs().catch(e=>alert(e.message));
-  $("health-logs-download").onclick=()=>downloadLogs("log").catch(e=>{$("health-log-status").textContent=e.message;});
-  $("health-json-download").onclick=()=>downloadLogs("json").catch(e=>{$("health-log-status").textContent=e.message;});
-  $("health-delta").onclick=async()=>{const b=$("health-delta");b.disabled=true;try{await req("nms-delta",{method:"POST",body:"{}"});notamsLoaded=false;logsLoaded=false;await load(true);await loadNotams();if($("health-logs-section").open)await loadLogs();}catch(e){alert(e.message)}finally{b.disabled=false}};
-  $("health-reveal-faa").onclick=()=>reveal("faa-client-secret","health-nms-secret").catch(e=>alert(e.message));
-  $("health-reveal-db").onclick=()=>reveal("db-password","health-db-password").catch(e=>alert(e.message));
-
-  $("health-save").onclick=async()=>{
-    const changed=(id)=>$(id).dataset.original === $(id).value ? "" : $(id).value;
-    const body={
-      healthPassword:$("health-new-password").value,nmsEnvironment:changed("health-nms-env"),nmsClientId:changed("health-nms-client"),
-      nmsClientSecret:changed("health-nms-secret"),dbHost:changed("health-db-host"),dbPort:changed("health-db-port"),dbName:changed("health-db-name"),dbUser:changed("health-db-user"),dbPassword:changed("health-db-password")
-    };
-    $("health-save").disabled=true;$("health-save-status").textContent="Testing…";
-    try{const data=await req("settings-save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});$("health-save-status").textContent=data.changed?.length ? "Saved: "+data.changed.join(", ") : "No changes.";settingsTouched=false;$("health-new-password").value="";await load(false);}catch(e){$("health-save-status").textContent=e.message;}finally{$("health-save").disabled=false;}
-  };
-
+  $("health-login-form").addEventListener("submit",async event=>{event.preventDefault();$("health-login-status").textContent="Checking…";try{await req("login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("health-login-password").value})});$("health-login-password").value="";showDashboard();await load(true);}catch(error){$("health-login-status").textContent=error.message;}});
+  $("health-refresh").onclick=()=>load(false);$("health-probe").onclick=()=>load(true);$("health-logout").onclick=async()=>{await req("logout",{method:"POST",body:"{}"});showLogin();};
+  $("health-log-files-refresh").onclick=()=>loadLogFiles().catch(e=>{$("health-log-status").textContent=e.message;});
+  $("health-delta").onclick=async()=>{const b=$("health-delta");b.disabled=true;try{await req("nms-delta",{method:"POST",body:"{}"});notamsLoaded=false;logFilesLoaded=false;await load(true);await loadNotams();if($("health-logs-section").open)await loadLogFiles();}catch(e){alert(e.message)}finally{b.disabled=false}};
+  $("health-reveal-faa").onclick=()=>reveal("faa-client-secret","health-nms-secret").catch(e=>alert(e.message));$("health-reveal-db").onclick=()=>reveal("db-password","health-db-password").catch(e=>alert(e.message));
+  $("health-save").onclick=async()=>{const changed=id=>$(id).dataset.original===$(id).value?"":$(id).value;const body={healthPassword:$("health-new-password").value,nmsEnvironment:changed("health-nms-env"),nmsClientId:changed("health-nms-client"),nmsClientSecret:changed("health-nms-secret"),dbHost:changed("health-db-host"),dbPort:changed("health-db-port"),dbName:changed("health-db-name"),dbUser:changed("health-db-user"),dbPassword:changed("health-db-password")};$("health-save").disabled=true;$("health-save-status").textContent="Testing…";try{const data=await req("settings-save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});$("health-save-status").textContent=data.changed?.length?"Saved: "+data.changed.join(", "):"No changes.";settingsTouched=false;$("health-new-password").value="";await load(false);}catch(e){$("health-save-status").textContent=e.message;}finally{$("health-save").disabled=false;}};
   document.querySelectorAll("#health-settings-section input,#health-settings-section select").forEach(el=>{el.addEventListener("input",()=>settingsTouched=true);el.addEventListener("change",()=>settingsTouched=true);});
-  $("health-notam-section").addEventListener("toggle",()=>{if($("health-notam-section").open)loadNotams().catch(e=>alert(e.message));});
-  $("health-logs-section").addEventListener("toggle",()=>{if($("health-logs-section").open&&!logsLoaded)loadLogs().catch(e=>alert(e.message));});
-
-  req("session").then(data=>{if(data.authenticated){showDashboard();load(true);}else showLogin();}).catch(()=>showLogin("Health API unavailable."));
-  setInterval(()=>{if(!document.hidden&&!$("health-dashboard").hidden)load(false);},30000);
+  $("health-notam-section").addEventListener("toggle",()=>{if($("health-notam-section").open)loadNotams().catch(e=>alert(e.message));});$("health-logs-section").addEventListener("toggle",()=>{if($("health-logs-section").open&&!logFilesLoaded)loadLogFiles().catch(e=>{$("health-log-status").textContent=e.message;});});
+  req("session").then(data=>{if(data.authenticated){showDashboard();load(true);}else showLogin();}).catch(()=>showLogin("Health API unavailable."));setInterval(()=>{if(!document.hidden&&!$("health-dashboard").hidden)load(false);},30000);
 })();
 </script>
-<script src="/main/i18n.js?v=1" defer></script>
-<script src="/main/app.js?v=3" defer></script>
+<script src="/main/i18n.js?v=1" defer></script><script src="/main/app.js?v=3" defer></script>
 </body>
 </html>
