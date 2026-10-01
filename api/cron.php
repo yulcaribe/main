@@ -7,6 +7,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__.'/notam.php';
+require_once __DIR__.'/runtime_storage.php';
 
 const NMS_USER_AGENT = 'YulCaribe-NMS/1.0 (+https://yulcaribe.com)';
 
@@ -248,7 +249,6 @@ function nmsNormalizeFeature(array $feature, string $environment): ?array {
 }
 
 function nmsGeoJsonParseFailure(Throwable $e): bool {
-    // Match driver error codes only. Permissions, connection and SQL errors stay fatal.
     return $e instanceof PDOException && in_array((int)($e->errorInfo[1]??0),[3037,3038,3039,3040,4048,4049],true);
 }
 
@@ -261,10 +261,27 @@ function nmsDisplayIdent(array $r): string {
     if($year!=='' && !preg_match('/\/\d{2}$/D',$ident))$ident.='/'.substr($year,-2);
     return $ident;
 }
-function nmsLoggedGeometryWarnings(): array {
-    $dir=dirname(__DIR__,3).'/logs/main/notam';$files=(array)glob($dir.'/nms-*.log');sort($files,SORT_STRING);$issues=[];
-    $cutoff=time()-3*86400;
-    foreach($files as$file){$mtime=@filemtime($file);if($mtime!==false&&$mtime<$cutoff)continue;$rows=@file($file,FILE_IGNORE_NEW_LINES);if(!is_array($rows))continue;foreach($rows as$line){$pos=strpos($line,'WARNING geometry: ');if($pos===false)continue;$json=substr($line,$pos+18);$item=json_decode($json,true);if(!is_array($item))continue;$id=trim((string)($item['nmsId']??''));if($id==='')continue;if(!in_array($item['resolution']??'',['notam-stored-geometry-preserved-or-null','notam-stored-current-geometry-unavailable'],true))continue;$issues[$id]=$item;}}
+
+function nmsTrackedGeometryWarnings(string $environment, array $currentIssues=[]): array {
+    $issues=[];
+    $previous=ycReadNmsState($environment);
+    if(is_array($previous)){
+        $seed=(array)($previous['geometryDiagnostics']['trackedIssues']??$previous['geometryDiagnostics']['unresolved']??[]);
+        foreach($seed as$item){
+            if(!is_array($item))continue;
+            $id=trim((string)($item['nmsId']??''));
+            if($id==='')continue;
+            if(!in_array($item['resolution']??'',['notam-stored-geometry-preserved-or-null','notam-stored-current-geometry-unavailable'],true))continue;
+            $issues[$id]=$item;
+        }
+    }
+    foreach($currentIssues as$item){
+        if(!is_array($item))continue;
+        $id=trim((string)($item['nmsId']??''));
+        if($id==='')continue;
+        if(!in_array($item['resolution']??'',['notam-stored-geometry-preserved-or-null','notam-stored-current-geometry-unavailable'],true))continue;
+        $issues[$id]=$item;
+    }
     return $issues;
 }
 function nmsTextFallbackKind(array $row): ?array {
@@ -274,16 +291,8 @@ function nmsTextFallbackKind(array $row): ?array {
     return null;
 }
 
-function nmsGeometryDiagnostics(PDO $pdo,string $environment): array {
-    $logged=nmsLoggedGeometryWarnings();
-    $statePath=nmsCacheDir().DIRECTORY_SEPARATOR.'cron_state_'.$environment.'.json';
-    if(is_file($statePath)){
-        $raw=@file_get_contents($statePath);$previous=is_string($raw)?json_decode($raw,true):null;
-        if(is_array($previous)){
-            $seed=(array)($previous['geometryDiagnostics']['trackedIssues']??$previous['geometryDiagnostics']['unresolved']??[]);
-            foreach($seed as$item){if(!is_array($item))continue;$id=trim((string)($item['nmsId']??''));if($id!==''&&!isset($logged[$id]))$logged[$id]=$item;}
-        }
-    }
+function nmsGeometryDiagnostics(PDO $pdo,string $environment,array $currentIssues=[]): array {
+    $logged=nmsTrackedGeometryWarnings($environment,$currentIssues);
     $stats=['unresolvedCount'=>0,'unresolved'=>[],'resolvedByFallback'=>0,'resolvedFallbackItems'=>[],'resolvedByReference'=>0,'resolvedReferenceItems'=>[],'resolvedUpstream'=>0,'notApplicable'=>0,'removed'=>0,'lastWarningAt'=>null,'trackedIssues'=>[]];
     if(!$logged)return$stats;
     foreach($logged as$item){$t=(string)($item['time']??'');if($t!==''&&($stats['lastWarningAt']===null||strcmp($t,(string)$stats['lastWarningAt'])>0))$stats['lastWarningAt']=$t;}
@@ -322,12 +331,7 @@ function nmsGeometryIssue(array $r, string $geometryJson, Throwable $e, string $
         'resolution'=>$resolution,
         'error'=>$e->getMessage(),
     ];
-    $raw = json_decode((string)($r['raw_json'] ?? ''), true);
-    $diagnostic = $summary + [
-        'geometry'=>is_array($decoded) ? $decoded : $geometryJson,
-        'rawFaa'=>is_array($raw) ? $raw : ($r['raw_json'] ?? null),
-    ];
-    $encoded = json_encode($diagnostic, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    $encoded = json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     nmsCronLog('WARNING geometry: ' . ($encoded === false ? $summary['error'] : $encoded));
     return $summary;
 }
@@ -428,19 +432,19 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds=600, ?string $recoverySin
         nmsStoreSyncError($pdo,$environment,'NMS delta response schema invalid; cursor was not advanced.');
         return ['ok'=>false,'environment'=>$environment,'since'=>$sinceIso,'error'=>'Invalid NMS delta response.'];
     }
-    $features=$api['data']['geojson'];$processed=0;$skipped=0;$cancellations=[];$geometryWarnings=0;$geometryIssues=[];
+    $features=$api['data']['geojson'];$processed=0;$skipped=0;$cancellations=[];$geometryWarnings=0;$geometryIssues=[];$rawArchiveFailures=0;
     try {
         $pdo->beginTransaction();
         foreach ($features as $feature) {
             if (!is_array($feature)) throw new RuntimeException('Invalid NMS delta feature.');
+            if(!ycArchiveRawNmsValue($feature))$rawArchiveFailures++;
             $record=nmsNormalizeFeature($feature,$environment);
             if ($record===null) throw new RuntimeException('Invalid NMS delta record.');
             $geometryIssue=nmsUpsertRecord($pdo,$record);
             if (is_array($geometryIssue)) {
                 $geometryWarnings++;
-                if (count($geometryIssues)<20) $geometryIssues[]=$geometryIssue;
+                if (count($geometryIssues)<500) $geometryIssues[]=$geometryIssue;
             }
-            // Resolve only after the whole batch is stored; the target can arrive after its C message.
             $id=(string)$record['nms_id'];
             if (strtoupper((string)$record['notam_type'])==='C') $cancellations[$id]=$record;
             else unset($cancellations[$id]);
@@ -454,11 +458,12 @@ function nmsRunDeltaSync(int $bootstrapLookbackSeconds=600, ?string $recoverySin
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         nmsStoreSyncError($pdo,$environment,'Local NOTAM sync failed: '.$e->getMessage());
-        return ['ok'=>false,'environment'=>$environment,'since'=>$sinceIso,'error'=>'Local NOTAM sync failed.','detail'=>$environment==='staging'?$e->getMessage():null];
+        return ['ok'=>false,'environment'=>$environment,'since'=>$sinceIso,'error'=>'Local NOTAM sync failed.','detail'=>$environment==='staging'?$e->getMessage():null,'rawArchiveFailures'=>$rawArchiveFailures];
     }
+    if($rawArchiveFailures>0)nmsCronLog('WARNING raw NMS archive write failures: '.$rawArchiveFailures);
     try{$cleanup=nmsCleanupOldNotams($pdo,$environment,3,false);}catch(Throwable$e){$cleanup=['ok'=>false,'retentionDays'=>3,'error'=>$e->getMessage()];}
-    try{$geometryDiagnostics=nmsGeometryDiagnostics($pdo,$environment);}catch(Throwable$e){$geometryDiagnostics=['unresolvedCount'=>$geometryWarnings,'unresolved'=>$geometryIssues,'error'=>'Geometry diagnostics failed.'];nmsCronLog('WARNING geometry diagnostics: '.$e->getMessage());}
-    return['ok'=>true,'environment'=>$environment,'since'=>$sinceIso,'syncThrough'=>$syncThrough.'Z','upstreamStatus'=>$result['status']??200,'apiStatus'=>$api['status']??null,'received'=>count($features),'processed'=>$processed,'skipped'=>$skipped,'geometryWarnings'=>$geometryWarnings,'geometryIssues'=>$geometryIssues,'geometryDiagnostics'=>$geometryDiagnostics,'cancellationTargets'=>array_values(array_unique(array_column($references['byEvent'],'ident'))),'referenceResolution'=>$references['diagnostics'],'retentionCleanup'=>$cleanup];
+    try{$geometryDiagnostics=nmsGeometryDiagnostics($pdo,$environment,$geometryIssues);}catch(Throwable$e){$geometryDiagnostics=['unresolvedCount'=>$geometryWarnings,'unresolved'=>$geometryIssues,'error'=>'Geometry diagnostics failed.'];nmsCronLog('WARNING geometry diagnostics: '.$e->getMessage());}
+    return['ok'=>true,'environment'=>$environment,'since'=>$sinceIso,'syncThrough'=>$syncThrough.'Z','upstreamStatus'=>$result['status']??200,'apiStatus'=>$api['status']??null,'received'=>count($features),'processed'=>$processed,'skipped'=>$skipped,'geometryWarnings'=>$geometryWarnings,'geometryIssues'=>$geometryIssues,'geometryDiagnostics'=>$geometryDiagnostics,'rawArchiveFailures'=>$rawArchiveFailures,'cancellationTargets'=>array_values(array_unique(array_column($references['byEvent'],'ident'))),'referenceResolution'=>$references['diagnostics'],'retentionCleanup'=>$cleanup];
 }
 
 function nmsFullContentApiPath(string $url):string{$url=trim($url);if($url==='')throw new RuntimeException('NMS initial load content URL is empty.');$path=preg_match('#^https?://#i',$url)?(string)parse_url($url,PHP_URL_PATH):$url;if(!str_starts_with($path,'/'))$path='/'.$path;if(str_starts_with($path,'/nmsapi/v1/'))return substr($path,strlen('/nmsapi/v1'));if(str_starts_with($path,'/v1/'))return substr($path,strlen('/v1'));if(str_starts_with($path,'/content/'))return$path;throw new RuntimeException('Unexpected NMS initial load content path.');}
@@ -509,20 +514,21 @@ function nmsRunFullLoadSlice(int $limit=250,int $maxSeconds=7): array {
         if(time()-$since->getTimestamp()>23*3600){nmsFullCleanupState($environment,$state);throw new RuntimeException('Expired snapshot retired; next cron will obtain a fresh snapshot. Cursor was not changed.');}
         if(($state['phase']??'import')!=='catchup'){
             $fh=@fopen((string)$state['xmlPath'],'rb');if(!$fh)throw new RuntimeException('Initial load snapshot could not be opened.');
-            $offset=(int)($state['byteOffset']??0);$sliceProcessed=0;$eof=false;$pdo->beginTransaction();
+            $offset=(int)($state['byteOffset']??0);$sliceProcessed=0;$eof=false;$sliceArchiveFailed=false;$pdo->beginTransaction();
             while($sliceProcessed<$limit&&(microtime(true)-$started)<$maxSeconds){
                 $next=nmsFullNextMessage($fh,$offset);if($next===null){$eof=true;break;}
                 $record=nmsFullNormalizeMessage((string)$next['xml'],$environment);if($record===null)throw new RuntimeException('Invalid NOTAM in initial load snapshot.');
+                if(is_string($record['raw_json']??null)&&!ycArchiveRawNmsJson((string)$record['raw_json']))$sliceArchiveFailed=true;
                 nmsFullUpsert($pdo,$record);$offset=(int)$next['nextOffset'];$sliceProcessed++;
             }
             $pdo->commit();fclose($fh);$fh=null;
+            if($sliceArchiveFailed)nmsCronLog('WARNING raw NMS archive write failure during Initial Load slice.');
             $state['byteOffset']=$offset;$state['processed']=(int)($state['processed']??0)+$sliceProcessed;$state['updatedAt']=gmdate('Y-m-d\TH:i:s\Z');
             $expected=(int)$state['expected'];
             if(!$eof){nmsFullWriteProgress($environment,$state);return ['ok'=>true,'complete'=>false,'environment'=>$environment,'phase'=>'import','processed'=>$state['processed'],'skipped'=>(int)($state['skipped']??0),'sliceProcessed'=>$sliceProcessed,'expected'=>$expected,'progressPercent'=>min(99.9,round($state['processed']/$expected*100,1))];}
             if($expected<1||(int)$state['processed']!==$expected||(int)($state['skipped']??0)!==0)throw new RuntimeException('Initial load count mismatch; completion was not recorded.');
             $state['phase']='catchup';nmsFullWriteProgress($environment,$state);
         }
-        // Keep the snapshot and phase until a fully validated delta commits its real watermark.
         $catchup=nmsRunDeltaSync(600,(string)$state['catchupSince']);
         if(!($catchup['ok']??false))return ['ok'=>false,'complete'=>false,'environment'=>$environment,'phase'=>'catchup','processed'=>(int)$state['processed'],'expected'=>$state['expected'],'error'=>$catchup['error']??'Full load catch-up failed.','catchup'=>$catchup];
         $completed=gmdate('Y-m-d H:i:s');
@@ -559,21 +565,78 @@ function nmsCleanupTransientCaches(): array {
     return $result;
 }
 
-function nmsCronStatePath(string$environment):string{return nmsCacheDir().DIRECTORY_SEPARATOR.'cron_state_'.$environment.'.json';}
-function nmsCronLogDir():string{$dir=dirname(__DIR__,3).'/logs/main/notam';if(!is_dir($dir))@mkdir($dir,0700,true);return$dir;}
-function nmsCronCleanupLogs(int$days=3):void{$cutoff=time()-max(1,$days)*86400;foreach((array)glob(nmsCronLogDir().DIRECTORY_SEPARATOR.'nms-*.log')as$file){$mtime=@filemtime($file);if($mtime!==false&&$mtime<$cutoff)@unlink($file);}}
-function nmsCronCleanupLegacyLog(int$days=3):void{$path=dirname(__DIR__,3).'/nms_cron.log';if(!is_file($path))return;$lines=@file($path,FILE_IGNORE_NEW_LINES);if(!is_array($lines)||!$lines)return;$cutoff=time()-max(1,$days)*86400;$keep=[];$unparsed=[];foreach($lines as$line){if(preg_match('/^\[([^\]]+)\]/',$line,$m)){$ts=strtotime((string)$m[1]);if($ts!==false&&$ts>=$cutoff)$keep[]=$line;}else$unparsed[]=$line;}if($unparsed)$keep=array_merge($keep,array_slice($unparsed,-200));@file_put_contents($path,$keep?implode(PHP_EOL,$keep).PHP_EOL:'',LOCK_EX);}
-function nmsCronLog(string$message):void{static$cleaned=false;if(!$cleaned){nmsCronCleanupLogs(3);nmsCronCleanupLegacyLog(3);$cleaned=true;}$line='['.gmdate('Y-m-d\TH:i:s\Z').'] '.$message.PHP_EOL;@file_put_contents(nmsCronLogDir().DIRECTORY_SEPARATOR.'nms-'.gmdate('Y-m-d').'.log',$line,FILE_APPEND|LOCK_EX);fwrite(STDOUT,$line);fflush(STDOUT);}
+function nmsCronStatePath(string$environment):string{return ycNmsStatePath($environment);}
+function nmsCronLogDir():string{return ycRuntimeDir('nms');}
+function nmsCronCleanupLogs(int$days=3):void{ycRuntimeCleanup($days);}
+function nmsCronCleanupLegacyLog(int$days=3):void{
+    $path=dirname(__DIR__,3).'/nms_cron.log';
+    if(!is_file($path)||is_link($path))return;
+    $mtime=@filemtime($path);$cutoff=time()-max(1,$days)*86400;
+    if($mtime!==false&&$mtime<$cutoff)@unlink($path);
+}
+function nmsCronLog(string$message):void{
+    static$cleaned=false;
+    if(!$cleaned){nmsCronCleanupLogs(3);nmsCronCleanupLegacyLog(3);$cleaned=true;}
+    $level='INFO';$clean=trim($message);
+    if(preg_match('/^(ERROR|WARNING|RECOVERED)\b:?\s*/',$clean,$m)){$level=$m[1];$clean=preg_replace('/^(ERROR|WARNING|RECOVERED)\b:?\s*/','',$clean)??$clean;}
+    ycRuntimeLog('nms',$level,$clean);
+    $line='['.gmdate('Y-m-d\TH:i:s\Z').'] '.$level.' '.$clean.PHP_EOL;
+    fwrite(STDOUT,$line);fflush(STDOUT);
+}
+
+function nmsRecentIssueTimestamp(array $issue): int {
+    $raw=(string)($issue['lastAt']??$issue['time']??'');
+    $ts=$raw!==''?strtotime($raw):false;
+    return $ts===false?0:$ts;
+}
+function nmsPruneRecentIssues(array $issues): array {
+    $cutoff=time()-3*86400;$keep=[];
+    foreach($issues as$issue){if(!is_array($issue))continue;if(nmsRecentIssueTimestamp($issue)<$cutoff)continue;$keep[]=$issue;}
+    usort($keep,fn(array$a,array$b):int=>nmsRecentIssueTimestamp($b)<=>nmsRecentIssueTimestamp($a));
+    return array_slice($keep,0,300);
+}
+function nmsStateIssues(array $state): array {
+    $issues=[];$now=gmdate('Y-m-d\TH:i:s\Z');
+    $error=trim((string)($state['error']??''));
+    if(($state['ok']??null)===false&&$error!==''&&empty($state['rateLimitedLocally']))$issues[]=['type'=>'error','severity'=>'error','summary'=>$error,'details'=>['mode'=>$state['mode']??null]];
+    $skipped=(int)($state['skipped']??0);
+    if($skipped>0)$issues[]=['type'=>'skipped','severity'=>'warning','summary'=>$skipped.' NOTAM(s) skipped in the cron run.','details'=>['count'=>$skipped,'mode'=>$state['mode']??null]];
+    $geometry=(int)($state['geometryWarnings']??0);
+    if($geometry>0){$ids=[];foreach((array)($state['geometryIssues']??[])as$item){if(!is_array($item))continue;$id=trim((string)($item['ident']??$item['nmsId']??''));if($id!==''&&count($ids)<10)$ids[]=$id;}$issues[]=['type'=>'geometry','severity'=>'warning','summary'=>$geometry.' geometry warning(s) in the cron run.','details'=>['count'=>$geometry,'ids'=>$ids]];}
+    $diagError=trim((string)($state['geometryDiagnostics']['error']??''));
+    if($diagError!=='')$issues[]=['type'=>'geometry-diagnostics','severity'=>'warning','summary'=>$diagError,'details'=>[]];
+    foreach($issues as&$issue){$issue['firstAt']=$now;$issue['lastAt']=$now;$issue['occurrences']=1;$issue['lastRunId']=$state['runId']??null;$basis=[$issue['type'],$issue['summary'],$issue['details']];$issue['fingerprint']=hash('sha256',json_encode($basis,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)?:serialize($basis));}unset($issue);
+    return$issues;
+}
+function nmsMergeRecentIssues(array $old,array $new): array {
+    $merged=nmsPruneRecentIssues($old);
+    foreach($new as$issue){$found=false;foreach($merged as&$existing){if(($existing['fingerprint']??'')!==($issue['fingerprint']??''))continue;$existing['lastAt']=$issue['lastAt'];$existing['occurrences']=(int)($existing['occurrences']??1)+1;$existing['lastRunId']=$issue['lastRunId']??null;$found=true;break;}unset($existing);if(!$found)$merged[]=$issue;}
+    usort($merged,fn(array$a,array$b):int=>nmsRecentIssueTimestamp($b)<=>nmsRecentIssueTimestamp($a));
+    return array_slice($merged,0,300);
+}
 function nmsCronWriteState(string $environment,array $state): void {
-    $path=nmsCronStatePath($environment);$old=is_file($path)?json_decode((string)@file_get_contents($path),true):null;
+    $path=nmsCronStatePath($environment);$old=ycReadNmsState($environment);
     if(is_array($old)&&(!is_array($state['geometryDiagnostics']??null)||isset($state['geometryDiagnostics']['error']))) {
         if(is_array($old['geometryDiagnostics']??null))$state['geometryDiagnostics']=$old['geometryDiagnostics'];
     }
     if(isset($GLOBALS['nmsCacheCleanup']))$state['cacheCleanup']=$GLOBALS['nmsCacheCleanup'];
+    $state['runId']=$GLOBALS['nmsCronRunId']??null;
     $state['updatedAt']=gmdate('Y-m-d\TH:i:s\Z');
-    @file_put_contents($path,json_encode($state,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),LOCK_EX);
+    $state['recentIssues']=nmsMergeRecentIssues(is_array($old)?(array)($old['recentIssues']??[]):[],nmsStateIssues($state));
+    ycRuntimeWriteJson($path,$state);
+}
+function nmsCronResultSummary(array$result):array{
+    return[
+        'ok'=>$result['ok']??null,'mode'=>$result['mode']??null,'environment'=>$result['environment']??null,
+        'received'=>$result['received']??null,'processed'=>$result['processed']??null,'skipped'=>$result['skipped']??null,
+        'geometryWarnings'=>$result['geometryWarnings']??null,'unresolvedGeometry'=>$result['geometryDiagnostics']['unresolvedCount']??null,
+        'rawArchiveFailures'=>$result['rawArchiveFailures']??null,'syncThrough'=>$result['syncThrough']??null,
+        'needsFullLoad'=>$result['needsFullLoad']??null,'rateLimitedLocally'=>$result['rateLimitedLocally']??null,
+        'error'=>$result['error']??$result['detail']??null,
+    ];
 }
 
 function nmsCronFullLoad(string$environment,int$maxRuntimeSeconds=900):array{$started=microtime(true);$rounds=0;$last=null;while((microtime(true)-$started)<$maxRuntimeSeconds){$rounds++;$last=nmsRunFullLoadSlice(500,10);if(!($last['ok']??false))return['rounds'=>$rounds]+$last;nmsCronWriteState($environment,['ok'=>true,'mode'=>'initial-load','running'=>!($last['complete']??false),'complete'=>(bool)($last['complete']??false),'processed'=>(int)($last['processed']??0),'skipped'=>(int)($last['skipped']??0),'expected'=>$last['expected']??null,'progressPercent'=>$last['progressPercent']??null,'rounds'=>$rounds]);if($last['complete']??false)return['rounds'=>$rounds]+$last;usleep(100000);}return['ok'=>true,'complete'=>false,'pausedForNextCron'=>true,'environment'=>$environment,'rounds'=>$rounds,'processed'=>(int)($last['processed']??0),'skipped'=>(int)($last['skipped']??0),'expected'=>$last['expected']??null,'progressPercent'=>$last['progressPercent']??null];}
 
-$cfg=nmsPrivateConfig();$environment=$cfg['env'];$lockPath=nmsCacheDir().DIRECTORY_SEPARATOR.'cron_'.$environment.'.lock';$lock=@fopen($lockPath,'c+');if(!$lock){nmsCronLog('ERROR: NMS cron lock could not be opened.');exit(1);}if(!flock($lock,LOCK_EX|LOCK_NB)){fclose($lock);exit(0);}try{$GLOBALS['nmsCacheCleanup']=nmsCleanupTransientCaches();if($environment!=='production'){$result=['ok'=>false,'mode'=>'blocked','environment'=>$environment,'error'=>'Automatic NMS cron is enabled only for production.'];nmsCronWriteState($environment,$result);nmsCronLog('ERROR: '.json_encode($result,JSON_UNESCAPED_SLASHES));exit(2);}$pdo=nmsDb();$state=nmsSyncState($pdo,$environment);$countStmt=$pdo->prepare("SELECT COUNT(*) FROM notams WHERE source='FAA_NMS' AND environment=:environment");$countStmt->execute(['environment'=>$environment]);$notamCount=(int)$countStmt->fetchColumn();if(nmsFullReadProgress($environment)!==null||$notamCount===0||empty($state['last_full_load'])){$existing=nmsFullReadProgress($environment);$resuming=is_array($existing);nmsCronWriteState($environment,['ok'=>true,'mode'=>$resuming?'initial-load':'initial-download','running'=>true,'complete'=>false,'processed'=>(int)($existing['processed']??0),'skipped'=>(int)($existing['skipped']??0),'expected'=>$existing['expected']??null,'progressPercent'=>null,'message'=>$resuming?'Existing FAA Initial Load snapshot is being resumed from saved progress.':'FAA Initial Load snapshot is being downloaded/prepared.']);nmsCronLog('Production baseline missing; Initial Load starting.');$result=nmsCronFullLoad($environment);nmsCronWriteState($environment,['ok'=>(bool)($result['ok']??false),'mode'=>'initial-load','running'=>!($result['complete']??false),'complete'=>(bool)($result['complete']??false),'processed'=>(int)($result['processed']??0),'skipped'=>(int)($result['skipped']??0),'expected'=>$result['expected']??null,'progressPercent'=>$result['progressPercent']??null,'pausedForNextCron'=>(bool)($result['pausedForNextCron']??false),'geometryDiagnostics'=>$result['geometryDiagnostics']??null,'referenceResolution'=>$result['referenceResolution']??null,'error'=>$result['detail']??$result['error']??null]);}else{nmsCronLog('Baseline present; Delta Sync starting.');$result=nmsRunDeltaSync();if(($result['needsFullLoad']??false)===true){$result=nmsCronFullLoad($environment);$mode='recovery-full-load';}else$mode='delta';if(!is_array($result['geometryDiagnostics']??null)){try{$result['geometryDiagnostics']=nmsGeometryDiagnostics($pdo,$environment);}catch(Throwable$e){$result['geometryDiagnostics']=['unresolvedCount'=>0,'unresolved'=>[],'error'=>'Geometry diagnostics unavailable.'];}}nmsCronWriteState($environment,['ok'=>(bool)($result['ok']??false),'mode'=>$mode,'running'=>false,'processed'=>(int)($result['processed']??0),'received'=>isset($result['received'])?(int)$result['received']:null,'skipped'=>(int)($result['skipped']??0),'geometryWarnings'=>(int)($result['geometryWarnings']??0),'geometryIssues'=>is_array($result['geometryIssues']??null)?$result['geometryIssues']:[],'geometryDiagnostics'=>is_array($result['geometryDiagnostics']??null)?$result['geometryDiagnostics']:['unresolvedCount'=>0,'unresolved'=>[]],'referenceResolution'=>$result['referenceResolution']??null,'syncThrough'=>$result['syncThrough']??null,'retryAfterSeconds'=>$result['retryAfterSeconds']??null,'error'=>$result['error']??$result['detail']??null]);}if(($result['ok']??false)===true)$result['retentionCleanup']=nmsCleanupOldNotams($pdo,$environment,3,false);nmsCronLog('Result: '.json_encode($result,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));exit(($result['ok']??false)?0:1);}catch(Throwable$e){$result=['ok'=>false,'mode'=>'exception','environment'=>$environment,'error'=>$e->getMessage()];nmsCronWriteState($environment,$result);nmsCronLog('ERROR: '.json_encode($result,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));exit(1);}finally{flock($lock,LOCK_UN);fclose($lock);}
+$GLOBALS['nmsCronRunId']=gmdate('Ymd\THis\Z').'-'.getmypid();
+$cfg=nmsPrivateConfig();$environment=$cfg['env'];$lockPath=nmsCacheDir().DIRECTORY_SEPARATOR.'cron_'.$environment.'.lock';$lock=@fopen($lockPath,'c+');if(!$lock){nmsCronLog('ERROR: NMS cron lock could not be opened.');exit(1);}if(!flock($lock,LOCK_EX|LOCK_NB)){fclose($lock);exit(0);}try{$GLOBALS['nmsCacheCleanup']=nmsCleanupTransientCaches();if($environment!=='production'){$result=['ok'=>false,'mode'=>'blocked','environment'=>$environment,'error'=>'Automatic NMS cron is enabled only for production.'];nmsCronWriteState($environment,$result);nmsCronLog('ERROR: '.json_encode(nmsCronResultSummary($result),JSON_UNESCAPED_SLASHES));exit(2);}$pdo=nmsDb();$state=nmsSyncState($pdo,$environment);$countStmt=$pdo->prepare("SELECT COUNT(*) FROM notams WHERE source='FAA_NMS' AND environment=:environment");$countStmt->execute(['environment'=>$environment]);$notamCount=(int)$countStmt->fetchColumn();if(nmsFullReadProgress($environment)!==null||$notamCount===0||empty($state['last_full_load'])){$existing=nmsFullReadProgress($environment);$resuming=is_array($existing);nmsCronWriteState($environment,['ok'=>true,'mode'=>$resuming?'initial-load':'initial-download','running'=>true,'complete'=>false,'processed'=>(int)($existing['processed']??0),'skipped'=>(int)($existing['skipped']??0),'expected'=>$existing['expected']??null,'progressPercent'=>null,'message'=>$resuming?'Existing FAA Initial Load snapshot is being resumed from saved progress.':'FAA Initial Load snapshot is being downloaded/prepared.']);nmsCronLog('Production baseline missing; Initial Load starting.');$result=nmsCronFullLoad($environment);nmsCronWriteState($environment,['ok'=>(bool)($result['ok']??false),'mode'=>'initial-load','running'=>!($result['complete']??false),'complete'=>(bool)($result['complete']??false),'processed'=>(int)($result['processed']??0),'skipped'=>(int)($result['skipped']??0),'expected'=>$result['expected']??null,'progressPercent'=>$result['progressPercent']??null,'pausedForNextCron'=>(bool)($result['pausedForNextCron']??false),'geometryDiagnostics'=>$result['geometryDiagnostics']??null,'referenceResolution'=>$result['referenceResolution']??null,'rateLimitedLocally'=>(bool)($result['rateLimitedLocally']??false),'error'=>$result['detail']??$result['error']??null]);}else{nmsCronLog('Baseline present; Delta Sync starting.');$result=nmsRunDeltaSync();if(($result['needsFullLoad']??false)===true){$result=nmsCronFullLoad($environment);$mode='recovery-full-load';}else$mode='delta';if(!is_array($result['geometryDiagnostics']??null)){try{$result['geometryDiagnostics']=nmsGeometryDiagnostics($pdo,$environment);}catch(Throwable$e){$result['geometryDiagnostics']=['unresolvedCount'=>0,'unresolved'=>[],'error'=>'Geometry diagnostics unavailable.'];}}nmsCronWriteState($environment,['ok'=>(bool)($result['ok']??false),'mode'=>$mode,'running'=>false,'processed'=>(int)($result['processed']??0),'received'=>isset($result['received'])?(int)$result['received']:null,'skipped'=>(int)($result['skipped']??0),'geometryWarnings'=>(int)($result['geometryWarnings']??0),'geometryIssues'=>is_array($result['geometryIssues']??null)?$result['geometryIssues']:[],'geometryDiagnostics'=>is_array($result['geometryDiagnostics']??null)?$result['geometryDiagnostics']:['unresolvedCount'=>0,'unresolved'=>[]],'referenceResolution'=>$result['referenceResolution']??null,'syncThrough'=>$result['syncThrough']??null,'retryAfterSeconds'=>$result['retryAfterSeconds']??null,'rateLimitedLocally'=>(bool)($result['rateLimitedLocally']??false),'rawArchiveFailures'=>(int)($result['rawArchiveFailures']??0),'error'=>$result['error']??$result['detail']??null]);}if(($result['ok']??false)===true)$result['retentionCleanup']=nmsCleanupOldNotams($pdo,$environment,3,false);nmsCronLog('Result: '.json_encode(nmsCronResultSummary($result),JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));exit(($result['ok']??false)?0:1);}catch(Throwable$e){$result=['ok'=>false,'mode'=>'exception','environment'=>$environment,'error'=>$e->getMessage()];nmsCronWriteState($environment,$result);nmsCronLog('ERROR: '.json_encode(nmsCronResultSummary($result),JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));exit(1);}finally{flock($lock,LOCK_UN);fclose($lock);}
