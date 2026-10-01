@@ -128,12 +128,13 @@
   const row=(label,value)=>`<div class="decode-row"><span>${esc(label)}</span><strong>${value??"—"}</strong></div>`;
   function probeState(probe){if(!probe)return"unknown";if(probe.ok)return"ok";if(Number(probe.status)===429)return"warn";return"error";}
   function combine(states){if(states.includes("error"))return"error";if(states.includes("warn")||states.includes("warning"))return"warn";if(states.includes("unknown"))return"unknown";return"ok";}
-  function label(state){return state==="ok"?"OK":state==="warn"||state==="warning"?"WARNING":state==="error"?"ERROR":"UNKNOWN";}
-  function badge(id,state){const el=$(id);if(!el)return;el.textContent=label(state);el.className=`badge ${state==="ok"?"valid":state==="error"?"cancelled":state==="warn"||state==="warning"?"future":""}`;}
+  function label(state){return state==="ok"?"OK":state==="stale"?"STALE":state==="delayed"?"DELAYED":state==="warn"||state==="warning"?"WARNING":state==="error"?"ERROR":"UNKNOWN";}
+  function badge(id,state){const el=$(id);if(!el)return;el.textContent=label(state);el.className=`badge ${state==="ok"?"valid":state==="error"?"cancelled":state==="warn"||state==="warning"||state==="stale"||state==="delayed"?"future":""}`;}
   function probeLabel(probe){if(!probe)return"Not tested";return[label(probeState(probe)),probe.status?`HTTP ${probe.status}`:"",probe.ms!=null?`${probe.ms} ms`:""].filter(Boolean).join(" · ");}
   function showLogin(message=""){$("health-login").hidden=false;$("health-dashboard").hidden=true;$("health-login-status").textContent=message;}
   function showDashboard(){$("health-login").hidden=true;$("health-dashboard").hidden=false;}
   function bytes(value){const n=Number(value||0);if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`;}
+  function duration(value){const seconds=Math.max(0,Number(value)||0);if(seconds<60)return`${Math.round(seconds)} s`;const minutes=Math.floor(seconds/60);if(minutes<60)return`${minutes}m ${Math.round(seconds%60)}s`;const hours=Math.floor(minutes/60),mins=minutes%60;if(hours<24)return`${hours}h ${mins}m`;const days=Math.floor(hours/24);return`${days}d ${hours%24}h`;}
 
   function render(data){
     snapshot=data;$("health-time").textContent=data.generatedAt||"";
@@ -144,12 +145,29 @@
     let currentNotamState=nmsConfig.credentialsConfigured===false?"error":local.syncHealth==="stale"?"warn":local.state?.last_error?"error":cron.ok===false&&!cron.rateLimitedLocally?"error":unresolvedGeometry>0||skipped>0||geometryWarnings>0?"warn":"ok";
     if(net.faa)currentNotamState=combine([currentNotamState,probeState(net.faa)]);
     const notamState=recentIssues.length&&currentNotamState==="ok"?"warn":currentNotamState;
-    const jobsState=jobs.cron?.status||"unknown";
-    const currentOverall=combine([apiState,dbState,mapState,weatherState,adsbState,currentNotamState,jobsState==="warning"&&recentIssues.length?"ok":jobsState]);
-    const overallState=recentIssues.length&&currentOverall==="ok"?"warn":combine([currentOverall,jobsState]);
 
-    badge("health-overall-badge",overallState);badge("health-api-badge",apiState);badge("health-db-badge",dbState);badge("health-map-badge",mapState);badge("health-weather-badge",weatherState);badge("health-adsb-badge",adsbState);badge("health-notam-badge",notamState);badge("health-jobs-badge",jobsState);
-    $("health-overall").innerHTML=[row("Overall",label(overallState)),row("Current operation",label(currentOverall)),row("Recent issues · 3 days",esc(recentIssues.length)),row("Last cron",cron.updatedAt?esc(cron.updatedAt):"—")].join("");
+    const jobsSeverity=jobs.cron?.status||"unknown";
+    const cronAge=Number(jobs.cron?.ageSeconds),hasCronAge=Number.isFinite(cronAge)&&cronAge>=0;
+    const cronLastResult=cron.ok===true?"ok":cron.ok===false?"error":"unknown";
+    const cronFreshness=!hasCronAge?"unknown":cronAge>1800?"stale":cronAge>900?"delayed":"ok";
+    const jobsDisplayState=cronLastResult==="ok"&&(cronFreshness==="stale"||cronFreshness==="delayed")?cronFreshness:jobsSeverity;
+
+    const liveCurrentState=combine([apiState,dbState,mapState,weatherState,adsbState,currentNotamState]);
+    let currentOperation=liveCurrentState;
+    if(cronLastResult==="error")currentOperation="error";
+    else if(cronFreshness==="stale"&&currentOperation!=="error")currentOperation="stale";
+    else if(cronFreshness==="delayed"&&currentOperation==="ok")currentOperation="delayed";
+
+    const overallBase=combine([apiState,dbState,mapState,weatherState,adsbState,currentNotamState,jobsSeverity]);
+    const overallState=recentIssues.length&&overallBase==="ok"?"warn":overallBase;
+    let cronReason="Cron status is not available.";
+    if(cronLastResult==="error")cronReason=cron.error?`Last cron failed: ${cron.error}`:"Last recorded cron run failed.";
+    else if(cronFreshness==="stale")cronReason=`Cron state has not updated for ${duration(cronAge)}. Last recorded cron result was OK.`;
+    else if(cronFreshness==="delayed")cronReason=`Cron update is delayed by ${duration(cronAge)}. Last recorded cron result was OK.`;
+    else if(cronLastResult==="ok")cronReason="Cron is updating within the expected window. Last recorded result was OK.";
+
+    badge("health-overall-badge",overallState);badge("health-api-badge",apiState);badge("health-db-badge",dbState);badge("health-map-badge",mapState);badge("health-weather-badge",weatherState);badge("health-adsb-badge",adsbState);badge("health-notam-badge",notamState);badge("health-jobs-badge",jobsDisplayState);
+    $("health-overall").innerHTML=[row("Overall",label(overallState)),row("Current operation",label(currentOperation)),row("Reason",esc(cronReason)),row("Last cron result",label(cronLastResult)),row("Cron freshness",label(cronFreshness)),row("Cron age",hasCronAge?esc(duration(cronAge)):"—"),row("Expected interval","5 min"),row("Recent issues · 3 days",esc(recentIssues.length)),row("Last cron",cron.updatedAt?esc(cron.updatedAt):"—")].join("");
     $("health-recent-issues").innerHTML=recentIssues.length?recentIssues.map(issue=>`<div class="notam-card"><strong>${esc(String(issue.severity||"warning").toUpperCase())} · ${esc(issue.type||"issue")}</strong><span class="source-line">${esc(issue.summary||"Issue recorded")}</span><span class="source-line">Last: ${esc(issue.lastAt||"—")} · occurrences: ${esc(issue.occurrences||1)}</span></div>`).join(""):'<div class="empty-box">No issues recorded in the last 3 days.</div>';
 
     $("health-api").innerHTML=Object.keys(files).map(name=>row(name,`${files[name]?"FILE OK":"FILE MISSING"}${api[name]?" · "+esc(probeLabel(api[name])):""}`)).join("");
