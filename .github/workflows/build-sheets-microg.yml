@@ -1,0 +1,120 @@
+name: Build Sheets MicroG APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tmp-sheets-microg-build
+    paths:
+      - '.github/workflows/build-sheets-microg.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install scraper deps
+        run: python -m pip install --quiet requests beautifulsoup4
+
+      - name: Download Morphe Desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=$(curl -fsSL https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest | jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' | head -n1)
+          test -n "$URL"
+          curl -fL "$URL" -o morphe.jar
+          java -jar morphe.jar --version
+
+      - name: Download exact Google Sheets APK
+        shell: bash
+        run: |
+          cat > /tmp/get_apk.py <<'PY'
+          import requests, re, sys
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+          s=requests.Session()
+          s.headers.update({
+              "User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+              "Accept-Language":"en-US,en;q=0.9",
+          })
+          start="https://www.apkmirror.com/apk/google-inc/sheets/google-sheets-1-26-391-02-release/google-sheets-1-26-391-02-90-android-apk-download/"
+          def get(u):
+              r=s.get(u,timeout=30)
+              print("GET",r.status_code,r.url,len(r.content))
+              r.raise_for_status()
+              return r
+          r=get(start)
+          soup=BeautifulSoup(r.text,"html.parser")
+          candidates=[]
+          for a in soup.find_all("a",href=True):
+              txt=" ".join(a.stripped_strings).lower()
+              href=a["href"]
+              if "download apk" in txt or "download.php" in href or "key=" in href:
+                  candidates.append(urljoin(r.url,href))
+          print("candidates1", candidates[:20])
+          if not candidates:
+              open("apkmirror-step1.html","wb").write(r.content)
+              sys.exit("No first download link found")
+          # Prefer the explicit download button / download.php link.
+          u=next((x for x in candidates if "download.php" in x), candidates[0])
+          r2=get(u)
+          ct=r2.headers.get("content-type","")
+          if "application/vnd.android.package-archive" in ct or r2.content[:2]==b"PK":
+              open("sheets.apk","wb").write(r2.content); sys.exit(0)
+          soup=BeautifulSoup(r2.text,"html.parser")
+          candidates2=[]
+          for a in soup.find_all("a",href=True):
+              href=urljoin(r2.url,a["href"])
+              txt=" ".join(a.stripped_strings).lower()
+              if "download apk" in txt or "download.php" in href or "download.apkmirror.com" in href:
+                  candidates2.append(href)
+          print("candidates2", candidates2[:20])
+          for u2 in candidates2:
+              rr=get(u2)
+              if rr.content[:2]==b"PK" and len(rr.content)>10_000_000:
+                  open("sheets.apk","wb").write(rr.content)
+                  break
+          else:
+              open("apkmirror-step2.html","wb").write(r2.content)
+              sys.exit("No APK payload found")
+          PY
+          python /tmp/get_apk.py
+          ls -lh sheets.apk
+          sha256sum sheets.apk
+          test $(stat -c%s sheets.apk) -gt 100000000
+
+      - name: Patch for Morphe MicroG RE
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar morphe.jar patch \
+            --exclusive \
+            -p https://github.com/MorpheApp/morphe-patches \
+              -e "Clone app" \
+                -O packageName=com.google.android.apps.docs.editors.sheets.morphe \
+                -O updatePermissions=false \
+                -O updateProviders=false \
+            -p https://github.com/rushiranpise/morphe-patches \
+              -e "Provide Original app certificate" \
+              -e "GmsCore support (MicroG)" \
+                -O gmsCoreVendor=app.revanced.android.gms \
+                -O packageName=com.google.android.apps.docs.editors.sheets.morphe \
+            --bytecode-mode FULL \
+            -o Google-Sheets-Morphe-MicroG.apk \
+            sheets.apk
+          test -s Google-Sheets-Morphe-MicroG.apk
+          sha256sum Google-Sheets-Morphe-MicroG.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Google-Sheets-Morphe-MicroG
+          path: Google-Sheets-Morphe-MicroG.apk
+          if-no-files-found: error
+          retention-days: 1
