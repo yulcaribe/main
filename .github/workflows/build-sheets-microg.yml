@@ -68,10 +68,23 @@ jobs:
           ls -lh Google-Sheets-Morphe-MicroG.apk
           sha256sum Google-Sheets-Morphe-MicroG.apk
 
+      - name: Fix MicroG RE account type
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tmp_tools/fix_sheets_manifest.py Google-Sheets-Morphe-MicroG.apk Google-Sheets-Morphe-MicroG-v2-unsigned.apk
+          curl -fL https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -o signer.jar
+          mkdir -p signed
+          java -jar signer.jar --apks Google-Sheets-Morphe-MicroG-v2-unsigned.apk --allowResign --out signed
+          FINAL=$(find signed -maxdepth 1 -type f -name '*.apk' | head -n1)
+          test -n "$FINAL"
+          cp "$FINAL" Google-Sheets-Morphe-MicroG-v2.apk
+          sha256sum Google-Sheets-Morphe-MicroG-v2.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Google-Sheets-Morphe-MicroG
-          path: Google-Sheets-Morphe-MicroG.apk
+          name: Google-Sheets-Morphe-MicroG-v2
+          path: Google-Sheets-Morphe-MicroG-v2.apk
           if-no-files-found: error
           retention-days: 1
