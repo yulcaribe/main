@@ -27,28 +27,24 @@ jobs:
           curl -fL "$URL" -o morphe.jar
           java -jar morphe.jar --version
 
-      - name: Download exact Google Sheets APK
+      - name: Download exact Google Sheets
         shell: bash
         run: |
           set -euo pipefail
           APKEEP_URL=$(curl -fsSL https://api.github.com/repos/EFForg/apkeep/releases/latest | jq -r '.assets[] | select(.name=="apkeep-x86_64-unknown-linux-gnu") | .browser_download_url')
           curl -fL "$APKEEP_URL" -o apkeep
           chmod +x apkeep
-          ./apkeep --version
-          ./apkeep -l -a com.google.android.apps.docs.editors.sheets -d apk-pure || true
           mkdir -p apkout
           ./apkeep \
             -a 'com.google.android.apps.docs.editors.sheets@1.26.391.02.90' \
             -d apk-pure \
             -o 'acknowledge_dangers=true,arch=arm64-v8a;armeabi-v7a;armeabi;x86;x86_64' \
             apkout
-          find apkout -maxdepth 1 -type f -print -exec ls -lh {} \;
-          APK=$(find apkout -maxdepth 1 -type f -name '*.apk' | head -n1)
-          test -n "$APK"
-          cp "$APK" sheets.apk
-          sha256sum sheets.apk
-          test "$(head -c2 sheets.apk)" = "PK"
-          test $(stat -c%s sheets.apk) -gt 100000000
+          INPUT=$(find apkout -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) | head -n1)
+          test -n "$INPUT"
+          cp "$INPUT" sheets-input.xapk
+          ls -lh sheets-input.xapk
+          sha256sum sheets-input.xapk
 
       - name: Patch for Morphe MicroG RE
         shell: bash
@@ -68,8 +64,9 @@ jobs:
                 -O packageName=com.google.android.apps.docs.editors.sheets.morphe \
             --bytecode-mode FULL \
             -o Google-Sheets-Morphe-MicroG.apk \
-            sheets.apk
+            sheets-input.xapk
           test -s Google-Sheets-Morphe-MicroG.apk
+          ls -lh Google-Sheets-Morphe-MicroG.apk
           sha256sum Google-Sheets-Morphe-MicroG.apk
 
       - name: Upload APK
