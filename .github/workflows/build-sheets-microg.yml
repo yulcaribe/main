@@ -55,13 +55,12 @@ jobs:
             -p https://github.com/MorpheApp/morphe-patches \
               -e "Clone app" \
                 -O packageName=com.google.android.apps.docs.editors.sheets.morphe \
-                -O updatePermissions=false \
-                -O updateProviders=false \
+                -O updatePermissions=true \
+                -O updateProviders=true \
             -p https://github.com/rushiranpise/morphe-patches \
               -e "Provide Original app certificate" \
               -e "GmsCore support (MicroG)" \
                 -O gmsCoreVendor=app.revanced.android.gms \
-                -O packageName=com.google.android.apps.docs.editors.sheets.morphe \
             --bytecode-mode FULL \
             -o Google-Sheets-Morphe-MicroG.apk \
             sheets-input.xapk
